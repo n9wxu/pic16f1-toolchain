@@ -302,3 +302,149 @@ fn sixty_four_bank_devices_use_the_six_bit_movlb() {
     let d = Device::builtin("pic16f18877").unwrap();
     assert_eq!(d.linear_to_traditional(40 * 80), Some(40 * 128 + 0x20));
 }
+
+// ---------------------------------------------------------------------------
+// One check per instruction for the flags it must and must not change, from
+// the "Status Affected" line of each instruction description in the data
+// sheet. STATUS is file 0x03: C = bit 0, DC = bit 1, Z = bit 2.
+// ---------------------------------------------------------------------------
+
+const ALL: u8 = FLAG_C | FLAG_DC | FLAG_Z;
+
+/// Run `setup`, then set or clear all three flags, run `op`, and return the
+/// flags afterwards.
+fn flags_after(setup: &[u16], preset: u8, op: u16) -> (Cpu, u8) {
+    let mut prog = setup.to_vec();
+    // Presetting the flags must not disturb W or the file registers:
+    // BSF/BCF on STATUS change one bit each.
+    for bit in 0..3u8 {
+        prog.push(if preset & (1 << bit) != 0 { bsf(0x03, bit) } else { bcf(0x03, bit) });
+    }
+    prog.push(op);
+    // Two SLEEPs: a skip instruction that skips lands on the second.
+    prog.push(SLEEP);
+    prog.push(SLEEP);
+    let c = run(&prog);
+    let f = flags(&c);
+    (c, f)
+}
+
+#[test]
+fn instructions_that_affect_no_flags() {
+    let setup = [movlw(0x20), movwf(0x04), movlw(0x00), movwf(0x05), movlw(0x81), movwf(0x20)];
+    let ops: &[(&str, u16)] = &[
+        ("MOVWF", movwf(0x21)),
+        ("MOVLW", movlw(0)),
+        ("SWAPF", 0x0E00 | F | 0x20),
+        ("BCF", bcf(0x20, 0)),
+        ("BSF", bsf(0x20, 1)),
+        ("MOVLB", movlb(0)),
+        ("MOVLP", movlp(0)),
+        ("ADDFSR", addfsr(0, 1)),
+        ("MOVWI", movwi_off(0, 1)),
+        ("NOP", 0x0000),
+        ("CLRWDT", 0x0064),
+        ("INCFSZ", 0x0F00 | F | 0x20),
+        ("DECFSZ", 0x0B00 | F | 0x20),
+        ("BTFSC", btfsc(0x20, 0)),
+        ("BTFSS", btfss(0x20, 7)),
+    ];
+    for &(name, op) in ops {
+        for preset in [0, ALL] {
+            let (_, f) = flags_after(&setup, preset, op);
+            assert_eq!(f, preset, "{name} changed the flags (preset {preset:#x})");
+        }
+    }
+}
+
+#[test]
+fn instructions_that_affect_only_zero() {
+    // 0x20 holds 0x01; W holds 0x01.
+    let setup = [movlw(0x20), movwf(0x04), movlw(0x00), movwf(0x05), movlw(0x01), movwf(0x20)];
+    // (name, opcode, Z expected)
+    let ops: &[(&str, u16, bool)] = &[
+        ("MOVF", movf(0x20, 0), false),
+        ("DECF", 0x0300 | F | 0x20, true),
+        ("INCF", 0x0A00 | F | 0x20, false),
+        ("COMF", 0x0900 | F | 0x20, false),
+        ("ANDWF", 0x0500 | 0x20, false),
+        ("IORWF", 0x0400 | 0x20, false),
+        ("XORWF", 0x0600 | 0x20, true),
+        ("ANDLW", 0x3900 | 0xFE, true),
+        ("IORLW", 0x3800, false),
+        ("XORLW", 0x3A00 | 0x01, true),
+        ("CLRF", 0x0180 | 0x20, true),
+        ("CLRW", 0x0100, true),
+        ("MOVIW", moviw_off(0, 0), false),
+    ];
+    for &(name, op, z) in ops {
+        for preset in [0, ALL] {
+            let (_, f) = flags_after(&setup, preset, op);
+            let want = (preset & (FLAG_C | FLAG_DC)) | if z { FLAG_Z } else { 0 };
+            assert_eq!(f, want, "{name}: wrong flags (preset {preset:#x})");
+        }
+    }
+}
+
+#[test]
+fn rotates_affect_only_carry_and_shifts_carry_and_zero() {
+    let setup = [movlw(0x80), movwf(0x20)];
+    // RLF of 0x80: C becomes 1; Z and DC keep their values.
+    for preset in [0, ALL] {
+        let (_, f) = flags_after(&setup, preset, 0x0D00 | F | 0x20);
+        assert_eq!(f, (preset & (FLAG_DC | FLAG_Z)) | FLAG_C, "RLF");
+        let (_, f) = flags_after(&setup, preset, 0x0C00 | F | 0x20);
+        assert_eq!(f, preset & (FLAG_DC | FLAG_Z), "RRF");
+        // LSLF of 0x80 gives 0 with carry out: C and Z set, DC untouched.
+        let (_, f) = flags_after(&setup, preset, 0x3500 | F | 0x20);
+        assert_eq!(f, (preset & FLAG_DC) | FLAG_C | FLAG_Z, "LSLF");
+        let (_, f) = flags_after(&setup, preset, 0x3600 | F | 0x20);
+        assert_eq!(f, preset & FLAG_DC, "LSRF");
+        let (_, f) = flags_after(&setup, preset, 0x3700 | F | 0x20);
+        assert_eq!(f, preset & FLAG_DC, "ASRF");
+    }
+}
+
+#[test]
+fn arithmetic_sets_all_three_flags_from_the_result() {
+    // 0x20 = 0x0F, W = 0x01.
+    let setup = [movlw(0x0F), movwf(0x20), movlw(0x01)];
+    for preset in [0, ALL] {
+        let carry_in = preset & FLAG_C;
+        let (c, f) = flags_after(&setup, preset, addwf(0x20, 0));
+        assert_eq!((c.w(), f), (0x10, FLAG_DC), "ADDWF");
+        let (c, f) = flags_after(&setup, preset, 0x3E00 | 0xFF);
+        assert_eq!((c.w(), f), (0x00, FLAG_C | FLAG_DC | FLAG_Z), "ADDLW");
+        let (c, f) = flags_after(&setup, preset, addwfc(0x20, 0));
+        assert_eq!((c.w(), f), (0x10 + carry_in, FLAG_DC), "ADDWFC");
+        // 0x0F - 0x01 = 0x0E, no borrow from either nibble.
+        let (c, f) = flags_after(&setup, preset, subwf(0x20, 0));
+        assert_eq!((c.w(), f), (0x0E, FLAG_C | FLAG_DC), "SUBWF");
+        // SUBWFB subtracts one more when C is clear.
+        let (c, f) = flags_after(&setup, preset, subwfb(0x20, 0));
+        assert_eq!((c.w(), f), (0x0D + carry_in, FLAG_C | FLAG_DC), "SUBWFB");
+        // SUBLW 0: 0 - 1 borrows from both nibbles.
+        let (c, f) = flags_after(&setup, preset, 0x3C00);
+        assert_eq!((c.w(), f), (0xFF, 0), "SUBLW");
+    }
+}
+
+#[test]
+fn every_instruction_cycle_count() {
+    // One cycle each, two for anything that changes the program counter.
+    let one = [0x0000u16, movlw(1), movwf(0x20), addwf(0x20, F), bsf(0x20, 0), movlb(0),
+               movlp(0), addfsr(0, 1), moviw_off(0, 0), 0x0010, 0x0064, 0x3900, 0x0E20];
+    for op in one {
+        let c = run(&[op, SLEEP]);
+        assert_eq!(c.cycles, 2, "opcode {op:#06x}");
+    }
+    // GOTO, BRA, BRW, CALL+RETURN, CALLW+RETLW, taken and untaken skips.
+    assert_eq!(run(&[goto(1), SLEEP]).cycles, 3);
+    assert_eq!(run(&[bra(0), SLEEP]).cycles, 3);
+    assert_eq!(run(&[0x000B, SLEEP]).cycles, 3);
+    assert_eq!(run(&[call(2), SLEEP, 0x0008]).cycles, 5);
+    assert_eq!(run(&[movlw(3), 0x000A, SLEEP, 0x3400]).cycles, 6);
+    assert_eq!(run(&[btfsc(0x20, 0), 0x0000, SLEEP]).cycles, 3);
+    assert_eq!(run(&[bsf(0x20, 0), btfsc(0x20, 0), 0x0000, SLEEP]).cycles, 4);
+    assert_eq!(run(&[movlw(1), movwf(0x20), 0x0B00 | F | 0x20, 0x0000, SLEEP]).cycles, 5);
+}

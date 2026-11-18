@@ -8,12 +8,16 @@ the simulator and compiler.
 
 ## Status
 
+Everything below runs on the simulator; hardware work has not started.
+[docs/status.md](docs/status.md) tracks each exit criterion of the plan's
+gates G0 to G2.
+
 | Stage | Content | State |
 |---|---|---|
 | 1 | Repository, CI, releases | done |
 | 2 | Test programs and XC8 reference binaries | done |
 | 3 | Simulator and benchmark runner | done |
-| 4 | LLVM backend, C working | first version: all test programs and 97% of the GCC C torture tests that fit the device pass on the simulator |
+| 4 | LLVM backend, C working | done: 97% of the GCC C torture tests that fit the device pass, picolibc builds and its tests pass |
 
 ## Layout
 
