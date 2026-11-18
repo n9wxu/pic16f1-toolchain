@@ -1,0 +1,10 @@
+{
+ "program": "sort",
+ "compiler": "xc8",
+ "compiler_version": "4.00",
+ "device": "PIC16F1937",
+ "device_pack": "PIC12-16F1xxx_DFP 1.10.270",
+ "flags": "-O3 -std=c99",
+ "program_words": 556,
+ "data_bytes": 94
+}

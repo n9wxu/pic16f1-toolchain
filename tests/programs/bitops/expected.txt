@@ -1,0 +1,4 @@
+pop=0400
+rev=FF40
+par=00AA
+latch=0091

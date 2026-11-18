@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    name: Simulator and reference binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build simulator
+        run: cargo build --release --locked --manifest-path sim/Cargo.toml
+
+      - name: Simulator unit tests
+        run: cargo test --release --locked --manifest-path sim/Cargo.toml
+
+      - name: Expected outputs match a native build of each program
+        run: |
+          status=0
+          for dir in tests/programs/*/; do
+            prog=$(basename "$dir")
+            [ "$prog" = timer_isr ] && continue   # needs a real Timer0
+            if ! scripts/host-run.sh "$prog" | cmp -s - "$dir/expected.txt"; then
+              echo "::error::$prog: native output differs from expected.txt"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Run reference binaries on the simulator
+        run: python3 tools/bench.py --markdown bench-report.md --json bench-report.json
+
+      - name: Add report to job summary
+        if: always()
+        run: cat bench-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-report
+          path: |
+            bench-report.md
+            bench-report.json

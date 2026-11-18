@@ -1,0 +1,5149 @@
+{
+ "name": "PIC16F1937",
+ "arch": "16Exxx",
+ "source": {
+  "pack": "Microchip.PIC12-16F1xxx_DFP",
+  "version": "1.10.270",
+  "file": "edc/PIC16F1937.PIC",
+  "sha256": "1c8309cdf88cc59a4d411d750fca5d30a8289fa107daff9a6a99432a7d43be89",
+  "license": "Apache-2.0 (Microchip Technology Inc.)"
+ },
+ "hw_stack_depth": 16,
+ "flash": {
+  "pages": [
+   {
+    "begin": 0,
+    "end": 2048
+   },
+   {
+    "begin": 2048,
+    "end": 4096
+   },
+   {
+    "begin": 4096,
+    "end": 6144
+   },
+   {
+    "begin": 6144,
+    "end": 8192
+   }
+  ],
+  "words": 8192
+ },
+ "user_id": {
+  "begin": 32768,
+  "end": 32772
+ },
+ "device_id": {
+  "addr": 32774,
+  "mask": 16352,
+  "value": 9088
+ },
+ "eeprom": {
+  "hex_begin": 61440,
+  "bytes": 256
+ },
+ "config": [
+  {
+   "name": "CONFIG1",
+   "addr": 32775,
+   "default": 16383,
+   "impl": 16383,
+   "fields": [
+    {
+     "name": "FOSC",
+     "bit": 0,
+     "width": 3,
+     "values": {
+      "ECH": 7,
+      "ECM": 6,
+      "ECL": 5,
+      "INTOSC": 4,
+      "EXTRC": 3,
+      "HS": 2,
+      "XT": 1,
+      "LP": 0
+     }
+    },
+    {
+     "name": "WDTE",
+     "bit": 3,
+     "width": 2,
+     "values": {
+      "ON": 3,
+      "NSLEEP": 2,
+      "SWDTEN": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "PWRTE",
+     "bit": 5,
+     "width": 1,
+     "values": {
+      "OFF": 1,
+      "ON": 0
+     }
+    },
+    {
+     "name": "MCLRE",
+     "bit": 6,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "CP",
+     "bit": 7,
+     "width": 1,
+     "values": {
+      "OFF": 1,
+      "ON": 0
+     }
+    },
+    {
+     "name": "CPD",
+     "bit": 8,
+     "width": 1,
+     "values": {
+      "OFF": 1,
+      "ON": 0
+     }
+    },
+    {
+     "name": "BOREN",
+     "bit": 9,
+     "width": 2,
+     "values": {
+      "ON": 3,
+      "NSLEEP": 2,
+      "SBODEN": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "CLKOUTEN",
+     "bit": 11,
+     "width": 1,
+     "values": {
+      "OFF": 1,
+      "ON": 0
+     }
+    },
+    {
+     "name": "IESO",
+     "bit": 12,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "FCMEN",
+     "bit": 13,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    }
+   ]
+  },
+  {
+   "name": "CONFIG2",
+   "addr": 32776,
+   "default": 16383,
+   "impl": 14131,
+   "fields": [
+    {
+     "name": "WRT",
+     "bit": 0,
+     "width": 2,
+     "values": {
+      "OFF": 3,
+      "BOOT": 2,
+      "HALF": 1,
+      "ALL": 0
+     }
+    },
+    {
+     "name": "VCAPEN",
+     "bit": 4,
+     "width": 2,
+     "values": {
+      "OFF": 3,
+      "RA6": 2,
+      "RA5": 1,
+      "RA0": 0
+     }
+    },
+    {
+     "name": "PLLEN",
+     "bit": 8,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "STVREN",
+     "bit": 9,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    },
+    {
+     "name": "BORV",
+     "bit": 10,
+     "width": 1,
+     "values": {
+      "LO": 1,
+      "HI": 0
+     }
+    },
+    {
+     "name": "DEBUG",
+     "bit": 12,
+     "width": 1,
+     "values": {
+      "OFF": 1,
+      "ON": 0
+     }
+    },
+    {
+     "name": "LVP",
+     "bit": 13,
+     "width": 1,
+     "values": {
+      "ON": 1,
+      "OFF": 0
+     }
+    }
+   ]
+  }
+ ],
+ "data_end": 4096,
+ "gpr": [
+  {
+   "begin": 32,
+   "end": 112,
+   "bank": 0
+  },
+  {
+   "begin": 160,
+   "end": 240,
+   "bank": 1
+  },
+  {
+   "begin": 288,
+   "end": 368,
+   "bank": 2
+  },
+  {
+   "begin": 416,
+   "end": 496,
+   "bank": 3
+  },
+  {
+   "begin": 544,
+   "end": 624,
+   "bank": 4
+  },
+  {
+   "begin": 672,
+   "end": 752,
+   "bank": 5
+  },
+  {
+   "begin": 800,
+   "end": 816,
+   "bank": 6
+  }
+ ],
+ "common_ram": {
+  "begin": 112,
+  "end": 128
+ },
+ "gpr_bytes": 496,
+ "core_register_count": 12,
+ "sfrs": [
+  {
+   "name": "INDF0",
+   "addr": 0,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "INDF0",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "INDF1",
+   "addr": 1,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "INDF1",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "PCL",
+   "addr": 2,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PCL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "STATUS",
+   "addr": 3,
+   "impl": 31,
+   "access": "---rrnnn",
+   "por": 24,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "C",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "DC",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "Z",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "nPD",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "nTO",
+     "bit": 4,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "FSR0L",
+   "addr": 4,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "FSR0L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR0H",
+   "addr": 5,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "FSR0H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR1L",
+   "addr": 6,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "FSR1L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR1H",
+   "addr": 7,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "FSR1H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "BSR",
+   "addr": 8,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 0,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "BSR",
+     "bit": 0,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "WREG",
+   "addr": 9,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "WREG0",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "PCLATH",
+   "addr": 10,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "PCLATH",
+     "bit": 0,
+     "width": 7
+    }
+   ]
+  },
+  {
+   "name": "INTCON",
+   "addr": 11,
+   "impl": 255,
+   "access": "nnnnnnnr",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "IOCIF",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "INTF",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TMR0IF",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "IOCIE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "INTE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TMR0IE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "PEIE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "GIE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PORTA",
+   "addr": 12,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "RA0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RA1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "RA2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RA3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "RA4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RA5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "RA6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "RA7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PORTB",
+   "addr": 13,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "RB0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RB1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "RB2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RB3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "RB4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RB5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "RB6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "RB7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PORTC",
+   "addr": 14,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "RC0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RC1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "RC2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RC3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "RC4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RC5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "RC6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "RC7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PORTD",
+   "addr": 15,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "RD0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RD1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "RD2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RD3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "RD4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RD5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "RD6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "RD7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PORTE",
+   "addr": 16,
+   "impl": 15,
+   "access": "----rnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "RE0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RE1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "RE2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RE3",
+     "bit": 3,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIR1",
+   "addr": 17,
+   "impl": 255,
+   "access": "nnrrnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TMR1IF",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TMR2IF",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "CCP1IF",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SSPIF",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TXIF",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RCIF",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "ADIF",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TMR1GIF",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIR2",
+   "addr": 18,
+   "impl": 253,
+   "access": "nnnnnn-n",
+   "por": 0,
+   "por_known": 253,
+   "fields": [
+    {
+     "name": "CCP2IF",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LCDIF",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "BCLIF",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "EEIF",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "C1IF",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "C2IF",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "OSFIF",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIR3",
+   "addr": 19,
+   "impl": 122,
+   "access": "-nnnn-n-",
+   "por": 0,
+   "por_known": 122,
+   "fields": [
+    {
+     "name": "TMR4IF",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TMR6IF",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "CCP3IF",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "CCP4IF",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "CCP5IF",
+     "bit": 6,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TMR0",
+   "addr": 21,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "TMR0",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "TMR1L",
+   "addr": 22,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "TMR1L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "TMR1H",
+   "addr": 23,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "TMR1H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "T1CON",
+   "addr": 24,
+   "impl": 253,
+   "access": "nnnnnn-n",
+   "por": 0,
+   "por_known": 253,
+   "fields": [
+    {
+     "name": "TMR1ON",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "nT1SYNC",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "T1OSCEN",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "T1CKPS",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "TMR1CS",
+     "bit": 6,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "T1GCON",
+   "addr": 25,
+   "impl": 255,
+   "access": "nnnnnrnn",
+   "por": 0,
+   "por_known": 251,
+   "fields": [
+    {
+     "name": "T1GSS",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "T1GVAL",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "T1GGO_nDONE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "T1GSPM",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "T1GTM",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "T1GPOL",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TMR1GE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TMR2",
+   "addr": 26,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TMR2",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "PR2",
+   "addr": 27,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PR2",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "T2CON",
+   "addr": 28,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "T2CKPS",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "TMR2ON",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "T2OUTPS",
+     "bit": 3,
+     "width": 4
+    }
+   ]
+  },
+  {
+   "name": "CPSCON0",
+   "addr": 30,
+   "impl": 143,
+   "access": "n---nnrn",
+   "por": 0,
+   "por_known": 143,
+   "fields": [
+    {
+     "name": "T0XCS",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "CPSOUT",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "CPSRNG",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "CPSON",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CPSCON1",
+   "addr": 31,
+   "impl": 15,
+   "access": "----nnnn",
+   "por": 0,
+   "por_known": 15,
+   "fields": [
+    {
+     "name": "CPSCH",
+     "bit": 0,
+     "width": 4
+    }
+   ]
+  },
+  {
+   "name": "TRISA",
+   "addr": 140,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TRISA0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRISA1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TRISA2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "TRISA3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TRISA4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TRISA5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "TRISA6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TRISA7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TRISB",
+   "addr": 141,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TRISB0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRISB1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TRISB2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "TRISB3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TRISB4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TRISB5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "TRISB6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TRISB7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TRISC",
+   "addr": 142,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TRISC0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRISC1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TRISC2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "TRISC3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TRISC4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TRISC5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "TRISC6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TRISC7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TRISD",
+   "addr": 143,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TRISD0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRISD1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TRISD2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "TRISD3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TRISD4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TRISD5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "TRISD6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TRISD7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TRISE",
+   "addr": 144,
+   "impl": 15,
+   "access": "----1nnn",
+   "por": 15,
+   "por_known": 15,
+   "fields": [
+    {
+     "name": "TRISE0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRISE1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TRISE2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "TRISE3",
+     "bit": 3,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIE1",
+   "addr": 145,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TMR1IE",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TMR2IE",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "CCP1IE",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SSPIE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TXIE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RCIE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "ADIE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "TMR1GIE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIE2",
+   "addr": 146,
+   "impl": 253,
+   "access": "nnnnnn-n",
+   "por": 0,
+   "por_known": 253,
+   "fields": [
+    {
+     "name": "CCP2IE",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LCDIE",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "BCLIE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "EEIE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "C1IE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "C2IE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "OSFIE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PIE3",
+   "addr": 147,
+   "impl": 122,
+   "access": "-nnnn-n-",
+   "por": 0,
+   "por_known": 122,
+   "fields": [
+    {
+     "name": "TMR4IE",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "TMR6IE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "CCP3IE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "CCP4IE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "CCP5IE",
+     "bit": 6,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "OPTION_REG",
+   "addr": 149,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PS0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "PS1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "PS2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "PSA",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "TMR0SE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TMR0CS",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "INTEDG",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "nWPUEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PCON",
+   "addr": 150,
+   "impl": 207,
+   "access": "nn--nnnn",
+   "por": 12,
+   "por_known": 204,
+   "fields": [
+    {
+     "name": "nBOR",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "nPOR",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "nRI",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "nRMCLR",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "STKUNF",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "STKOVF",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "WDTCON",
+   "addr": 151,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 22,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SWDTEN",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "WDTPS",
+     "bit": 1,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "OSCTUNE",
+   "addr": 152,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 0,
+   "por_known": 63,
+   "fields": [
+    {
+     "name": "TUN",
+     "bit": 0,
+     "width": 6
+    }
+   ]
+  },
+  {
+   "name": "OSCCON",
+   "addr": 153,
+   "impl": 251,
+   "access": "nnnnn-nn",
+   "por": 56,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SCS",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "IRCF",
+     "bit": 3,
+     "width": 4
+    },
+    {
+     "name": "SPLLEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "OSCSTAT",
+   "addr": 154,
+   "impl": 255,
+   "access": "rrrrrrrr",
+   "por": 0,
+   "por_known": 219,
+   "fields": [
+    {
+     "name": "HFIOFS",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LFIOFR",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "MFIOFR",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "HFIOFL",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "HFIOFR",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "OSTS",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "PLLR",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "T1OSCR",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "ADRESL",
+   "addr": 155,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "ADRESL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "ADRESH",
+   "addr": 156,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "ADRESH",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "ADCON0",
+   "addr": 157,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "ADON",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "GO_nDONE",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "CHS",
+     "bit": 2,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "ADCON1",
+   "addr": 158,
+   "impl": 247,
+   "access": "nnnn-nnn",
+   "por": 0,
+   "por_known": 247,
+   "fields": [
+    {
+     "name": "ADPREF",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "ADNREF",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "ADCS",
+     "bit": 4,
+     "width": 3
+    },
+    {
+     "name": "ADFM",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LATA",
+   "addr": 268,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "LATA0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LATA1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "LATA2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "LATA3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "LATA4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LATA5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "LATA6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LATA7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LATB",
+   "addr": 269,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "LATB0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LATB1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "LATB2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "LATB3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "LATB4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LATB5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "LATB6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LATB7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LATC",
+   "addr": 270,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "LATC0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LATC1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "LATC2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "LATC3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "LATC4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LATC5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "LATC6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LATC7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LATD",
+   "addr": 271,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "LATD0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LATD1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "LATD2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "LATD3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "LATD4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LATD5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "LATD6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LATD7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LATE",
+   "addr": 272,
+   "impl": 15,
+   "access": "----rnnn",
+   "por": 8,
+   "por_known": 8,
+   "fields": [
+    {
+     "name": "LATE0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "LATE1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "LATE2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "LATE3",
+     "bit": 3,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CM1CON0",
+   "addr": 273,
+   "impl": 247,
+   "access": "nrnn-nnn",
+   "por": 4,
+   "por_known": 247,
+   "fields": [
+    {
+     "name": "C1SYNC",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "C1HYS",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "C1SP",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "C1POL",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "C1OE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "C1OUT",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "C1ON",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CM1CON1",
+   "addr": 274,
+   "impl": 243,
+   "access": "nnnn--nn",
+   "por": 0,
+   "por_known": 243,
+   "fields": [
+    {
+     "name": "C1NCH",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "C1PCH",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "C1INTN",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "C1INTP",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CM2CON0",
+   "addr": 275,
+   "impl": 247,
+   "access": "nrnn-nnn",
+   "por": 4,
+   "por_known": 247,
+   "fields": [
+    {
+     "name": "C2SYNC",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "C2HYS",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "C2SP",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "C2POL",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "C2OE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "C2OUT",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "C2ON",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CM2CON1",
+   "addr": 276,
+   "impl": 243,
+   "access": "nnnn--nn",
+   "por": 0,
+   "por_known": 243,
+   "fields": [
+    {
+     "name": "C2NCH",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "C2PCH",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "C2INTN",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "C2INTP",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CMOUT",
+   "addr": 277,
+   "impl": 3,
+   "access": "------rr",
+   "por": 0,
+   "por_known": 3,
+   "fields": [
+    {
+     "name": "MC1OUT",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "MC2OUT",
+     "bit": 1,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "BORCON",
+   "addr": 278,
+   "impl": 129,
+   "access": "n------r",
+   "por": 128,
+   "por_known": 128,
+   "fields": [
+    {
+     "name": "BORRDY",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SBOREN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "FVRCON",
+   "addr": 279,
+   "impl": 255,
+   "access": "nrnnnnnn",
+   "por": 0,
+   "por_known": 191,
+   "fields": [
+    {
+     "name": "ADFVR",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "CDAFVR",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "TSRNG",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TSEN",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "FVRRDY",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "FVREN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "DACCON0",
+   "addr": 280,
+   "impl": 237,
+   "access": "nnn-nn-n",
+   "por": 0,
+   "por_known": 237,
+   "fields": [
+    {
+     "name": "DACNSS",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "DACPSS",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "DACOE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "DACLPS",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "DACEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "DACCON1",
+   "addr": 281,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 0,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "DACR",
+     "bit": 0,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "SRCON0",
+   "addr": 282,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SRPR",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SRPS",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SRNQEN",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SRQEN",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SRCLK",
+     "bit": 4,
+     "width": 3
+    },
+    {
+     "name": "SRLEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "SRCON1",
+   "addr": 283,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SRRC1E",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SRRC2E",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SRRCKE",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SRRPE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SRSC1E",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SRSC2E",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SRSCKE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SRSPE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "APFCON",
+   "addr": 285,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "CCP2SEL",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SSSEL",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "C2OUTSEL",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SRNQSEL",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "P2BSEL",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "T1GSEL",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "CCP3SEL",
+     "bit": 6,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "ANSELA",
+   "addr": 396,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 63,
+   "por_known": 63,
+   "fields": [
+    {
+     "name": "ANSA0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "ANSA1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "ANSA2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "ANSA3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "ANSA4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "ANSA5",
+     "bit": 5,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "ANSELB",
+   "addr": 397,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 63,
+   "por_known": 63,
+   "fields": [
+    {
+     "name": "ANSB0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "ANSB1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "ANSB2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "ANSB3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "ANSB4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "ANSB5",
+     "bit": 5,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "ANSELD",
+   "addr": 399,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "ANSD0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "ANSD1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "ANSD2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "ANSD3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "ANSD4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "ANSD5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "ANSD6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "ANSD7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "ANSELE",
+   "addr": 400,
+   "impl": 7,
+   "access": "-----nnn",
+   "por": 7,
+   "por_known": 7,
+   "fields": [
+    {
+     "name": "ANSE0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "ANSE1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "ANSE2",
+     "bit": 2,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "EEADRL",
+   "addr": 401,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "EEADRL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "EEADRH",
+   "addr": 402,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 128,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "EEADRH",
+     "bit": 0,
+     "width": 7
+    }
+   ]
+  },
+  {
+   "name": "EEDATL",
+   "addr": 403,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "EEDATL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "EEDATH",
+   "addr": 404,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "EEDATH",
+     "bit": 0,
+     "width": 6
+    }
+   ]
+  },
+  {
+   "name": "EECON1",
+   "addr": 405,
+   "impl": 255,
+   "access": "nnnnnnss",
+   "por": 0,
+   "por_known": 247,
+   "fields": [
+    {
+     "name": "RD",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "WR",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "WREN",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "WRERR",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "FREE",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LWLO",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "CFGS",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "EEPGD",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "EECON2",
+   "addr": 406,
+   "impl": 255,
+   "access": "wwwwwwww",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "EECON2",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "RCREG",
+   "addr": 409,
+   "impl": 255,
+   "access": "rrrrrrrr",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "RCREG",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "TXREG",
+   "addr": 410,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TXREG",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "SP1BRGL",
+   "addr": 411,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SPBRGL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "SP1BRGH",
+   "addr": 412,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SPBRGH",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "RCSTA",
+   "addr": 413,
+   "impl": 255,
+   "access": "nnnnnrrr",
+   "por": 0,
+   "por_known": 254,
+   "fields": [
+    {
+     "name": "RX9D",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "OERR",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "FERR",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "ADDEN",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "CREN",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SREN",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "RX9",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SPEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TXSTA",
+   "addr": 414,
+   "impl": 255,
+   "access": "nnnnnnrn",
+   "por": 2,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TX9D",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "TRMT",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "BRGH",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SENDB",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SYNC",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "TXEN",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "TX9",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "CSRC",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "BAUDCON",
+   "addr": 415,
+   "impl": 219,
+   "access": "nr-nn-nn",
+   "por": 64,
+   "por_known": 219,
+   "fields": [
+    {
+     "name": "ABDEN",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "WUE",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "BRG16",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SCKP",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "RCIDL",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "ABDOVF",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "WPUB",
+   "addr": 525,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "WPUB0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "WPUB1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "WPUB2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "WPUB3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "WPUB4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "WPUB5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "WPUB6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "WPUB7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "WPUE",
+   "addr": 528,
+   "impl": 8,
+   "access": "----n---",
+   "por": 8,
+   "por_known": 8,
+   "fields": [
+    {
+     "name": "WPUE3",
+     "bit": 3,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "SSPBUF",
+   "addr": 529,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SSPBUF",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "SSPADD",
+   "addr": 530,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SSPADD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "SSPMSK",
+   "addr": 531,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SSPMSK",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "SSPSTAT",
+   "addr": 532,
+   "impl": 255,
+   "access": "nnrrrrrr",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "BF",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "UA",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "R_nW",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "S",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "P",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "D_nA",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "CKE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SMP",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "SSPCON1",
+   "addr": 533,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SSPM",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "CKP",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SSPEN",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SSPOV",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "WCOL",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "SSPCON2",
+   "addr": 534,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SEN",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "RSEN",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "PEN",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "RCEN",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "ACKEN",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "ACKDT",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "ACKSTAT",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "GCEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "SSPCON3",
+   "addr": 535,
+   "impl": 255,
+   "access": "rnnnnnnn",
+   "por": 0,
+   "por_known": 159,
+   "fields": [
+    {
+     "name": "DHEN",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "AHEN",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SBCDE",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SDAHT",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "BOEN",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SCIE",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "PCIE",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "ACKTIM",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPR1L",
+   "addr": 657,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR1L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCPR1H",
+   "addr": 658,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR1H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCP1CON",
+   "addr": 659,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "CCP1M",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "DC1B",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "P1M",
+     "bit": 6,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "PWM1CON",
+   "addr": 660,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "P1DC",
+     "bit": 0,
+     "width": 7
+    },
+    {
+     "name": "P1RSEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCP1AS",
+   "addr": 661,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PSS1BD",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "PSS1AC",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "CCP1AS",
+     "bit": 4,
+     "width": 3
+    },
+    {
+     "name": "CCP1ASE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PSTR1CON",
+   "addr": 662,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 1,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "STR1A",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "STR1B",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "STR1C",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "STR1D",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "STR1SYNC",
+     "bit": 4,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPR2L",
+   "addr": 664,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR2L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCPR2H",
+   "addr": 665,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR2H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCP2CON",
+   "addr": 666,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "CCP2M",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "DC2B",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "P2M",
+     "bit": 6,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "PWM2CON",
+   "addr": 667,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "P2DC",
+     "bit": 0,
+     "width": 7
+    },
+    {
+     "name": "P2RSEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCP2AS",
+   "addr": 668,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PSS2BD",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "PSS2AC",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "CCP2AS",
+     "bit": 4,
+     "width": 3
+    },
+    {
+     "name": "CCP2ASE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PSTR2CON",
+   "addr": 669,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 1,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "STR2A",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "STR2B",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "STR2C",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "STR2D",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "STR2SYNC",
+     "bit": 4,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPTMRS0",
+   "addr": 670,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "C1TSEL0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "C1TSEL1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "C2TSEL0",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "C2TSEL1",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "C3TSEL0",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "C3TSEL1",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "C4TSEL0",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "C4TSEL1",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPTMRS1",
+   "addr": 671,
+   "impl": 3,
+   "access": "------nn",
+   "por": 0,
+   "por_known": 3,
+   "fields": [
+    {
+     "name": "C5TSEL0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "C5TSEL1",
+     "bit": 1,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPR3L",
+   "addr": 785,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR3L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCPR3H",
+   "addr": 786,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR3H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCP3CON",
+   "addr": 787,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "CCP3M",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "DC3B",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "P3M",
+     "bit": 6,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "PWM3CON",
+   "addr": 788,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "P3DC",
+     "bit": 0,
+     "width": 7
+    },
+    {
+     "name": "P3RSEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCP3AS",
+   "addr": 789,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PSS3BD",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "PSS3AC",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "CCP3AS",
+     "bit": 4,
+     "width": 3
+    },
+    {
+     "name": "CCP3ASE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "PSTR3CON",
+   "addr": 790,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 1,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "STR3A",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "STR3B",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "STR3C",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "STR3D",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "STR3SYNC",
+     "bit": 4,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "CCPR4L",
+   "addr": 792,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR4L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCPR4H",
+   "addr": 793,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR4H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCP4CON",
+   "addr": 794,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 0,
+   "por_known": 63,
+   "fields": [
+    {
+     "name": "CCP4M",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "DC4B",
+     "bit": 4,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "CCPR5L",
+   "addr": 796,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR5L",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCPR5H",
+   "addr": 797,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "CCPR5H",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "CCP5CON",
+   "addr": 798,
+   "impl": 63,
+   "access": "--nnnnnn",
+   "por": 0,
+   "por_known": 63,
+   "fields": [
+    {
+     "name": "CCP5M",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "DC5B",
+     "bit": 4,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "IOCBP",
+   "addr": 916,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "IOCBP0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "IOCBP1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "IOCBP2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "IOCBP3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "IOCBP4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "IOCBP5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "IOCBP6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "IOCBP7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "IOCBN",
+   "addr": 917,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "IOCBN0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "IOCBN1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "IOCBN2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "IOCBN3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "IOCBN4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "IOCBN5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "IOCBN6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "IOCBN7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "IOCBF",
+   "addr": 918,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "IOCBF0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "IOCBF1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "IOCBF2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "IOCBF3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "IOCBF4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "IOCBF5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "IOCBF6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "IOCBF7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "TMR4",
+   "addr": 1045,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TMR4",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "PR4",
+   "addr": 1046,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PR4",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "T4CON",
+   "addr": 1047,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "T4CKPS",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "TMR4ON",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "T4OUTPS",
+     "bit": 3,
+     "width": 4
+    }
+   ]
+  },
+  {
+   "name": "TMR6",
+   "addr": 1052,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "TMR6",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "PR6",
+   "addr": 1053,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 255,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "PR6",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "T6CON",
+   "addr": 1054,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 127,
+   "fields": [
+    {
+     "name": "T6CKPS",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "TMR6ON",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "T6OUTPS",
+     "bit": 3,
+     "width": 4
+    }
+   ]
+  },
+  {
+   "name": "LCDCON",
+   "addr": 1937,
+   "impl": 239,
+   "access": "nnc-nnnn",
+   "por": 3,
+   "por_known": 239,
+   "fields": [
+    {
+     "name": "LMUX",
+     "bit": 0,
+     "width": 2
+    },
+    {
+     "name": "CS",
+     "bit": 2,
+     "width": 2
+    },
+    {
+     "name": "WERR",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SLPEN",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LCDEN",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDPS",
+   "addr": 1938,
+   "impl": 255,
+   "access": "nnrrnnnn",
+   "por": 3,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "LP",
+     "bit": 0,
+     "width": 4
+    },
+    {
+     "name": "WA",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "LCDA",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "BIASMD",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "WFT",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDREF",
+   "addr": 1939,
+   "impl": 238,
+   "access": "nnn-nnn-",
+   "por": 0,
+   "por_known": 238,
+   "fields": [
+    {
+     "name": "VLCD1PE",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "VLCD2PE",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "VLCD3PE",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "LCDIRI",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "LCDIRS",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "LCDIRE",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDCST",
+   "addr": 1940,
+   "impl": 7,
+   "access": "-----nnn",
+   "por": 0,
+   "por_known": 7,
+   "fields": [
+    {
+     "name": "LCDCST",
+     "bit": 0,
+     "width": 3
+    }
+   ]
+  },
+  {
+   "name": "LCDRL",
+   "addr": 1941,
+   "impl": 247,
+   "access": "nnnn-nnn",
+   "por": 0,
+   "por_known": 247,
+   "fields": [
+    {
+     "name": "LRLAT",
+     "bit": 0,
+     "width": 3
+    },
+    {
+     "name": "LRLBP",
+     "bit": 4,
+     "width": 2
+    },
+    {
+     "name": "LRLAP",
+     "bit": 6,
+     "width": 2
+    }
+   ]
+  },
+  {
+   "name": "LCDSE0",
+   "addr": 1944,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SE0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SE1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SE2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SE3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SE4",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SE5",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SE6",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SE7",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDSE1",
+   "addr": 1945,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SE8",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SE9",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SE10",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SE11",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SE12",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SE13",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SE14",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SE15",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDSE2",
+   "addr": 1946,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 255,
+   "fields": [
+    {
+     "name": "SE16",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SE17",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SE18",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SE19",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SE20",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SE21",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SE22",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SE23",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA0",
+   "addr": 1952,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG0COM0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG1COM0",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG2COM0",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG3COM0",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG4COM0",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG5COM0",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG6COM0",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG7COM0",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA1",
+   "addr": 1953,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG8COM0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG9COM0",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG10COM0",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG11COM0",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG12COM0",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG13COM0",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG14COM0",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG15COM0",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA2",
+   "addr": 1954,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG16COM0",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG17COM0",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG18COM0",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG19COM0",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG20COM0",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG21COM0",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG22COM0",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG23COM0",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA3",
+   "addr": 1955,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG0COM1",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG1COM1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG2COM1",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG3COM1",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG4COM1",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG5COM1",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG6COM1",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG7COM1",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA4",
+   "addr": 1956,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG8COM1",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG9COM1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG10COM1",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG11COM1",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG12COM1",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG13COM1",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG14COM1",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG15COM1",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA5",
+   "addr": 1957,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG16COM1",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG17COM1",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG18COM1",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG19COM1",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG20COM1",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG21COM1",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG22COM1",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG23COM1",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA6",
+   "addr": 1958,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG0COM2",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG1COM2",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG2COM2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG3COM2",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG4COM2",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG5COM2",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG6COM2",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG7COM2",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA7",
+   "addr": 1959,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG8COM2",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG9COM2",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG10COM2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG11COM2",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG12COM2",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG13COM2",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG14COM2",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG15COM2",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA8",
+   "addr": 1960,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG16COM2",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG17COM2",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG18COM2",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG19COM2",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG20COM2",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG21COM2",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG22COM2",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG23COM2",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA9",
+   "addr": 1961,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG0COM3",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG1COM3",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG2COM3",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG3COM3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG4COM3",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG5COM3",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG6COM3",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG7COM3",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA10",
+   "addr": 1962,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG8COM3",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG9COM3",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG10COM3",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG11COM3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG12COM3",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG13COM3",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG14COM3",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG15COM3",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "LCDDATA11",
+   "addr": 1963,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "SEG16COM3",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "SEG17COM3",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "SEG18COM3",
+     "bit": 2,
+     "width": 1
+    },
+    {
+     "name": "SEG19COM3",
+     "bit": 3,
+     "width": 1
+    },
+    {
+     "name": "SEG20COM3",
+     "bit": 4,
+     "width": 1
+    },
+    {
+     "name": "SEG21COM3",
+     "bit": 5,
+     "width": 1
+    },
+    {
+     "name": "SEG22COM3",
+     "bit": 6,
+     "width": 1
+    },
+    {
+     "name": "SEG23COM3",
+     "bit": 7,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "STATUS_SHAD",
+   "addr": 4068,
+   "impl": 7,
+   "access": "-----nnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "C_SHAD",
+     "bit": 0,
+     "width": 1
+    },
+    {
+     "name": "DC_SHAD",
+     "bit": 1,
+     "width": 1
+    },
+    {
+     "name": "Z_SHAD",
+     "bit": 2,
+     "width": 1
+    }
+   ]
+  },
+  {
+   "name": "WREG_SHAD",
+   "addr": 4069,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "WREG_SHAD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "BSR_SHAD",
+   "addr": 4070,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "BSR_SHAD",
+     "bit": 0,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "PCLATH_SHAD",
+   "addr": 4071,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "PCLATH_SHAD",
+     "bit": 0,
+     "width": 7
+    }
+   ]
+  },
+  {
+   "name": "FSR0L_SHAD",
+   "addr": 4072,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "FSR0L_SHAD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR0H_SHAD",
+   "addr": 4073,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "FSR0H_SHAD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR1L_SHAD",
+   "addr": 4074,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "FSR1L_SHAD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "FSR1H_SHAD",
+   "addr": 4075,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "FSR1H_SHAD",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "STKPTR",
+   "addr": 4077,
+   "impl": 31,
+   "access": "---nnnnn",
+   "por": 31,
+   "por_known": 31,
+   "fields": [
+    {
+     "name": "STKPTR",
+     "bit": 0,
+     "width": 5
+    }
+   ]
+  },
+  {
+   "name": "TOSL",
+   "addr": 4078,
+   "impl": 255,
+   "access": "nnnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "TOSL",
+     "bit": 0,
+     "width": 8
+    }
+   ]
+  },
+  {
+   "name": "TOSH",
+   "addr": 4079,
+   "impl": 127,
+   "access": "-nnnnnnn",
+   "por": 0,
+   "por_known": 0,
+   "fields": [
+    {
+     "name": "TOSH",
+     "bit": 0,
+     "width": 7
+    }
+   ]
+  }
+ ],
+ "joined_sfrs": [
+  {
+   "name": "FSR0",
+   "addr": 4,
+   "width": 16
+  },
+  {
+   "name": "FSR1",
+   "addr": 6,
+   "width": 16
+  },
+  {
+   "name": "TMR1",
+   "addr": 22,
+   "width": 16
+  },
+  {
+   "name": "ADRES",
+   "addr": 155,
+   "width": 16
+  },
+  {
+   "name": "EEADR",
+   "addr": 401,
+   "width": 16
+  },
+  {
+   "name": "EEDAT",
+   "addr": 403,
+   "width": 16
+  },
+  {
+   "name": "SP1BRG",
+   "addr": 411,
+   "width": 16
+  },
+  {
+   "name": "CCPR1",
+   "addr": 657,
+   "width": 16
+  },
+  {
+   "name": "CCPR2",
+   "addr": 664,
+   "width": 16
+  },
+  {
+   "name": "CCPR3",
+   "addr": 785,
+   "width": 16
+  },
+  {
+   "name": "CCPR4",
+   "addr": 792,
+   "width": 16
+  },
+  {
+   "name": "CCPR5",
+   "addr": 796,
+   "width": 16
+  }
+ ]
+}

@@ -1,0 +1,72 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the simulator for Linux and macOS, runs the
+# benchmark set, and publishes a GitHub release with the simulator binaries,
+# the XC8 reference binaries and the benchmark report.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  simulator:
+    name: Simulator (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          cargo build --release --locked --manifest-path sim/Cargo.toml
+          cargo test --release --locked --manifest-path sim/Cargo.toml
+          python3 tools/bench.py --markdown bench-report.md --json bench-report.json
+      - name: Package
+        run: |
+          name=pic16f1-sim-${GITHUB_REF_NAME}-${{ matrix.target }}
+          mkdir "$name"
+          cp sim/target/release/pic16f1-sim LICENSE README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sim-${{ matrix.target }}
+          path: pic16f1-sim-*.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'linux-x86_64'
+        with:
+          name: bench-report
+          path: bench-report.*
+
+  publish:
+    name: Publish release
+    needs: simulator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Package reference binaries and test programs
+        run: |
+          tar czf "dist/reference-binaries-${GITHUB_REF_NAME}.tar.gz" reference
+          tar czf "dist/test-programs-${GITHUB_REF_NAME}.tar.gz" tests
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Benchmark report"
+            echo
+            cat dist/bench-report.md
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/bench-report.md dist/bench-report.json \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md

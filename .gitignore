@@ -1,0 +1,12 @@
+/build/
+target/
+*.o
+*.d
+*.p1
+*.rlf
+*.sdb
+*.lst
+*.cmf
+*.hxl
+__pycache__/
+.DS_Store

@@ -1,0 +1,2 @@
+check=00F4
+table=0012

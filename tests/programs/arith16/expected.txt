@@ -1,0 +1,6 @@
+squares=029E
+mix=91DD
+signed=FF69
+shifts=65DB
+gcd=0015
+isqrt=00C8

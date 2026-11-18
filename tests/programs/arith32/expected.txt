@@ -1,0 +1,4 @@
+lcg=A3A5A0E3
+div=5180474E
+pow=00081B26
+signed=FFFBF3C4
