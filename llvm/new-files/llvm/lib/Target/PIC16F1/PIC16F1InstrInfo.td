@@ -459,6 +459,24 @@ def ST8ptr : Pseudo<(outs), (ins GPR8:$s, memptr:$a),
 def ST16ptr : Pseudo<(outs), (ins GPR16:$s, memptr:$a),
                      [(store GPR16:$s, addrptr16:$a)]>;
 
+// Read-modify-write of a directly addressed byte: one instruction on the
+// file register instead of load, operate, store. The byte is read once and
+// written once, as the separate load and store would, so this is also valid
+// for volatile objects such as special function registers.
+multiclass RMW<SDPatternOperator node> {
+  def mi : Pseudo<(outs), (ins memabs:$a, i8imm:$k),
+                  [(store (node (i8 (load addrabs:$a)), imm:$k), addrabs:$a)]>;
+  def mr : Pseudo<(outs), (ins memabs:$a, GPR8:$s),
+                  [(store (node (i8 (load addrabs:$a)), GPR8:$s), addrabs:$a)]>;
+}
+let AddedComplexity = 30 in {
+defm AND8 : RMW<and>;
+defm OR8 : RMW<or>;
+defm XOR8 : RMW<xor>;
+let Defs = [CARRY] in
+defm ADD8 : RMW<add>;
+}
+
 // Outgoing call arguments, stored at an offset from the stack pointer. The
 // call frame is reserved by the prologue, so these are stack-slot stores.
 def : Pat<(PICstoresp GPR8:$s, timm:$off), (ST8fi GPR8:$s, timm:$off, 0)>;

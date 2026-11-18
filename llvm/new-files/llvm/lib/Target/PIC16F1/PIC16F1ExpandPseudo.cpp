@@ -519,6 +519,60 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     E.opToFile(DECF, hi(MI.getOperand(0)));
     return true;
 
+  // --- Read-modify-write of a directly addressed byte ----------------------
+  case AND8mi:
+  case OR8mi:
+  case XOR8mi:
+  case ADD8mi:
+  case AND8mr:
+  case OR8mr:
+  case XOR8mr:
+  case ADD8mr: {
+    bool IsImm = Opc == AND8mi || Opc == OR8mi || Opc == XOR8mi || Opc == ADD8mi;
+    unsigned Op = (Opc == AND8mi || Opc == AND8mr)   ? ANDWF
+                  : (Opc == OR8mi || Opc == OR8mr)   ? IORWF
+                  : (Opc == XOR8mi || Opc == XOR8mr) ? XORWF
+                                                     : ADDWF;
+    // Pick a single instruction where one exists; otherwise W holds the
+    // other operand. W must be loaded before the bank is selected only in
+    // the sense that neither step disturbs the other.
+    unsigned Single = 0;
+    int Bit = -1;
+    if (IsImm) {
+      unsigned K = MI.getOperand(1).getImm() & 0xFF;
+      if (Op == ANDWF && singleBit(~K) >= 0) {
+        Single = BCF;
+        Bit = singleBit(~K);
+      } else if (Op == IORWF && singleBit(K) >= 0) {
+        Single = BSF;
+        Bit = singleBit(K);
+      } else if (Op == XORWF && K == 0xFF) {
+        Single = COMF;
+      } else if (Op == ADDWF && K == 1 && CarryDead) {
+        Single = INCF;
+      } else if (Op == ADDWF && K == 0xFF && CarryDead) {
+        Single = DECF;
+      } else if (Op == ANDWF && K == 0) {
+        Single = CLRF;
+      } else {
+        E.loadWImm(K);
+      }
+    } else {
+      E.loadW(lo(MI.getOperand(1)));
+    }
+    MachineOperand F = E.selectBank(MI.getOperand(0), 0);
+    if (Single == BCF || Single == BSF)
+      E.build(Single).add(F).addImm(Bit);
+    else if (Single == CLRF)
+      E.build(CLRF).add(F);
+    else
+      E.build(Single ? Single : Op).add(F).addImm(1);
+    // A constant address may name a core register this pass tracks.
+    if (F.isImm() && Emitter::isUnbanked(F.getImm()))
+      E.forgetAll();
+    return true;
+  }
+
   // --- Direct loads and stores ---------------------------------------------
   case LD8abs:
     E.loadDirect(lo(MI.getOperand(0)), MI.getOperand(1), 0);
