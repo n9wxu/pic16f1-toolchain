@@ -1,0 +1,113 @@
+//===-- PIC16F1TargetMachine.cpp - Target machine ---===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "PIC16F1TargetMachine.h"
+#include "PIC16F1.h"
+#include "PIC16F1MachineFunctionInfo.h"
+#include "TargetInfo/PIC16F1TargetInfo.h"
+#include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/IR/Function.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCSectionELF.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/Compiler.h"
+#include <optional>
+
+using namespace llvm;
+
+extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() {
+  RegisterTargetMachine<PIC16F1TargetMachine> X(getThePIC16F1Target());
+  PassRegistry &PR = *PassRegistry::getPassRegistry();
+  initializePIC16F1AsmPrinterPass(PR);
+  initializePIC16F1DAGToDAGISelLegacyPass(PR);
+  initializePIC16F1ExpandPseudoPass(PR);
+  initializePIC16F1ExpandBranchesPass(PR);
+}
+
+namespace {
+/// Interrupt handlers go in ".isr", which the linker script places at the
+/// interrupt vector (word address 4).
+class PIC16F1ObjectFile : public TargetLoweringObjectFileELF {
+public:
+  MCSection *SelectSectionForGlobal(const GlobalObject *GO, SectionKind Kind,
+                                    const TargetMachine &TM) const override {
+    if (const auto *F = dyn_cast<Function>(GO))
+      if (F->hasFnAttribute("interrupt"))
+        return getContext().getELFSection(".isr", ELF::SHT_PROGBITS,
+                                          ELF::SHF_ALLOC | ELF::SHF_EXECINSTR);
+    return TargetLoweringObjectFileELF::SelectSectionForGlobal(GO, Kind, TM);
+  }
+};
+} // namespace
+
+PIC16F1TargetMachine::PIC16F1TargetMachine(const Target &T, const Triple &TT,
+                                           StringRef CPU, StringRef FS,
+                                           const TargetOptions &Options,
+                                           std::optional<Reloc::Model> RM,
+                                           std::optional<CodeModel::Model> CM,
+                                           CodeGenOptLevel OL, bool JIT)
+    : CodeGenTargetMachineImpl(T, TT.computeDataLayout(), TT, CPU, FS, Options,
+                               RM.value_or(Reloc::Static),
+                               getEffectiveCodeModel(CM, CodeModel::Small), OL),
+      TLOF(std::make_unique<PIC16F1ObjectFile>()),
+      Subtarget(TT, std::string(CPU), std::string(FS), *this) {
+  initAsmInfo();
+}
+
+PIC16F1TargetMachine::~PIC16F1TargetMachine() = default;
+
+namespace {
+class PIC16F1PassConfig : public TargetPassConfig {
+public:
+  PIC16F1PassConfig(PIC16F1TargetMachine &TM, PassManagerBase &PM)
+      : TargetPassConfig(TM, PM) {}
+
+  PIC16F1TargetMachine &getPIC16F1TargetMachine() const {
+    return getTM<PIC16F1TargetMachine>();
+  }
+
+  void addIRPasses() override;
+  bool addInstSelector() override;
+  void addPreEmitPass() override;
+  void addPreEmitPass2() override;
+};
+} // namespace
+
+TargetPassConfig *PIC16F1TargetMachine::createPassConfig(PassManagerBase &PM) {
+  return new PIC16F1PassConfig(*this, PM);
+}
+
+MachineFunctionInfo *PIC16F1TargetMachine::createMachineFunctionInfo(
+    BumpPtrAllocator &Allocator, const Function &F,
+    const TargetSubtargetInfo *STI) const {
+  return PIC16F1MachineFunctionInfo::create<PIC16F1MachineFunctionInfo>(
+      Allocator, F, STI);
+}
+
+void PIC16F1PassConfig::addIRPasses() {
+  addPass(createAtomicExpandLegacyPass());
+  TargetPassConfig::addIRPasses();
+}
+
+bool PIC16F1PassConfig::addInstSelector() {
+  addPass(createPIC16F1ISelDag(getPIC16F1TargetMachine(), getOptLevel()));
+  return false;
+}
+
+void PIC16F1PassConfig::addPreEmitPass() {
+  addPass(createPIC16F1ExpandPseudoPass());
+  // Only branch pseudos are left; every other instruction now has its final
+  // size, so branch distances can be checked.
+  addPass(&BranchRelaxationPassID);
+}
+
+void PIC16F1PassConfig::addPreEmitPass2() {
+  addPass(createPIC16F1ExpandBranchesPass());
+}

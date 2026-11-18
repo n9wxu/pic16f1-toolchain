@@ -1,5 +1,5 @@
 /build/
-target/
+/sim/target/
 *.o
 *.d
 *.p1
