@@ -1,7 +1,8 @@
 # LLVM toolchain: design of the first working C compiler
 
 This describes what is implemented, as opposed to the full plan in
-[plan.md](plan.md). It is the plan's "C MVP" (workstream 2, stage B): correct
+[plan.md](plan.md). The precise rules are in the
+[specifications](spec/README.md). It is the plan's "C MVP" (workstream 2, stage B): correct
 first, with the simplest design that works.
 
 ## Components
