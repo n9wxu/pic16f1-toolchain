@@ -105,6 +105,7 @@ All run on the simulator; nothing has run on silicon yet.
 
 | Suite | Result |
 |---|---|
+| Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass |
 | Compiler tests (`tests/compiler`, 16 programs) | 60 of 60 builds pass |
 | GCC C torture, `execute` (1,701 tests) at `-O0` | 1,371 of the 1,407 that build pass (97.4%) |

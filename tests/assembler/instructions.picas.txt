@@ -1,0 +1,59 @@
+# Words produced by Microchip pic-as (MPLAB XC8 4.00) for instructions.s,
+# one per source line. Reference for scripts/test-assembler.sh.
+0000  nop
+0001  reset
+0008  return
+0009  retfie
+000A  callw
+000B  brw
+0010  moviw ++FSR0
+0015  moviw --FSR1
+0012  moviw FSR0++
+0017  moviw FSR1--
+001C  movwi ++FSR1
+001B  movwi FSR0--
+003F  movlb 31
+0063  sleep
+0064  clrwdt
+00A5  movwf 0x25
+0103  clrw
+01FF  clrf 0x7f
+0220  subwf 0x20, w
+03A1  decf 0x21, f
+0422  iorwf 0x22, w
+05A3  andwf 0x23, f
+06A4  xorwf 0x24, f
+0725  addwf 0x25, w
+0826  movf 0x26, w
+09A7  comf 0x27, f
+0AA8  incf 0x28, f
+0BA9  decfsz 0x29, f
+0CAA  rrf 0x2a, f
+0D2B  rlf 0x2b, w
+0EAC  swapf 0x2c, f
+0F2D  incfsz 0x2d, w
+1003  bcf 0x03, 0
+178B  bsf 0x0b, 7
+19B0  btfsc 0x30, 3
+1EB1  btfss 0x31, 5
+2123  call 0x123
+2FFF  goto 0x7ff
+30A5  movlw 0xa5
+3160  addfsr FSR1, -32
+311F  addfsr FSR0, 31
+31FF  movlp 0x7f
+3442  retlw 0x42
+35B2  lslf 0x32, f
+3633  lsrf 0x33, w
+37B4  asrf 0x34, f
+3801  iorlw 1
+3902  andlw 2
+3A03  xorlw 3
+3BB5  subwfb 0x35, f
+3C04  sublw 4
+3D36  addwfc 0x36, w
+3E05  addlw 5
+3F3D  moviw -3[FSR0]
+3F5F  moviw 31[FSR1]
+3FE0  movwi -32[FSR1]
+3F80  movwi 0[FSR0]

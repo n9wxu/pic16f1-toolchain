@@ -47,6 +47,9 @@ jobs:
           scripts/build-llvm.sh
           ccache --show-stats
 
+      - name: Assembler matches Microchip's encodings
+        run: scripts/test-assembler.sh build/toolchain/bin
+
       - name: Build the test programs with the new toolchain
         env:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc

@@ -205,7 +205,8 @@ def MOVWF : PICInst<(outs), (ins fileop:$f), "movwf\t$f"> {
   let Inst{13-7} = 0b0000001;
   let Inst{6-0} = f;
 }
-def CLRW : Implied<0b00000100000000, "clrw">;
+// The two low bits are "don't care"; Microchip's assembler sets them.
+def CLRW : Implied<0b00000100000011, "clrw">;
 
 def BCF   : BitOp<0b0100, "bcf">;
 def BSF   : BitOp<0b0101, "bsf">;
