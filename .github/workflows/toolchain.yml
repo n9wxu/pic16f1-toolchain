@@ -70,6 +70,14 @@ jobs:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc
         run: scripts/test-devices.sh
 
+      - name: Build picolibc and test it
+        env:
+          PIC16F1_CC: build/toolchain/bin/pic16f1-cc
+          PIC16F1_SIM: build/toolchain/bin/pic16f1-sim
+        run: |
+          scripts/build-picolibc.sh build/toolchain/bin
+          scripts/test-libc.sh
+
       - name: Compiler tests
         env:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc

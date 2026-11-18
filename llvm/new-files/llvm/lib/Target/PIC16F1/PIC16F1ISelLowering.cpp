@@ -143,10 +143,10 @@ std::pair<unsigned, const TargetRegisterClass *>
 PIC16F1TargetLowering::getRegForInlineAsmConstraint(
     const TargetRegisterInfo *TRI, StringRef Constraint, MVT VT) const {
   if (Constraint == "r") {
+    // A byte takes one register. Anything wider is split over 16-bit pairs.
     if (VT == MVT::i8)
       return {0U, &PIC16F1::GPR8RegClass};
-    if (VT == MVT::i16)
-      return {0U, &PIC16F1::GPR16RegClass};
+    return {0U, &PIC16F1::GPR16RegClass};
   }
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }

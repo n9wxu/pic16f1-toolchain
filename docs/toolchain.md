@@ -14,6 +14,7 @@ first, with the simplest design that works.
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
 | Runtime | `toolchain/runtime` | Startup code, multiply, divide, shifts, `memcpy` family; soft float from LLVM's compiler-rt |
 | Device files | `toolchain/include`, `toolchain/lib` | Generated from the device database |
+| C library | `toolchain/picolibc` | picolibc at a pinned commit, with a small patch; built for 32- and 64-bank devices |
 | Driver | `toolchain/bin/pic16f1-cc` | Compile, link, convert to HEX |
 
 LLVM itself is not stored here. `llvm/LLVM_VERSION` pins a release;
@@ -94,6 +95,24 @@ Relocations (`R_PIC16F1_*`): `LO8`, `HI8` (data address bytes), `PM_LO8`,
 The ELF-to-HEX step (`pic16f1-sim elf2hex`) expands the flash-data region to
 one word per byte.
 
+## Using the C library
+
+```c
+#include <stdio.h>
+#include <xc.h>
+
+static int uart_putc(char c, FILE *f)
+{
+    while (!PIR1bits.TXIF) { }
+    TXREG = c;
+    return c;
+}
+static FILE uart = FDEV_SETUP_STREAM(uart_putc, NULL, NULL, _FDEV_SETUP_WRITE);
+FILE *const stdout = &uart;
+```
+
+Build with `pic16f1-cc --libc`. `tests/libc/hello` is a complete example.
+
 ## Assembly syntax
 
 Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
@@ -109,8 +128,12 @@ All run on the simulator; nothing has run on silicon yet.
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass |
 | Compiler tests (`tests/compiler`, 16 programs) | 60 of 60 builds pass |
-| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,371 of the 1,407 that build pass (97.4%) |
-| GCC C torture, `execute` at `-Os` | 1,398 of the 1,435 that build pass (97.4%) |
+| Regression tests (`tests/lit`) | 13 of 13 pass |
+| One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
+| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,373 of the 1,409 that build pass (97.4%) |
+| GCC C torture, `execute` at `-Os` | 1,400 of the 1,437 that build pass (97.4%) |
+| picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass, 2 exceed 20 billion cycles, 35 do not build |
+| picolibc's tests on the PIC16F1937 | 53 pass, 1 exceeds the cycle limit, 86 do not build (51 are too big for 8K words) |
 
 About 270 torture tests do not build for this device: they need `malloc`,
 `printf`, a 32-bit `int`, variable-length arrays, nested functions, or more
@@ -123,12 +146,27 @@ recursion deeper than the 16-level return stack, loops too long for the
 simulator's cycle limit, or reliance on GCC-only attributes. The rest have
 not been examined one by one.
 
+### picolibc
+
+All of picolibc compiles. Its own tests were run from the directories `test`,
+`test-stdio`, `test-stdlib`, `test-string`, `test-ctype` and `test-stdbit`
+(141 programs; the math, POSIX, locale and semihosting tests were not run).
+On the PIC16F18877 no test gives a wrong result. Of the 35 that do not
+build, most need file I/O (`open`, `unlink`), `setjmp`, or standard input,
+none of which exist here, and 8 are too large even for 32K words.
+`test-abort` ends by calling `abort`, as it is meant to. Two string tests
+were still running at 20 billion cycles and were stopped.
+
 The torture tests are not in this repository. `tools/torture.py` explains
 how to fetch and run them.
 
 ## Known limits
 
-- No `printf`, no heap.
+- `printf` and the rest of the C library come from picolibc, built
+  separately (`scripts/build-picolibc.sh`) and selected with
+  `pic16f1-cc --libc`. `printf` handles integers only by default, and a
+  program using it is about 3,600 words. `setjmp` is not implemented.
+  `malloc` works; the heap sits between the data and the stack.
 - Floating point works (single precision; `double` is the same type) and
   matches IEEE results bit for bit in the tests, but uses LLVM's generic
   compiler-rt routines. Each of add, multiply and divide is 1,500 to 2,100

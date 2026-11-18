@@ -7,6 +7,7 @@
  *   0x802000 up   RAM in the linear view the FSR registers use
  *   0x808000 up   flash read as data through an FSR, one byte per word
  */
+/* Library variant: banks32 */
 OUTPUT_FORMAT("elf32-pic16f1")
 ENTRY(_start)
 
@@ -20,6 +21,8 @@ MEMORY
 
 /* Bytes of stack for the interrupt handler, if there is one. */
 PROVIDE(__isr_stack_size = 32);
+/* Bytes kept for the main stack when a heap is in use. */
+PROVIDE(__stack_size = 165);
 
 SECTIONS
 {
@@ -62,6 +65,11 @@ SECTIONS
 
   /* The main stack grows down from the end of RAM. */
   __stack_top = ORIGIN(ram) + LENGTH(ram);
+
+  /* malloc, if the program uses it, takes the RAM between the data and the
+   * space set aside for the stack. Nothing enforces the boundary. */
+  __heap_start = .;
+  __heap_end = __stack_top - __stack_size;
 
   .config : { KEEP(*(.config)) } > config
 

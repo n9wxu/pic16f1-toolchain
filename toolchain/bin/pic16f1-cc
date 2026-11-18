@@ -8,9 +8,14 @@ the startup code and runtime library, and converts the result to Intel HEX.
 With -o NAME.hex it also leaves NAME.elf beside it; any other -o name gets
 the ELF file. -c and -S stop after compiling.
 
+--libc compiles and links against picolibc (stdio, string, stdlib, math),
+if it has been built (scripts/build-picolibc.sh). The program must supply
+`stdout` for printf; see docs/toolchain.md.
+
 Tool locations can be overridden with PIC16F1_LLVM_BIN (clang, ld.lld),
-PIC16F1_LIB (crt0.o, libpicrt.a, linker scripts), PIC16F1_INCLUDE and
-PIC16F1_SIM (pic16f1-sim, used for the HEX conversion).
+PIC16F1_LIB (crt0.o, libpicrt.a, linker scripts), PIC16F1_INCLUDE,
+PIC16F1_LIBC (picolibc's install directory) and PIC16F1_SIM (pic16f1-sim,
+used for the HEX conversion).
 """
 import os
 import shutil
@@ -69,7 +74,7 @@ def main():
 
     output = None
     cpu = "pic16f1937"
-    compile_only = asm_only = False
+    compile_only = asm_only = use_libc = False
     sources, objects, cflags, ldflags = [], [], [], []
     i = 0
     while i < len(args):
@@ -83,6 +88,8 @@ def main():
             compile_only = True
         elif a == "-S":
             asm_only = True
+        elif a == "--libc":
+            use_libc = True
         elif a.startswith("-Wl,"):
             ldflags += a[4:].split(",")
         elif a.endswith((".c", ".S", ".s", ".ll")):
@@ -98,8 +105,30 @@ def main():
         sys.exit("pic16f1-cc: no input files")
 
     clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
-             "-ffreestanding", "-fno-builtin", "-ffunction-sections",
-             "-fdata-sections", "-isystem", inc] + cflags
+             "-fno-builtin", "-ffunction-sections", "-fdata-sections"]
+    libs = [os.path.join(lib, "libpicrt.a")]
+    if use_libc:
+        repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+        candidates = [os.environ.get("PIC16F1_LIBC"),
+                      os.path.join(HERE, "..", "picolibc"),
+                      os.path.join(repo, "build", "toolchain", "picolibc")]
+        # The linker script says whether the device has 32 or 64 banks; the
+        # library is built separately for each.
+        variant = "banks32"
+        ld = os.path.join(lib, cpu + ".ld")
+        if os.path.exists(ld) and "Library variant: banks64" in open(ld).read():
+            variant = "banks64"
+        candidates = [os.path.join(c, variant) for c in candidates if c]
+        libc = first_existing(
+            [c for c in candidates if os.path.exists(os.path.join(c, "lib", "libc.a"))]
+            or candidates, "picolibc (run scripts/build-picolibc.sh)")
+        clang += ["-isystem", os.path.join(libc, "include")]
+        # libc calls the runtime library and the runtime's float code is
+        # independent of libc, so libc goes first.
+        libs = [os.path.join(libc, "lib", "libc.a")] + libs
+    else:
+        clang += ["-ffreestanding"]
+    clang += ["-isystem", inc] + cflags
 
     if compile_only or asm_only:
         cmd = clang + ["-S" if asm_only else "-c"] + sources
@@ -121,8 +150,7 @@ def main():
         want_hex = output.endswith(".hex")
         elf = output[:-4] + ".elf" if want_hex else output
         run([os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
-             os.path.join(lib, "crt0.o")] + objects +
-            [os.path.join(lib, "libpicrt.a"), "-o", elf] + ldflags)
+             os.path.join(lib, "crt0.o")] + objects + libs + ["-o", elf] + ldflags)
         if want_hex:
             run([sim, "elf2hex", elf, output])
     return 0

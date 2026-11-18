@@ -27,6 +27,7 @@ the simulator and compiler.
 | `tests/compiler/` | Further tests for the new compiler: recursion, variadic calls, structs, 64-bit math, large frames, interrupt context |
 | `tests/assembler/` | Instruction encodings checked against Microchip `pic-as`, and a round-trip test |
 | `tests/lit/` | Regression tests for the assembler, linker and code generator (LLVM lit) |
+| `tests/libc/` | A `printf` program using picolibc |
 | `tests/devices/` | A program that must build and run on every device in the database |
 | `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
@@ -50,6 +51,7 @@ python3 tools/bench.py          # every reference binary, as a table
 ```sh
 scripts/llvm-setup.sh     # fetch the pinned LLVM release and apply the changes
 scripts/build-llvm.sh     # build clang, lld and the runtime into build/toolchain
+scripts/build-picolibc.sh # optional: the C library (printf, string.h, malloc)
 build/toolchain/bin/pic16f1-cc -mcpu=pic16f1937 -Os -I tests/common \
     -o hello.hex tests/programs/hello/main.c tests/common/bench.c
 build/toolchain/bin/pic16f1-sim run hello.hex

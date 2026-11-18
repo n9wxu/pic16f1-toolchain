@@ -1,0 +1,65 @@
+diff --git a/libc/include/machine/ieeefp.h b/libc/include/machine/ieeefp.h
+index 693e538..5cdd26b 100644
+--- a/libc/include/machine/ieeefp.h
++++ b/libc/include/machine/ieeefp.h
+@@ -512,6 +512,11 @@ warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ #endif
+ #endif
+ 
++#ifdef __PIC16F1__
++#define __IEEE_LITTLE_ENDIAN
++#define __SMALL_BITFIELDS /* 16 Bit INT */
++#endif
++
+ #ifdef __MSP430__
+ #define __IEEE_LITTLE_ENDIAN
+ #define __SMALL_BITFIELDS /* 16 Bit INT */
+diff --git a/libc/include/machine/setjmp.h b/libc/include/machine/setjmp.h
+index 84d700e..5e36cc4 100644
+--- a/libc/include/machine/setjmp.h
++++ b/libc/include/machine/setjmp.h
+@@ -51,6 +51,12 @@ _BEGIN_STD_C
+ #define _JBLEN 24
+ #endif
+ 
++#ifdef __PIC16F1__
++/* Not implemented; sized for R8-R13, FSR1 and a return address. */
++#define _JBLEN 10
++#define _JBTYPE unsigned char
++#endif
++
+ #ifdef __sparc__
+ /*
+  * onsstack,sigmask,sp,pc,npc,psr,g1,o0,wbcnt (sigcontext).
+diff --git a/libc/machine/pic16f1/meson.build b/libc/machine/pic16f1/meson.build
+new file mode 100644
+index 0000000..04d3c58
+--- /dev/null
++++ b/libc/machine/pic16f1/meson.build
+@@ -0,0 +1,18 @@
++# Microchip PIC16F1 (enhanced mid-range), LLVM toolchain.
++# setjmp/longjmp are not implemented yet; the library holds a placeholder.
++srcs_machine = [
++  'placeholder.c',
++]
++
++foreach params : targets
++  target = params['name']
++  target_dir = params['dir']
++  target_c_args = params['c_args']
++
++  set_variable('lib_machine' + target,
++	       static_library('machine' + target,
++			      srcs_machine,
++			      pic: use_pic,
++			      include_directories: inc,
++			      c_args: target_c_args + c_args + arg_fnobuiltin))
++endforeach
+diff --git a/libc/machine/pic16f1/placeholder.c b/libc/machine/pic16f1/placeholder.c
+new file mode 100644
+index 0000000..8fdb2d2
+--- /dev/null
++++ b/libc/machine/pic16f1/placeholder.c
+@@ -0,0 +1,2 @@
++/* PIC16F1 has no machine-specific library code yet. */
++typedef int __pic16f1_placeholder;

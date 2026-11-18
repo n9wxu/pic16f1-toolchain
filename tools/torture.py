@@ -60,14 +60,16 @@ def directives(path):
     return opts, reason
 
 
-def run_test(path, level, cc, sim, harness, max_cycles, tmp):
+def run_test(path, level, cc, sim, harness, max_cycles, tmp, flags=(), device="pic16f1937"):
     name = os.path.splitext(os.path.basename(path))[0]
     extra, reason = directives(path)
     if reason:
         return name, level, "unsupported", reason
+    extra = extra + [f.replace("{name}", name).replace("{dir}", os.path.dirname(path)) for f in flags]
     out = os.path.join(tmp, f"{name}-{level}.hex")
-    inc = os.path.join(os.path.dirname(harness), "include")
-    cmd = [cc, f"-{level}", "-isystem", inc] + RELAX + extra + ["-o", out, path, harness]
+    # The stand-in C library headers are only for builds without picolibc.
+    inc = [] if "--libc" in extra else ["-isystem", os.path.join(os.path.dirname(harness), "include")]
+    cmd = [cc, f"-{level}", f"-mcpu={device}"] + inc + RELAX + extra + ["-o", out, path, harness]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     except subprocess.TimeoutExpired:
@@ -83,7 +85,7 @@ def run_test(path, level, cc, sim, harness, max_cycles, tmp):
             return name, level, "crash", (lines[0] if lines else err.strip().splitlines()[0])[:300]
         lines = [l for l in err.splitlines() if "error" in l]
         return name, level, "unsupported", (lines[0] if lines else err.strip()[:200])[:300]
-    r = subprocess.run([sim, "run", "--json", "--max-cycles", str(max_cycles), out],
+    r = subprocess.run([sim, "run", "--device", device, "--json", "--max-cycles", str(max_cycles), out],
                        capture_output=True, text=True)
     for ext in (".hex", ".elf"):
         try:
@@ -111,6 +113,11 @@ def main():
     ap.add_argument("--max-cycles", type=int, default=30_000_000)
     ap.add_argument("--json", help="write full results here")
     ap.add_argument("--only", help="comma-separated test names")
+    ap.add_argument("--device", default="pic16f1937", help="device to build for and simulate")
+    ap.add_argument("--libc", action="store_true",
+                    help="build against picolibc, with a harness that provides stdout")
+    ap.add_argument("--cflag", action="append", default=[],
+                    help="extra compiler flag; {name} and {dir} are replaced per test")
     ap.add_argument("--cc", default=os.environ.get("PIC16F1_CC", os.path.join(ROOT, "toolchain", "bin", "pic16f1-cc")))
     ap.add_argument("--sim", default=os.path.join(ROOT, "sim", "target", "release", "pic16f1-sim"))
     args = ap.parse_args()
@@ -120,11 +127,13 @@ def main():
         want = set(args.only.split(","))
         files = [f for f in files if os.path.splitext(os.path.basename(f))[0] in want]
     levels = args.levels.split(",")
-    harness = os.path.join(ROOT, "tests", "torture", "harness.c")
+    harness = os.path.join(ROOT, "tests", "torture", "harness_libc.c" if args.libc else "harness.c")
+    flags = (["--libc"] if args.libc else []) + args.cflag
     results = []
     with tempfile.TemporaryDirectory() as tmp, \
             concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [pool.submit(run_test, f, lv, args.cc, args.sim, harness, args.max_cycles, tmp)
+        futures = [pool.submit(run_test, f, lv, args.cc, args.sim, harness, args.max_cycles, tmp, flags,
+                               args.device)
                    for f in files for lv in levels]
         for fut in concurrent.futures.as_completed(futures):
             results.append(fut.result())
