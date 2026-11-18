@@ -122,12 +122,13 @@ unsigned PIC16F1MCCodeEmitter::encodeExpr(const MCInst &MI, unsigned OpNo,
     return MO.getImm();
   const MCExpr *Expr = MO.getExpr();
   unsigned Kind = Default;
-  if (const auto *SE = dyn_cast<MCSpecifierExpr>(Expr))
+  if (const auto *SE = dyn_cast<MCSpecifierExpr>(Expr)) {
     Kind = fixupForSpecifier(SE->getSpecifier(), Default);
-  // A specifier applied to a constant is just a number.
-  int64_t Value = 0;
-  if (isa<MCSpecifierExpr>(Expr) && Expr->evaluateAsAbsolute(Value))
-    return Value;
+    // A specifier applied to a constant is just a number.
+    int64_t Value = 0;
+    if (SE->getSubExpr()->evaluateAsAbsolute(Value))
+      return PIC16F1::applySpecifier(SE->getSpecifier(), Value);
+  }
   Fixups.push_back(MCFixup::create(0, Expr, MCFixupKind(Kind),
                                    Kind == PIC16F1::fixup_bra9));
   return 0;

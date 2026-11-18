@@ -54,10 +54,14 @@ def pageop : Operand<i8> { let EncoderMethod = "encodePage"; }
 def calltarget : Operand<i16> { let EncoderMethod = "encodeCall"; }
 def bratarget : Operand<OtherVT> {
   let EncoderMethod = "encodeBra";
+  let DecoderMethod = "decodeBra";
   let OperandType = "OPERAND_PCREL";
 }
 def bit3 : Operand<i8>;
-def off6 : Operand<i8> { let EncoderMethod = "encodeOff6"; }
+def off6 : Operand<i8> {
+  let EncoderMethod = "encodeOff6";
+  let DecoderMethod = "decodeOff6";
+}
 
 // Code-generator operands.
 def cc : Operand<i8>;

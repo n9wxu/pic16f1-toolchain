@@ -47,8 +47,11 @@ jobs:
           scripts/build-llvm.sh
           ccache --show-stats
 
-      - name: Assembler matches Microchip's encodings
-        run: scripts/test-assembler.sh build/toolchain/bin
+      - name: Assembler matches Microchip's encodings and round-trips
+        run: scripts/test-assembler.sh build/llvm-build/bin
+
+      - name: Regression tests
+        run: python3 build/llvm-project/llvm/utils/lit/lit.py -v tests/lit
 
       - name: Build the test programs with the new toolchain
         env:

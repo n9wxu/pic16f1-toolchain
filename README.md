@@ -23,6 +23,8 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | `sim/` | Simulator (`pic16f1-sim`), written in Rust |
 | `tests/programs/` | Test and benchmark programs, each with its expected output |
 | `tests/compiler/` | Further tests for the new compiler: recursion, variadic calls, structs, 64-bit math, large frames, interrupt context |
+| `tests/assembler/` | Instruction encodings checked against Microchip `pic-as`, and a round-trip test |
+| `tests/lit/` | Regression tests for the assembler, linker and code generator (LLVM lit) |
 | `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
 | `tests/host/` | Stand-in headers for building the programs natively |

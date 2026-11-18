@@ -89,13 +89,9 @@ bool PIC16F1MCAsmInfo::evaluateAsRelocatableImpl(const MCSpecifierExpr &Expr,
   MCValue Value;
   if (!Expr.getSubExpr()->evaluateAsRelocatable(Value, Asm))
     return false;
-  if (Value.isAbsolute()) {
-    Res = MCValue::get(
-        PIC16F1::applySpecifier(Expr.getSpecifier(), Value.getConstant()));
-    return true;
-  }
-  // The fixup kind says which part of the address is wanted; the linker
-  // extracts it once the address is known.
+  // The fixup kind says which part of the address is wanted. The assembler
+  // extracts it when it resolves the fixup, or the linker does once the
+  // address is known, so the value passes through unchanged here.
   Res = MCValue::get(Value.getAddSym(), Value.getSubSym(), Value.getConstant(),
                      Expr.getSpecifier());
   return true;

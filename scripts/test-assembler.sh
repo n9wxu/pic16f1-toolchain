@@ -1,6 +1,8 @@
 #!/bin/sh
-# Assemble tests/assembler/instructions.s with llvm-mc and compare every
-# word with what Microchip's pic-as produced for the same source.
+# 1. Assemble tests/assembler/instructions.s with llvm-mc and compare every
+#    word with what Microchip's pic-as produced for the same source.
+# 2. Round trip: assemble tests/assembler/roundtrip.s, disassemble it,
+#    assemble the disassembly, and require identical bytes.
 #
 # Usage: scripts/test-assembler.sh [llvm-bin-dir]
 set -eu
@@ -26,3 +28,12 @@ for got, (want, text) in zip(mine, ref):
 print(f"{len(ref)} instructions compared with pic-as, {bad} mismatches")
 sys.exit(1 if bad else 0)
 PY
+
+"$bin/llvm-mc" -triple=pic16f1 -filetype=obj -o "$tmp/a.o" "$root/tests/assembler/roundtrip.s"
+"$bin/llvm-objdump" -d --no-show-raw-insn --no-leading-addr "$tmp/a.o" |
+    sed -n '/<.text>/,$p' | tail -n +2 > "$tmp/b.s"
+"$bin/llvm-mc" -triple=pic16f1 -filetype=obj -o "$tmp/b.o" "$tmp/b.s"
+"$bin/llvm-objcopy" -O binary -j .text "$tmp/a.o" "$tmp/a.bin"
+"$bin/llvm-objcopy" -O binary -j .text "$tmp/b.o" "$tmp/b.bin"
+cmp "$tmp/a.bin" "$tmp/b.bin"
+echo "round trip: $(($(wc -c < "$tmp/a.bin") / 2)) instructions reassemble to identical bytes"
