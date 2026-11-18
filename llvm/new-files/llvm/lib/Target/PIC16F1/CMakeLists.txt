@@ -29,6 +29,7 @@ add_llvm_target(PIC16F1CodeGen
   GISel/PIC16F1RegisterBankInfo.cpp
   PIC16F1AsmPrinter.cpp
   PIC16F1ExpandPseudo.cpp
+  PIC16F1Peephole.cpp
   PIC16F1FrameLowering.cpp
   PIC16F1ISelDAGToDAG.cpp
   PIC16F1ISelLowering.cpp

@@ -31,8 +31,9 @@ LLVM itself is not stored here. `llvm/LLVM_VERSION` pins a release;
   torture test SelectionDAG passes. See "Instruction selection" below.
 - **16-bit values are legal**, held in pairs of byte registers, as well as
   bytes. The plan has i8 as the only legal type.
-- **All frames are on the software stack.** Static frames, bank and page
-  placement, and the other optimizations of stages C and D are not started.
+- **All frames are on the software stack.** Static frames and the placement
+  passes of stages C and D are not started. The optimizations that are in
+  place are described under "Optimization" below.
 - **Test programs exit through `LATD` and `SLEEP`** rather than a
   simulator-only register, so the same binary runs on silicon.
 
@@ -95,6 +96,71 @@ until no rule applies, and two rules that undo each other would otherwise
 run for ever and allocate memory until the machine stops; one such pair in
 LLVM's generic rules did exactly that here and is now excluded
 (`hoist_logic_op_except_trunc` in `PIC16F1Combine.td`).
+
+## Optimization
+
+What runs after instruction selection, in order:
+
+| Step | What it does |
+|---|---|
+| Register allocation with usage across calls (LLVM's IPRA) | A function compiled before its caller tells the caller which registers it changes. The caller keeps values in the others without saving them, and a function that only its own file calls saves nothing. On from `-O1`; `-mllvm -enable-ipra=0` turns it off |
+| Pseudo expansion (`PIC16F1ExpandPseudo.cpp`) | Each pseudo instruction becomes machine instructions. Within a block it remembers what W, BSR and FSR0 hold and skips reloads |
+| Branch relaxation and branch expansion | A branch out of `BRA`'s reach becomes `GOTO` |
+| Peephole (`PIC16F1Peephole.cpp`) | Works on the final instructions, over whole functions; see below |
+
+The peephole pass models W, the Z and C flags and the sixteen bytes of
+common RAM that serve as registers. It
+
+- removes a load of W, or a store, that changes nothing, and a load done
+  only to set Z when Z already describes that register;
+- reads the original instead of a copy, which leaves the copy unused;
+- turns "copy a register, then operate on the copy" into the operation on
+  the original with the result stored once (`movlw k; addwf a, W; movwf d`
+  instead of copying `a` to `d` first);
+- removes instructions whose results nothing reads, from liveness computed
+  over the function with the actual argument, result and saved registers of
+  each call and return;
+- turns "load a byte, keep it in a register, test a bit of the register"
+  into a bit test of the byte.
+
+Any file register outside common RAM is treated as memory that may be a
+device register: an instruction that touches one is never removed, and the
+bit-test change keeps it at exactly one read. An instruction after a skip
+is never removed or split. `-mllvm -pic16f1-peephole=0` turns the pass off;
+`-mllvm -pic16f1-peephole-steps=N` selects its steps by bit, for finding a
+fault.
+
+Fixed costs that were removed:
+
+- **Startup code.** `crt0` is twelve words: set the stack pointer, call
+  `main`, call `exit`. The loops that copy initialised data and clear
+  `.bss` are separate library members (`copydata.S`, `clearbss.S`). The
+  compiler refers to `__do_copy_data` from every module that defines
+  initialised data and to `__do_clear_bss` from every module that defines
+  zeroed data, and that reference is what links the loop in. Assembly
+  sources that define data must make the reference themselves
+  (`.globl __do_copy_data`).
+- **Register saves in `main`** and in functions that do not return. Nothing
+  reads the saved registers back. A program that calls `main` itself from
+  the file that defines it is detected, and `main` then saves them as usual;
+  one that calls `main` from another file must compile the file defining
+  `main` with `-mmain-saves-registers` (`pic16f1-cc`) or
+  `-mllvm -pic16f1-main-saves-registers` (`clang`).
+- **Page selection.** With `-mcmodel=small` the compiler never emits `MOVLP`:
+  that is right when all code lies in the first 2K words, where PCLATH stays
+  0 from reset. Such code refers to `__pic16f1_one_page`, and the linker
+  script then fails the link if the code is larger. The default model,
+  `medium`, selects the page before every call. `pic16f1-cc` tries `small`
+  first when it compiles and links in one step and builds again for
+  `medium` if the link fails; with `-c` it uses `medium` unless told
+  otherwise. The runtime library exists for both (`libpicrt-small.a`,
+  `crt0-small.o`).
+- **Bank selection.** The linker starts a data section of up to 16 bytes in
+  the next bank if it would otherwise cross a bank boundary
+  (`pic16f1KeepInBank` in lld), and the compiler always gives each variable
+  its own section. So one `MOVLB` serves all the bytes of a variable up to
+  that size. Assembly sources must keep to the same rule: one variable per
+  section. The cost is up to 15 unused bytes of RAM at each bank boundary.
 
 ### Running the test suites safely
 
@@ -183,7 +249,7 @@ All run on the simulator; nothing has run on silicon yet.
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass |
 | Compiler tests (`tests/compiler`, 16 programs) | 60 of 60 builds pass |
-| Regression tests (`tests/lit`) | 14 of 14 pass |
+| Regression tests (`tests/lit`) | 18 of 18 pass |
 | One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
 | GCC C torture, `execute` (1,701 tests) at `-O0` | 1,388 of the 1,421 that build pass (97.7%) |
 | GCC C torture, `execute` at `-O1` | 1,403 of 1,440 (97.4%) |
@@ -234,11 +300,16 @@ how to fetch and run them.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - No debug information.
-- Code is about 1.2 times the size of XC8 `-Os` on the benchmark set (7,926
-  words against 6,601) and runs in 0.81 times the cycles (geometric mean;
-  six of the fifteen programs are slower). Every
-  access to a global sets the bank, pointer accesses reload FSR0 unless the
-  same pointer was just used, and values wider than a byte are shuffled
-  between the fourteen byte registers.
+- At `-Os` the benchmark set is 6,334 words against 6,601 for XC8 `-Os`
+  (0.96) and runs in 0.74 times the cycles (geometric mean). That is the
+  total: nine of the fifteen programs are still larger than XC8's (up to
+  1.35 times, `strings`) and five are slower (`arith32` 3.5 times, because
+  32-bit division is a plain C loop in the runtime; `strings`, `crc8tab`,
+  `structs`, `sieve`). `-O1` is 1.04 times XC8 `-O1` in size and `-O2`,
+  which inlines and unrolls for speed, 1.33 times XC8 `-O2`. The main
+  remaining costs: a pointer is copied into FSR0 for each access unless it
+  was just used (FSR0 is not a register the allocator can keep a pointer
+  in), a 16-bit variable in memory is loaded, changed and stored rather
+  than changed in place, and all frames are on the software stack.
 - Hardware stack depth is not analysed; the simulator stops on overflow.
 - Not yet run on silicon.

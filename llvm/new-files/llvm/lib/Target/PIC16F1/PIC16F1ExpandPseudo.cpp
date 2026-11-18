@@ -28,6 +28,8 @@
 #include "PIC16F1Subtarget.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
@@ -186,6 +188,19 @@ public:
 
   // --- Banked (direct) data access -----------------------------------------
 
+  /// True if byte \p Off of \p GV is known to be in the same bank as its
+  /// first byte. The linker (pic16f1KeepInBank in lld) keeps a section of
+  /// up to 16 bytes within one bank, and every variable has its own section
+  /// unless the program names one.
+  static bool inOneBank(const GlobalValue *GV, int64_t Off) {
+    const auto *Var = dyn_cast<GlobalVariable>(GV);
+    if (!Var || Var->hasSection() || !Var->getValueType()->isSized())
+      return false;
+    uint64_t Size =
+        Var->getParent()->getDataLayout().getTypeAllocSize(Var->getValueType());
+    return Size <= 16 && Off >= 0 && uint64_t(Off) < Size;
+  }
+
   /// Select the bank of the address in \p Addr plus \p Extra and return the
   /// file-register operand for it.
   MachineOperand selectBank(const MachineOperand &Addr, int64_t Extra) {
@@ -203,7 +218,8 @@ public:
     assert(Addr.isGlobal() && "direct address must be constant or global");
     const GlobalValue *GV = Addr.getGlobal();
     int64_t Off = Addr.getOffset() + Extra;
-    if (!(TrackValues && BSRGlobal == GV && BSROffset == Off)) {
+    if (!(TrackValues && BSRGlobal == GV &&
+          (BSROffset == Off || (inOneBank(GV, Off) && inOneBank(GV, BSROffset))))) {
       build(movlb()).add(MachineOperand::CreateGA(GV, Off, PIC16F1II::MO_BANK));
       BSRGlobal = GV;
       BSROffset = Off;
@@ -754,7 +770,8 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     Page.setTargetFlags(PIC16F1II::MO_PAGE);
     MachineOperand Target = MI.getOperand(0);
     Target.setTargetFlags(PIC16F1II::MO_NONE);
-    E.build(MOVLP).add(Page);
+    if (MI.getMF()->getTarget().getCodeModel() != CodeModel::Small)
+      E.build(MOVLP).add(Page);
     MachineInstrBuilder Call = E.build(CALL).add(Target);
     // Keep the register mask and implicit operands for later passes.
     for (const MachineOperand &MO : llvm::drop_begin(MI.operands()))
@@ -772,9 +789,15 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     E.forgetAll();
     return true;
   }
-  case RET:
-    E.build(RETURN);
+  case RET: {
+    // Keep the result registers on the instruction: the peephole pass
+    // reads them to know what is still needed.
+    MachineInstrBuilder Ret = E.build(RETURN);
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isReg() && MO.isImplicit())
+        Ret.add(MO);
     return true;
+  }
   case RETI:
     E.build(RETFIE);
     return true;
@@ -898,8 +921,9 @@ bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
             .addMBB(MI.getOperand(0).getMBB());
       } else if (Opc == PIC16F1::JMPFAR) {
         MachineBasicBlock *Target = MI.getOperand(0).getMBB();
-        BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVLP))
-            .addMBB(Target, PIC16F1II::MO_PAGE);
+        if (MF.getTarget().getCodeModel() != CodeModel::Small)
+          BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVLP))
+              .addMBB(Target, PIC16F1II::MO_PAGE);
         BuildMI(MBB, MI, DL, TII.get(PIC16F1::GOTO)).addMBB(Target);
       } else if (Opc == PIC16F1::JMPreg) {
         // PCLATH takes the high byte; writing PCL then performs the jump.

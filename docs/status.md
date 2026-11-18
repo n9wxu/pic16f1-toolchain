@@ -37,8 +37,14 @@ roles, and the pinned MPLAB X version.
 
 ## What G2 unlocks
 
-Optimization I (static frames, bank and page tracking, the verifier), C++,
-Rust, and LLDB. None of these is started. Code is currently about 1.2 times
-the size of XC8 `-Os`; the G3 target is within 15%.
+Optimization I, C++, Rust, and LLDB. Optimization I is under way: at `-Os`
+the benchmark set is 0.96 times the size of XC8 `-Os` and runs in 0.74 times
+the cycles, which meets the G3 size criterion (within 15%) in total, though
+nine of the fifteen programs are individually still larger. Done: a peephole
+pass over the final code, register usage across calls, startup code linked
+by need, a one-page code model, one bank selection per variable. Not
+started: static frames, FSR0 as an allocatable pointer register, the
+verifier, skip predication, stack-depth analysis. C++, Rust and LLDB are
+not started.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.

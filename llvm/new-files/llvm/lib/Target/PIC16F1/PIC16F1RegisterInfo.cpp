@@ -14,10 +14,16 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/IR/Function.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "pic16f1-reg-info"
+
+static cl::opt<bool> MainSavesRegisters(
+    "pic16f1-main-saves-registers", cl::Hidden, cl::init(false),
+    cl::desc("Make main save the callee-saved registers like any other "
+             "function, for programs that call main from another file"));
 
 #define GET_REGINFO_TARGET_DESC
 #include "PIC16F1GenRegisterInfo.inc"
@@ -29,6 +35,14 @@ const MCPhysReg *
 PIC16F1RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   if (MF->getFunction().hasFnAttribute("interrupt"))
     return CSR_Interrupt_SaveList;
+  // The startup code calls main and keeps nothing in registers across the
+  // call. A program that calls main itself (C allows it) from the file that
+  // defines it shows here as a use; one that calls it from another file
+  // needs -pic16f1-main-saves-registers (-mmain-saves-registers).
+  const Function &F = MF->getFunction();
+  if (F.doesNotReturn() || (!MainSavesRegisters && F.getName() == "main" &&
+                            F.use_empty() && !F.hasAddressTaken()))
+    return CSR_NoRegs_SaveList;
   return CSR_Normal_SaveList;
 }
 

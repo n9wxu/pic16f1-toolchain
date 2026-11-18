@@ -8,6 +8,18 @@ the startup code and runtime library, and converts the result to Intel HEX.
 With -o NAME.hex it also leaves NAME.elf beside it; any other -o name gets
 the ELF file. -c and -S stop after compiling.
 
+-mcmodel=small leaves out the page selection (MOVLP) before calls, which is
+right only for a program that fits in the first 2K words of flash; the
+linker checks. -mcmodel=medium always selects the page. When this driver
+compiles and links in one step and no model is given, it tries small first
+and falls back to medium if the program turns out too big. With -c or -S
+the default is medium.
+
+-mmain-saves-registers makes main save the callee-saved registers. Normally
+it does not, because the startup code keeps nothing in them; a program that
+calls main from another source file needs this option on the file that
+defines main.
+
 --libc compiles and links against picolibc (stdio, string, stdlib, math),
 if it has been built (scripts/build-picolibc.sh). The program must supply
 `stdout` for printf; see docs/toolchain.md.
@@ -77,6 +89,7 @@ def main():
     output = None
     cpu = "pic16f1937"
     compile_only = asm_only = use_libc = False
+    model = None
     sources, objects, cflags, ldflags = [], [], [], []
     i = 0
     while i < len(args):
@@ -90,6 +103,12 @@ def main():
             compile_only = True
         elif a == "-S":
             asm_only = True
+        elif a.startswith("-mcmodel="):
+            model = a[len("-mcmodel="):]
+            if model not in ("small", "medium"):
+                sys.exit("pic16f1-cc: -mcmodel must be small or medium")
+        elif a == "-mmain-saves-registers":
+            cflags += ["-mllvm", "-pic16f1-main-saves-registers"]
         elif a == "--libc":
             use_libc = True
         elif a.startswith("-Wl,"):
@@ -133,7 +152,7 @@ def main():
     clang += ["-isystem", inc] + cflags
 
     if compile_only or asm_only:
-        cmd = clang + ["-S" if asm_only else "-c"] + sources
+        cmd = clang + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
         if output:
             cmd += ["-o", output]
         run(cmd)
@@ -143,18 +162,41 @@ def main():
     if not os.path.exists(script):
         sys.exit(f"pic16f1-cc: no linker script for {cpu} ({script})")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        for n, src in enumerate(sources):
-            obj = os.path.join(tmp, f"{n}-{os.path.splitext(os.path.basename(src))[0]}.o")
-            run(clang + ["-c", src, "-o", obj])
-            objects.append(obj)
-        output = output or "a.hex"
-        want_hex = output.endswith(".hex")
-        elf = output[:-4] + ".elf" if want_hex else output
-        run([os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
-             os.path.join(lib, "crt0.o")] + objects + libs + ["-o", elf] + ldflags)
-        if want_hex:
-            run([sim, "elf2hex", elf, output])
+    output = output or "a.hex"
+    want_hex = output.endswith(".hex")
+    elf = output[:-4] + ".elf" if want_hex else output
+
+    def build(model, quiet):
+        """Compile and link for one code model; False if that fails."""
+        small = model == "small"
+        with tempfile.TemporaryDirectory() as tmp:
+            objs = []
+            for n, src in enumerate(sources):
+                obj = os.path.join(tmp, f"{n}-{os.path.splitext(os.path.basename(src))[0]}.o")
+                run(clang + [f"-mcmodel={model}"] + (["-DONE_PAGE"] if small and src.endswith(".S") else [])
+                    + ["-c", src, "-o", obj])
+                objs.append(obj)
+            # The runtime library exists for each model. picolibc is built
+            # for medium only, which is also correct in a small program.
+            rt = [l.replace("libpicrt.a", "libpicrt-small.a") if small else l for l in libs]
+            crt0 = os.path.join(lib, "crt0-small.o" if small else "crt0.o")
+            link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
+                    crt0] + objs + objects + rt + ["-o", elf] + ldflags
+            if quiet:
+                return subprocess.run(link, capture_output=True).returncode == 0
+            run(link)
+            return True
+
+    have_small = os.path.exists(os.path.join(lib, "libpicrt-small.a"))
+    if model == "small" or (model is None and have_small and not use_libc):
+        # Without an explicit model, a program too big for one page is
+        # simply built again for medium.
+        if not build("small", quiet=model is None):
+            build("medium", quiet=False)
+    else:
+        build("medium", quiet=False)
+    if want_hex:
+        run([sim, "elf2hex", elf, output])
     return 0
 
 

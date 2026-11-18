@@ -29,7 +29,12 @@ SECTIONS
   /* Reset vector at word 0, interrupt vector at word 4. */
   .reset 0x0 : { KEEP(*(.reset)) } > flash
   .isr 0x8 : { KEEP(*(.isr)) } > flash
-  .text : { *(.text .text.*) } > flash
+  /* Startup code first, in the order of its pieces (see crt0.S). */
+  .text :
+  {
+    KEEP(*(.init0)) KEEP(*(.init4)) KEEP(*(.init6)) KEEP(*(.init9))
+    *(.text .text.*)
+  } > flash
   __text_end = .;
 
   /* Constants follow the code in flash. Their addresses are in the FSR
@@ -75,6 +80,13 @@ SECTIONS
 
   __flash_words_used = (__text_end + 1) / 2 + SIZEOF(.rodata) + SIZEOF(.data);
   ASSERT(__flash_words_used <= 16384, "program does not fit in flash")
+
+  /* Code compiled with -mcmodel=small never sets PCLATH, which is right
+   * only if all code lies in the first page. Such code refers to
+   * __pic16f1_one_page. */
+  PROVIDE(__pic16f1_one_page = 1);
+  ASSERT(DEFINED(__pic16f1_one_page) ? __text_end <= 0x1000 : 1,
+         "code compiled with -mcmodel=small, but the program is larger than one page (2K words)")
 
   /DISCARD/ : { *(.note.GNU-stack) *(.comment) *(.eh_frame) *(.llvm_addrsig) }
 }

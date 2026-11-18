@@ -30,6 +30,9 @@ def CC_PIC16F1 : CallingConv<[
 ]>;
 
 def CSR_Normal : CalleeSavedRegs<(sequence "R%u", 8, 13)>;
+// For a function whose caller reads no register afterwards: main, called
+// once by the startup code, and functions that do not return.
+def CSR_NoRegs : CalleeSavedRegs<(add)>;
 
 // An interrupt handler preserves every register it touches. W, STATUS, BSR,
 // the FSRs and PCLATH are saved and restored by the hardware.

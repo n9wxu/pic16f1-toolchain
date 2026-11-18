@@ -29,7 +29,7 @@ cp "$root"/toolchain/include/*.h "$out/include/pic16f1/"
 cp "$root"/toolchain/lib/*.ld "$out/lib/pic16f1/"
 rt=$root/build/toolchain/lib/pic16f1
 if [ "$out/lib/pic16f1" != "$rt" ]; then
-    cp "$rt/crt0.o" "$rt/libpicrt.a" "$out/lib/pic16f1/"
+    cp "$rt"/crt0*.o "$rt"/libpicrt*.a "$out/lib/pic16f1/"
 fi
 if [ -x "$root/sim/target/release/pic16f1-sim" ]; then
     cp "$root/sim/target/release/pic16f1-sim" "$out/bin/"

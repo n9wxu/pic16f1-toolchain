@@ -13,14 +13,22 @@ rt=$root/toolchain/runtime
 mkdir -p "$out"
 cc="$bin/clang --target=pic16f1 -mcpu=pic16f1937 -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Os"
 
+# The library is built for each code model: libpicrt.a sets PCLATH before
+# every call; libpicrt-small.a (with crt0-small.o) is for programs that fit
+# in the first page and never sets it.
+build_all() {  # build_all <suffix> <extra flags>
+suffix=$1
+model=$2
 objs=""
 build() {  # build <source> : compile one file into the library
-    obj="$out/$(basename "${1%.*}").o"
-    $cc -w -c "$1" -o "$obj"
+    obj="$out/$(basename "${1%.*}")$suffix.o"
+    $cc $model -w -c "$1" -o "$obj"
     objs="$objs $obj"
 }
 
-$cc -c "$rt/crt0.S" -o "$out/crt0.o"
+$cc $model -c "$rt/crt0.S" -o "$out/crt0$suffix.o"
+build "$rt/copydata.S"
+build "$rt/clearbss.S"
 build "$rt/shift.S"
 build "$rt/muldiv.c"
 build "$rt/mem.c"
@@ -33,10 +41,13 @@ for f in addsf3 subsf3 mulsf3 divsf3 negsf2 comparesf2 fixsfsi fixunssfsi \
     build "$crt/$f.c"
 done
 
-rm -f "$out/libpicrt.a"
+rm -f "$out/libpicrt$suffix.a"
 # shellcheck disable=SC2086
-"$bin/llvm-ar" rcs "$out/libpicrt.a" $objs
+"$bin/llvm-ar" rcs "$out/libpicrt$suffix.a" $objs
 # shellcheck disable=SC2086
 rm -f $objs
+}
+build_all "" ""
+build_all "-small" "-mcmodel=small -DONE_PAGE"
 cp "$root"/toolchain/lib/*.ld "$out/"
 echo "runtime built in $out"

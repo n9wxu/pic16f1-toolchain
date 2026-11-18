@@ -31,6 +31,13 @@ public:
     return &Subtarget;
   }
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+  /// Use what is known about the registers a called function changes, when
+  /// it is compiled before its caller: the caller then need not keep
+  /// values out of registers the callee leaves alone, and a function only
+  /// this file calls need not save any. Off with -mllvm -enable-ipra=0.
+  bool useIPRA() const override {
+    return getOptLevel() != CodeGenOptLevel::None;
+  }
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();
   }

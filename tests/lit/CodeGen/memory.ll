@@ -5,14 +5,14 @@ target triple = "pic16f1"
 @k = constant [4 x i8] c"abc\00"
 
 ; A writable global is in RAM: select its bank, then address it directly.
-; Each byte sets the bank, since an object may straddle two banks.
+; The bank is selected once: the linker keeps a variable of up to 16 bytes
+; within one bank.
 define void @store(i16 %v) {
 ; CHECK-LABEL: store:
 ; CHECK:      movf 0x70, W
 ; CHECK-NEXT: movlb bank(g)
 ; CHECK-NEXT: movwf g
 ; CHECK-NEXT: movf 0x71, W
-; CHECK-NEXT: movlb bank(g+1)
 ; CHECK-NEXT: movwf g+1
   store i16 %v, ptr @g
   ret void

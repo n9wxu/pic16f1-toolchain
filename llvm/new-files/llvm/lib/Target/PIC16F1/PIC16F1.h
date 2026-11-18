@@ -82,6 +82,7 @@ FunctionPass *createPIC16F1ExpandPseudoPass();
 /// Turn the compare-and-branch pseudos into machine instructions. Runs after
 /// branch relaxation.
 FunctionPass *createPIC16F1ExpandBranchesPass();
+FunctionPass *createPIC16F1PeepholePass();
 
 FunctionPass *createPIC16F1PreLegalizerCombiner();
 FunctionPass *createPIC16F1PostLegalizerCombiner();
@@ -92,6 +93,7 @@ void initializePIC16F1AsmPrinterPass(PassRegistry &);
 void initializePIC16F1DAGToDAGISelLegacyPass(PassRegistry &);
 void initializePIC16F1ExpandPseudoPass(PassRegistry &);
 void initializePIC16F1ExpandBranchesPass(PassRegistry &);
+void initializePIC16F1PeepholePass(PassRegistry &);
 
 } // namespace llvm
 

@@ -17,6 +17,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
@@ -24,6 +25,7 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -39,6 +41,7 @@ public:
   StringRef getPassName() const override { return "PIC16F1 Assembly Printer"; }
 
   void emitInstruction(const MachineInstr *MI) override;
+  void emitEndOfAsmFile(Module &M) override;
   const MCExpr *lowerConstant(const Constant *CV, const Constant *BaseCV,
                               uint64_t Offset) override;
 
@@ -116,6 +119,39 @@ void PIC16F1AsmPrinter::emitInstruction(const MachineInstr *MI) {
     }
   }
   EmitToStreamer(*OutStreamer, Out);
+}
+
+/// The startup code copies initialised data to RAM and clears .bss only if
+/// something asks for it: those loops are library members that define
+/// __do_copy_data and __do_clear_bss. Refer to the one this module needs.
+void PIC16F1AsmPrinter::emitEndOfAsmFile(Module &M) {
+  bool NeedsCopy = false, NeedsClear = false;
+  for (const GlobalVariable &GV : M.globals()) {
+    // Not data of the program: llvm.used and the like.
+    if (GV.isDeclaration() || GV.hasAvailableExternallyLinkage() ||
+        GV.getName().starts_with("llvm.") || GV.getSection() == "llvm.metadata")
+      continue;
+    SectionKind Kind = TargetLoweringObjectFile::getKindForGlobal(&GV, TM);
+    if (Kind.isBSS() || Kind.isCommon())
+      NeedsClear = true;
+    else if (Kind.isWriteable())
+      NeedsCopy = true;
+    // A section the program names itself may be an input of either
+    // output section.
+    if (GV.hasSection() && Kind.isWriteable())
+      NeedsCopy = NeedsClear = true;
+  }
+  // Code that never sets PCLATH is only right when the whole program lies
+  // in the first page. This reference makes the linker script check that.
+  if (TM.getCodeModel() == CodeModel::Small)
+    OutStreamer->emitSymbolAttribute(
+        OutContext.getOrCreateSymbol("__pic16f1_one_page"), MCSA_Global);
+  if (NeedsCopy)
+    OutStreamer->emitSymbolAttribute(
+        OutContext.getOrCreateSymbol("__do_copy_data"), MCSA_Global);
+  if (NeedsClear)
+    OutStreamer->emitSymbolAttribute(
+        OutContext.getOrCreateSymbol("__do_clear_bss"), MCSA_Global);
 }
 
 const MCExpr *PIC16F1AsmPrinter::lowerConstant(const Constant *CV,

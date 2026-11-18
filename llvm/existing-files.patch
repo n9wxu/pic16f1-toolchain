@@ -111,7 +111,7 @@ index db7893c54..ed3e7583b 100644
    case llvm::Triple::ppc64le:
    case llvm::Triple::riscv32:
 diff --git a/clang/lib/Driver/ToolChains/CommonArgs.cpp b/clang/lib/Driver/ToolChains/CommonArgs.cpp
-index 08c06951c..dcedefcc6 100644
+index 08c06951c..4a54929d2 100644
 --- a/clang/lib/Driver/ToolChains/CommonArgs.cpp
 +++ b/clang/lib/Driver/ToolChains/CommonArgs.cpp
 @@ -758,6 +758,11 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
@@ -126,6 +126,16 @@ index 08c06951c..dcedefcc6 100644
    case llvm::Triple::m68k:
      return m68k::getM68kTargetCPU(Args);
  
+@@ -3279,6 +3284,9 @@ void tools::addMCModel(const Driver &D, const llvm::opt::ArgList &Args,
+       Ok = CM == "small" || CM == "medium" || CM == "large";
+     } else if (Triple.getArch() == llvm::Triple::lanai) {
+       Ok = llvm::is_contained({"small", "medium", "large"}, CM);
++    } else if (Triple.getArch() == llvm::Triple::pic16f1) {
++      // small: all code in the first page. medium: any number of pages.
++      Ok = llvm::is_contained({"small", "medium"}, CM);
+     }
+     if (Ok) {
+       CmdArgs.push_back(Args.MakeArgString("-mcmodel=" + CM));
 diff --git a/clang/lib/Sema/SemaDeclAttr.cpp b/clang/lib/Sema/SemaDeclAttr.cpp
 index 1b272b541..5873a2499 100644
 --- a/clang/lib/Sema/SemaDeclAttr.cpp
@@ -197,6 +207,45 @@ index 05c0f3f1c..111e5d729 100644
    case Triple::ppc:
    case Triple::ppcle:
      return EM_PPC;
+diff --git a/lld/ELF/LinkerScript.cpp b/lld/ELF/LinkerScript.cpp
+index 64fb717e1..48add0086 100644
+--- a/lld/ELF/LinkerScript.cpp
++++ b/lld/ELF/LinkerScript.cpp
+@@ -180,6 +180,25 @@ static void expandMemoryRegion(MemoryRegion *memRegion, uint64_t size,
+   memRegion->curPos += size;
+ }
+ 
++// PIC16F1 data memory is banked: 80 general-purpose bytes in each bank, laid
++// end to end in the linear view that starts at 0x2000 in the data space
++// (0x800000 here). Code reaches a variable directly only after selecting
++// its bank, and the compiler selects once for all the bytes of a variable.
++// So a small input section must not cross from one bank into the next:
++// start it in the next bank instead. The compiler puts every variable in a
++// section of its own. "Small" is up to 16 bytes, which covers scalars and
++// small structures and wastes at most 15 bytes at a bank boundary; the
++// compiler (PIC16F1ExpandPseudo.cpp) uses the same limit.
++static uint64_t pic16f1KeepInBank(uint64_t dot, uint64_t size) {
++  const uint64_t base = 0x802000, end = 0x802FF0, bank = 80, small = 16;
++  if (dot < base || dot >= end || size <= 1 || size > small)
++    return dot;
++  uint64_t n = dot - base;
++  if (n / bank != (n + size - 1) / bank)
++    return base + (n / bank + 1) * bank;
++  return dot;
++}
++
+ void LinkerScript::expandMemoryRegions(uint64_t size) {
+   if (state->memRegion)
+     expandMemoryRegion(state->memRegion, size, state->outSec->name);
+@@ -1297,6 +1316,8 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
+       // disable the default handling if the return value is true.
+       if (!(synthesizeAlign && ctx.target->synthesizeAlign(dot, isec)))
+         dot = alignToPowerOf2(dot, isec->addralign);
++      if (ctx.arg.emachine == EM_PIC16F1)
++        dot = pic16f1KeepInBank(dot, isec->getSize());
+       isec->outSecOff = dot - sec->addr;
+       dot += isec->getSize();
+ 
 diff --git a/lld/ELF/ScriptParser.cpp b/lld/ELF/ScriptParser.cpp
 index 0c54fde48..c2ae44e99 100644
 --- a/lld/ELF/ScriptParser.cpp

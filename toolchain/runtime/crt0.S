@@ -7,64 +7,35 @@
 ;   0x03 STATUS (bit 2 = Z)   0x04/0x05 FSR0L/H   0x06/0x07 FSR1L/H
 ; 0x70/0x71 are the compiler's R0/R1 byte registers in common RAM.
 
+; Built twice: as crt0.o, and with -DONE_PAGE as crt0-small.o for programs
+; that fit in the first page, where PCLATH stays 0 from reset.
+#ifdef ONE_PAGE
+#define PAGESEL(target)
+    .globl  __pic16f1_one_page
+#else
+#define PAGESEL(target) movlp page(target)
+#endif
+
     .section .reset,"ax",@progbits
-    movlp   page(_start)
+    PAGESEL(_start)
     goto    _start
 
-    .text
+; Startup runs through the .init sections in order; the linker script places
+; them at the start of the code:
+;   .init0  _start
+;   .init4  copy initialised data to RAM      (copydata.S, in libpicrt.a)
+;   .init6  clear .bss                        (clearbss.S, in libpicrt.a)
+;   .init9  set the stack pointer, call main, call exit
+; The compiler refers to __do_copy_data from every module that defines
+; initialised data and to __do_clear_bss from every module that defines
+; zero-initialised data, which pulls the pieces out of the library. A
+; program without such data gets neither loop. Assembly sources that define
+; data must make the reference themselves:  .globl __do_copy_data
+    .section .init0,"ax",@progbits
     .globl  _start
 _start:
-    ; Copy initialised data from flash to RAM. FSR0 reads flash through the
-    ; 0x8000 data view; FSR1 writes RAM.
-    movlw   lo8(__data_load_start)
-    movwf   0x04
-    movlw   hi8(__data_load_start)
-    movwf   0x05
-    movlw   lo8(__data_start)
-    movwf   0x06
-    movlw   hi8(__data_start)
-    movwf   0x07
-    movlw   lo8(__data_size)
-    movwf   0x70
-    movlw   hi8(__data_size)
-    movwf   0x71
-.Lcopy:
-    movf    0x70, W
-    iorwf   0x71, W
-    btfsc   0x03, 2
-    bra     .Lcopied
-    moviw   FSR0++
-    movwi   FSR1++
-    movlw   1
-    subwf   0x70, F
-    movlw   0
-    subwfb  0x71, F
-    bra     .Lcopy
-.Lcopied:
 
-    ; Clear .bss.
-    movlw   lo8(__bss_start)
-    movwf   0x06
-    movlw   hi8(__bss_start)
-    movwf   0x07
-    movlw   lo8(__bss_size)
-    movwf   0x70
-    movlw   hi8(__bss_size)
-    movwf   0x71
-.Lclear:
-    movf    0x70, W
-    iorwf   0x71, W
-    btfsc   0x03, 2
-    bra     .Lcleared
-    movlw   0
-    movwi   FSR1++
-    movlw   1
-    subwf   0x70, F
-    movlw   0
-    subwfb  0x71, F
-    bra     .Lclear
-.Lcleared:
-
+    .section .init9,"ax",@progbits
     ; The data stack grows down from the end of RAM; FSR1 is its pointer.
     movlw   lo8(__stack_top)
     movwf   0x06
@@ -74,11 +45,11 @@ _start:
     ; No bank is selected here: MOVLB is encoded differently on 32- and
     ; 64-bank devices, and this file serves both. Compiled code selects the
     ; bank itself before every banked access.
-    movlp   page(main)
+    PAGESEL(main)
     call    main
 
     ; main's result is in R0:R1, which is also where exit takes its argument.
-    movlp   page(exit)
+    PAGESEL(exit)
     call    exit
 
     ; The default exit stops the processor. A program may define its own.

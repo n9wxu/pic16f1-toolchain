@@ -38,6 +38,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() 
   initializePIC16F1DAGToDAGISelLegacyPass(PR);
   initializePIC16F1ExpandPseudoPass(PR);
   initializePIC16F1ExpandBranchesPass(PR);
+  initializePIC16F1PeepholePass(PR);
 }
 
 namespace {
@@ -64,10 +65,19 @@ PIC16F1TargetMachine::PIC16F1TargetMachine(const Target &T, const Triple &TT,
                                            CodeGenOptLevel OL, bool JIT)
     : CodeGenTargetMachineImpl(T, TT.computeDataLayout(), TT, CPU, FS, Options,
                                RM.value_or(Reloc::Static),
-                               getEffectiveCodeModel(CM, CodeModel::Small), OL),
+                               getEffectiveCodeModel(CM, CodeModel::Medium), OL),
       TLOF(std::make_unique<PIC16F1ObjectFile>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
+  // Every variable gets a section of its own, whatever -fdata-sections
+  // says. The linker keeps a section that fits in a bank from crossing
+  // into the next one, and code relies on that: it selects the bank once
+  // for all the bytes of a variable.
+  this->Options.DataSections = true;
   initAsmInfo();
+  // Code models: "small" promises that all code lies in the first page (2K
+  // words), so PCLATH never needs setting before a call or a long jump.
+  // The linker checks the promise. The default, "medium", sets PCLATH
+  // every time.
   // Instruction selection is GlobalISel. A function it cannot handle yet
   // falls back to the SelectionDAG selector; -global-isel-abort=2 reports
   // each such function, and -global-isel=0 selects SelectionDAG throughout.
@@ -162,13 +172,19 @@ bool PIC16F1PassConfig::addGlobalInstructionSelect() {
   return false;
 }
 
-void PIC16F1PassConfig::addPreEmitPass() {
+void PIC16F1PassConfig::addPreEmitPass() {}
+
+void PIC16F1PassConfig::addPreEmitPass2() {
+  // Pseudo expansion comes after LLVM's collector of register usage, which
+  // runs between the two pre-emit hooks: the expanded instructions name
+  // file addresses, not registers, and the collector would take a function
+  // to change no register at all.
   addPass(createPIC16F1ExpandPseudoPass());
   // Only branch pseudos are left; every other instruction now has its final
   // size, so branch distances can be checked.
   addPass(&BranchRelaxationPassID);
-}
-
-void PIC16F1PassConfig::addPreEmitPass2() {
   addPass(createPIC16F1ExpandBranchesPass());
+  // Last, on the final instructions; it only removes instructions and
+  // changes operands, so branch distances can only shrink.
+  addPass(createPIC16F1PeepholePass());
 }

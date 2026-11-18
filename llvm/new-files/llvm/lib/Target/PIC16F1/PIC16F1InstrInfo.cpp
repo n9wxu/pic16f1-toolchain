@@ -415,7 +415,8 @@ unsigned PIC16F1InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   case PIC16F1::JMP:
     return 2;
   case PIC16F1::JMPFAR:
-    return 4;
+    // MOVLP and GOTO; in the one-page code model only the GOTO.
+    return MI.getMF()->getTarget().getCodeModel() == CodeModel::Small ? 2 : 4;
   case PIC16F1::JMPreg:
     return 8;
   case TargetOpcode::INLINEASM:
