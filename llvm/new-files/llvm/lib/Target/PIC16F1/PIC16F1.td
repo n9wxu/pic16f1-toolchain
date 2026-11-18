@@ -30,8 +30,10 @@ def : Proc<"pic16f18877", [FeatureBanks64]>;
 def : Proc<"pic16f15276", [FeatureBanks64]>;
 
 include "PIC16F1RegisterInfo.td"
+include "GISel/PIC16F1RegisterBanks.td"
 include "PIC16F1CallingConv.td"
 include "PIC16F1InstrInfo.td"
+include "PIC16F1Combine.td"
 
 defm : RemapAllTargetPseudoPointerOperands<GPR16>;
 

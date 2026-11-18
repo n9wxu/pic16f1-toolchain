@@ -386,6 +386,18 @@ def ADC16rr : Pseudo<(outs GPR16:$d), (ins GPR16:$a, GPR16:$b),
 def SBC16rr : Pseudo<(outs GPR16:$d), (ins GPR16:$a, GPR16:$b),
                      [(set GPR16:$d, (sube GPR16:$a, GPR16:$b))]>;
 }
+// The carry flag as a value: 1 if an add carried, or 1 if a subtract
+// borrowed (the flag is then clear). Must directly follow the add or
+// subtract.
+let Uses = [CARRY] in {
+def CARRY8 : Pseudo<(outs GPR8:$d), (ins), []>;
+def BORROW8 : Pseudo<(outs GPR8:$d), (ins), []>;
+}
+// Used only while GlobalISel selects a carry chain: it keeps the earlier
+// link from being removed as dead once the later link, which takes the
+// carry from the flag, no longer names the carry register. The earlier
+// link deletes it when it is selected.
+def CARRYUSE : Pseudo<(outs), (ins unknown:$c), []>;
 def : Pat<(addc GPR16:$a, GPR16:$b), (ADD16rr GPR16:$a, GPR16:$b)>;
 def : Pat<(addc GPR16:$a, imm:$k), (ADD16ri GPR16:$a, imm:$k)>;
 def : Pat<(subc GPR16:$a, GPR16:$b), (SUB16rr GPR16:$a, GPR16:$b)>;

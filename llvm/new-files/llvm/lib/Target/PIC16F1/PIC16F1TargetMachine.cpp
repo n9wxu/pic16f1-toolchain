@@ -10,7 +10,12 @@
 #include "PIC16F1.h"
 #include "PIC16F1MachineFunctionInfo.h"
 #include "TargetInfo/PIC16F1TargetInfo.h"
+#include "llvm/CodeGen/GlobalISel/IRTranslator.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
+#include "llvm/CodeGen/GlobalISel/Legalizer.h"
+#include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Function.h"
@@ -25,6 +30,9 @@ using namespace llvm;
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() {
   RegisterTargetMachine<PIC16F1TargetMachine> X(getThePIC16F1Target());
   PassRegistry &PR = *PassRegistry::getPassRegistry();
+  initializeGlobalISel(PR);
+  initializePIC16F1PreLegalizerCombinerPass(PR);
+  initializePIC16F1PostLegalizerCombinerPass(PR);
   initializePIC16F1AsmPrinterPass(PR);
   initializePIC16F1DAGToDAGISelLegacyPass(PR);
   initializePIC16F1ExpandPseudoPass(PR);
@@ -59,6 +67,11 @@ PIC16F1TargetMachine::PIC16F1TargetMachine(const Target &T, const Triple &TT,
       TLOF(std::make_unique<PIC16F1ObjectFile>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
+  // Instruction selection is GlobalISel. A function it cannot handle yet
+  // falls back to the SelectionDAG selector; -global-isel-abort=2 reports
+  // each such function, and -global-isel=0 selects SelectionDAG throughout.
+  setGlobalISel(true);
+  setGlobalISelAbort(GlobalISelAbortMode::Disable);
 }
 
 PIC16F1TargetMachine::~PIC16F1TargetMachine() = default;
@@ -75,6 +88,12 @@ public:
 
   void addIRPasses() override;
   bool addInstSelector() override;
+  bool addIRTranslator() override;
+  void addPreLegalizeMachineIR() override;
+  bool addLegalizeMachineIR() override;
+  void addPreRegBankSelect() override;
+  bool addRegBankSelect() override;
+  bool addGlobalInstructionSelect() override;
   void addPreEmitPass() override;
   void addPreEmitPass2() override;
 };
@@ -98,6 +117,36 @@ void PIC16F1PassConfig::addIRPasses() {
 
 bool PIC16F1PassConfig::addInstSelector() {
   addPass(createPIC16F1ISelDag(getPIC16F1TargetMachine(), getOptLevel()));
+  return false;
+}
+
+bool PIC16F1PassConfig::addIRTranslator() {
+  addPass(new IRTranslator(getOptLevel()));
+  return false;
+}
+
+void PIC16F1PassConfig::addPreLegalizeMachineIR() {
+  if (getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPIC16F1PreLegalizerCombiner());
+}
+
+void PIC16F1PassConfig::addPreRegBankSelect() {
+  if (getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPIC16F1PostLegalizerCombiner());
+}
+
+bool PIC16F1PassConfig::addLegalizeMachineIR() {
+  addPass(new Legalizer());
+  return false;
+}
+
+bool PIC16F1PassConfig::addRegBankSelect() {
+  addPass(new RegBankSelect());
+  return false;
+}
+
+bool PIC16F1PassConfig::addGlobalInstructionSelect() {
+  addPass(new InstructionSelect(getOptLevel()));
   return false;
 }
 

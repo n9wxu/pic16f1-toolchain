@@ -13,6 +13,11 @@
 #include "PIC16F1ISelLowering.h"
 #include "PIC16F1InstrInfo.h"
 #include "PIC16F1RegisterInfo.h"
+#include "llvm/CodeGen/GlobalISel/CallLowering.h"
+#include "llvm/CodeGen/GlobalISel/InlineAsmLowering.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
+#include "llvm/CodeGen/GlobalISel/LegalizerInfo.h"
+#include "llvm/CodeGen/RegisterBankInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include <string>
 
@@ -29,6 +34,13 @@ class PIC16F1Subtarget : public PIC16F1GenSubtargetInfo {
   PIC16F1TargetLowering TLInfo;
   std::unique_ptr<const SelectionDAGTargetInfo> TSInfo;
   PIC16F1FrameLowering FrameLowering;
+
+  // GlobalISel.
+  std::unique_ptr<CallLowering> CallLoweringInfo;
+  std::unique_ptr<InlineAsmLowering> InlineAsmLoweringInfo;
+  std::unique_ptr<LegalizerInfo> Legalizer;
+  std::unique_ptr<RegisterBankInfo> RegBankInfo;
+  std::unique_ptr<InstructionSelector> InstSelector;
 
 public:
   PIC16F1Subtarget(const Triple &TT, const std::string &CPU,
@@ -52,6 +64,22 @@ public:
     return &TLInfo;
   }
   const SelectionDAGTargetInfo *getSelectionDAGInfo() const override;
+
+  const CallLowering *getCallLowering() const override {
+    return CallLoweringInfo.get();
+  }
+  const InlineAsmLowering *getInlineAsmLowering() const override {
+    return InlineAsmLoweringInfo.get();
+  }
+  const LegalizerInfo *getLegalizerInfo() const override {
+    return Legalizer.get();
+  }
+  const RegisterBankInfo *getRegBankInfo() const override {
+    return RegBankInfo.get();
+  }
+  InstructionSelector *getInstructionSelector() const override {
+    return InstSelector.get();
+  }
 };
 } // namespace llvm
 

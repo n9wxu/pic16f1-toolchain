@@ -53,6 +53,13 @@ public:
       unsigned SubReg = 0,
       MachineInstr::MIFlag Flags = MachineInstr::NoFlags) const override;
 
+  /// Recognising plain stack-slot loads and stores lets the generic passes
+  /// remove a reload that is immediately stored back to the same slot.
+  Register isLoadFromStackSlot(const MachineInstr &MI,
+                               int &FrameIndex) const override;
+  Register isStoreToStackSlot(const MachineInstr &MI,
+                              int &FrameIndex) const override;
+
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 
   bool

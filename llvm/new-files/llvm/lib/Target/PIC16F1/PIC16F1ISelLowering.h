@@ -10,6 +10,7 @@
 #define LLVM_LIB_TARGET_PIC16F1_PIC16F1ISELLOWERING_H
 
 #include "PIC16F1.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
 
@@ -29,9 +30,18 @@ public:
   std::pair<unsigned, const TargetRegisterClass *>
   getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
                                StringRef Constraint, MVT VT) const override;
+  /// Division is a library call, but the alternative, a multiply by a
+  /// reciprocal, needs the high half of a double-width product, which costs
+  /// far more here.
+  bool isIntDivCheap(EVT VT, AttributeList Attr) const override { return true; }
+
   MVT::SimpleValueType getCmpLibcallReturnType() const override {
     return MVT::i16;
   }
+
+  /// The calling convention's assignment functions, for GlobalISel.
+  CCAssignFn *getCCAssignFn(bool IsVarArg) const;
+  CCAssignFn *getRetCCAssignFn() const;
 
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
   void ReplaceNodeResults(SDNode *N, SmallVectorImpl<SDValue> &Results,

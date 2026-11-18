@@ -512,6 +512,18 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     E.opToFile(RRF, lo(MI.getOperand(0)));
     return true;
 
+  case CARRY8:
+    // RLF moves the carry into bit 0 of the cleared byte.
+    E.clear(lo(MI.getOperand(0)));
+    E.opToFile(RLF, lo(MI.getOperand(0)));
+    return true;
+  case BORROW8:
+    // A borrow leaves the carry clear. CLRF and INCF do not change it.
+    E.clear(lo(MI.getOperand(0)));
+    E.bitOp(BTFSS, STATUS_ADDR, STATUS_C);
+    E.opToFile(INCF, lo(MI.getOperand(0)));
+    return true;
+
   case ZEXT16:
     E.copy(lo(MI.getOperand(0)), lo(MI.getOperand(1)));
     E.clear(hi(MI.getOperand(0)));

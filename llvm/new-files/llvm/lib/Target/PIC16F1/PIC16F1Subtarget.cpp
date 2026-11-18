@@ -7,7 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "PIC16F1Subtarget.h"
+#include "GISel/PIC16F1CallLowering.h"
+#include "GISel/PIC16F1LegalizerInfo.h"
+#include "GISel/PIC16F1RegisterBankInfo.h"
 #include "PIC16F1SelectionDAGInfo.h"
+#include "PIC16F1TargetMachine.h"
 #include "llvm/MC/TargetRegistry.h"
 
 using namespace llvm;
@@ -31,6 +35,14 @@ PIC16F1Subtarget::PIC16F1Subtarget(const Triple &TT, const std::string &CPU,
       InstrInfo(*this), TLInfo(TM, *this), FrameLowering(*this) {
   ParseSubtargetFeatures(cpuOrGeneric(CPU), cpuOrGeneric(CPU), FS);
   TSInfo = std::make_unique<PIC16F1SelectionDAGInfo>();
+
+  CallLoweringInfo = std::make_unique<PIC16F1CallLowering>(TLInfo);
+  InlineAsmLoweringInfo = std::make_unique<InlineAsmLowering>(&TLInfo);
+  Legalizer = std::make_unique<PIC16F1LegalizerInfo>(*this);
+  auto *RBI = new PIC16F1RegisterBankInfo(*getRegisterInfo());
+  RegBankInfo.reset(RBI);
+  InstSelector.reset(createPIC16F1InstructionSelector(
+      static_cast<const PIC16F1TargetMachine &>(TM), *this, *RBI));
 }
 
 PIC16F1Subtarget::~PIC16F1Subtarget() = default;

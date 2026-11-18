@@ -83,6 +83,30 @@ void PIC16F1InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, get(Opc), DestReg).addFrameIndex(FrameIdx).addImm(0);
 }
 
+Register PIC16F1InstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+                                               int &FrameIndex) const {
+  unsigned Opc = MI.getOpcode();
+  if ((Opc == PIC16F1::LD8fi || Opc == PIC16F1::LD16fi) &&
+      MI.getOperand(1).isFI() && MI.getOperand(2).isImm() &&
+      MI.getOperand(2).getImm() == 0) {
+    FrameIndex = MI.getOperand(1).getIndex();
+    return MI.getOperand(0).getReg();
+  }
+  return Register();
+}
+
+Register PIC16F1InstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+                                              int &FrameIndex) const {
+  unsigned Opc = MI.getOpcode();
+  if ((Opc == PIC16F1::ST8fi || Opc == PIC16F1::ST16fi) &&
+      MI.getOperand(1).isFI() && MI.getOperand(2).isImm() &&
+      MI.getOperand(2).getImm() == 0) {
+    FrameIndex = MI.getOperand(1).getIndex();
+    return MI.getOperand(0).getReg();
+  }
+  return Register();
+}
+
 //===----------------------------------------------------------------------===//
 // Branches
 //===----------------------------------------------------------------------===//

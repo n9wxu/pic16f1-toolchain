@@ -60,8 +60,16 @@ enum StatusBit : unsigned { STATUS_C = 0, STATUS_Z = 2 };
 } // namespace PIC16F1
 
 class FunctionPass;
+class InstructionSelector;
+class PIC16F1RegisterBankInfo;
+class PIC16F1Subtarget;
 class PIC16F1TargetMachine;
 class PassRegistry;
+
+InstructionSelector *
+createPIC16F1InstructionSelector(const PIC16F1TargetMachine &,
+                                 const PIC16F1Subtarget &,
+                                 const PIC16F1RegisterBankInfo &);
 
 FunctionPass *createPIC16F1ISelDag(PIC16F1TargetMachine &TM,
                                    CodeGenOptLevel OptLevel);
@@ -70,6 +78,11 @@ FunctionPass *createPIC16F1ExpandPseudoPass();
 /// Turn the compare-and-branch pseudos into machine instructions. Runs after
 /// branch relaxation.
 FunctionPass *createPIC16F1ExpandBranchesPass();
+
+FunctionPass *createPIC16F1PreLegalizerCombiner();
+FunctionPass *createPIC16F1PostLegalizerCombiner();
+void initializePIC16F1PreLegalizerCombinerPass(PassRegistry &);
+void initializePIC16F1PostLegalizerCombinerPass(PassRegistry &);
 
 void initializePIC16F1AsmPrinterPass(PassRegistry &);
 void initializePIC16F1DAGToDAGISelLegacyPass(PassRegistry &);

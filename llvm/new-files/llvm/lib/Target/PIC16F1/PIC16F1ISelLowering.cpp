@@ -158,6 +158,14 @@ PIC16F1TargetLowering::getRegForInlineAsmConstraint(
 #define GET_CALLING_CONV_IMPL
 #include "PIC16F1GenCallingConv.inc"
 
+CCAssignFn *PIC16F1TargetLowering::getCCAssignFn(bool IsVarArg) const {
+  return IsVarArg ? CC_PIC16F1_Stack : CC_PIC16F1;
+}
+
+CCAssignFn *PIC16F1TargetLowering::getRetCCAssignFn() const {
+  return RetCC_PIC16F1;
+}
+
 SDValue PIC16F1TargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &dl,
