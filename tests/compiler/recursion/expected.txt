@@ -1,0 +1,6 @@
+fib=0037
+fact=00009D80
+ack=0007
+even=0002
+hanoi=00EE
+depth=015F

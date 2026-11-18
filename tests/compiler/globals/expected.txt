@@ -1,0 +1,10 @@
+big=A968
+words=6CD4
+init=F169
+initialised
+counter=23456789
+rom=57D0
+one two three zero
+matrix=3879
+cursor=0121
+exported=F65C

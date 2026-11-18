@@ -1,0 +1,6 @@
+var8=7E59
+var16=49AD
+var32=6A8F69F1
+rot=9948
+const16=4A7C
+const32=C2BECEB4

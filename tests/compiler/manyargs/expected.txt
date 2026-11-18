@@ -1,0 +1,5 @@
+direct=000614EE
+pointer=B95FECF9
+pick=D6E9
+wide_hi=12345678
+wide_lo=9ABCDF02

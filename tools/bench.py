@@ -89,12 +89,14 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--markdown")
     ap.add_argument("--max-cycles", type=int, default=200_000_000)
+    ap.add_argument("--programs", default=os.path.join(ROOT, "tests", "programs"),
+                    help="directory of test programs (default tests/programs)")
     args = ap.parse_args()
     sim = find_sim(args.sim)
     roots = args.roots or sorted(
         os.path.join(ROOT, "reference", d) for d in os.listdir(os.path.join(ROOT, "reference"))
         if os.path.isdir(os.path.join(ROOT, "reference", d)))
-    progs = sorted(os.listdir(os.path.join(ROOT, "tests", "programs")))
+    progs = sorted(os.listdir(args.programs))
 
     results, failures = [], 0
     for root in roots:
@@ -103,7 +105,7 @@ def main():
             pdir = os.path.join(root, prog)
             if not os.path.isdir(pdir):
                 continue
-            expected = open(os.path.join(ROOT, "tests", "programs", prog, "expected.txt")).read()
+            expected = open(os.path.join(args.programs, prog, "expected.txt")).read()
             for level in sorted(os.listdir(pdir)):
                 hexfile = os.path.join(pdir, level, prog + ".hex")
                 if not os.path.exists(hexfile):

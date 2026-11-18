@@ -1,0 +1,4 @@
+sum=10DA
+mixed=F56DC002
+fwd=003A
+none=0000

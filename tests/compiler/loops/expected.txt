@@ -1,0 +1,7 @@
+up8=4DBC
+down8=3110
+up16=00028BB1
+wrap=0101
+sdown=8DF8
+control=4FDC
+collatz=006F

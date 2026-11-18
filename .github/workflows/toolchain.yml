@@ -59,6 +59,16 @@ jobs:
             reference/xc8-v4.00 build/out/llvm-pic16f1
           cat toolchain-report.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Compiler tests
+        env:
+          PIC16F1_CC: build/toolchain/bin/pic16f1-cc
+          PIC16F1_LLVM_BIN: build/toolchain/bin
+          TESTS_DIR: tests/compiler
+        run: |
+          scripts/build-llvm-tests.sh build/out/llvm-compiler-tests
+          python3 tools/bench.py --programs tests/compiler --markdown compiler-tests.md \
+            build/out/llvm-compiler-tests
+
       - name: Package
         run: |
           name=pic16f1-toolchain-linux-x86_64

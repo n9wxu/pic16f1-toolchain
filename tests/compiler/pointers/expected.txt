@@ -1,0 +1,7 @@
+found=0464
+swap=01AA
+best=03EA
+mem=1B24
+cmp=0007
+back=050D
+calls=0096

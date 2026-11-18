@@ -24,10 +24,10 @@ jobs:
       - name: Expected outputs match a native build of each program
         run: |
           status=0
-          for dir in tests/programs/*/; do
+          for dir in tests/programs/*/ tests/compiler/*/; do
             prog=$(basename "$dir")
-            [ "$prog" = timer_isr ] && continue   # needs a real Timer0
-            if ! scripts/host-run.sh "$prog" | cmp -s - "$dir/expected.txt"; then
+            case "$prog" in timer_isr|isr_context) continue ;; esac   # need a real Timer0
+            if ! scripts/host-run.sh "$prog" "$(dirname "$dir")" 2>/dev/null | cmp -s - "$dir/expected.txt"; then
               echo "::error::$prog: native output differs from expected.txt"
               status=1
             fi

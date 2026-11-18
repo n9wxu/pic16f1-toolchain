@@ -1,0 +1,4 @@
+dense=1F02
+sparse=06DB
+fall=5927
+vm=000A

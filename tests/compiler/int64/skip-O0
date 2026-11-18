@@ -1,0 +1,1 @@
+64-bit code built without optimization is larger than the PIC16F1937's 8K words of flash.

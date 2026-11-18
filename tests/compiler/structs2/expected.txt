@@ -1,0 +1,7 @@
+small=03EE
+kept=1206
+big=1201606C
+twist=12015A6C
+bits=ABB5
+union=11AB3346
+outer=08D0

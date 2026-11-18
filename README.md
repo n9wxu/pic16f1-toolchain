@@ -22,6 +22,7 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | `tools/devdb/` | Device database generator |
 | `sim/` | Simulator (`pic16f1-sim`), written in Rust |
 | `tests/programs/` | Test and benchmark programs, each with its expected output |
+| `tests/compiler/` | Further tests for the new compiler: recursion, variadic calls, structs, 64-bit math, large frames, interrupt context |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
 | `tests/host/` | Stand-in headers for building the programs natively |
 | `reference/xc8-v4.00/` | The programs built with MPLAB XC8 4.00 at `-O0` to `-Os` |
