@@ -106,7 +106,8 @@ benchmark report as a GitHub release.
 
 ## License
 
-Apache License 2.0 with LLVM exceptions, the same as LLVM. This is a
-provisional choice; the plan lists licensing as an open decision. The device
+Apache License 2.0 with LLVM exceptions, the same as LLVM. The device
 database is derived from Microchip device family packs, which Microchip
-publishes under Apache 2.0.
+publishes under Apache 2.0. picolibc and the GCC torture tests are fetched
+at build or test time under their own licenses and are not part of this
+repository.

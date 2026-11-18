@@ -14,9 +14,8 @@ sign-off, which the plan requires before the gate counts as passed.
 | Lab runs with the PICkit 3 golden path and the Saleae | Deferred (hardware) |
 | Probe reads device IDs | Deferred (hardware) |
 
-Open decisions from section 9 of the plan: licensing (Apache 2.0 with LLVM
-exception used provisionally), the ELF machine number (0x5046 used
-provisionally), first families, benchmark method, agent platform, human
+Decided: the license is Apache 2.0 with the LLVM exception. Still open from
+section 9 of the plan: the ELF machine number (0x5046 used provisionally), first families, benchmark method, agent platform, human
 roles, and the pinned MPLAB X version.
 
 ## G1: MC layer and programming
