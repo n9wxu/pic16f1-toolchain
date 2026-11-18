@@ -11,13 +11,13 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | 1 | Repository, CI, releases | done |
 | 2 | Test programs and XC8 reference binaries | done |
 | 3 | Simulator and benchmark runner | done |
-| 4 | LLVM backend, C working | in progress |
+| 4 | LLVM backend, C working | first version: all test programs pass on the simulator |
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `docs/` | Project plan |
+| `docs/` | Project plan and the design of what is built so far |
 | `devices/` | Device database, generated from Microchip device family packs |
 | `tools/devdb/` | Device database generator |
 | `sim/` | Simulator (`pic16f1-sim`), written in Rust |
@@ -26,6 +26,8 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | `tests/host/` | Stand-in headers for building the programs natively |
 | `reference/xc8-v4.00/` | The programs built with MPLAB XC8 4.00 at `-O0` to `-Os` |
 | `tools/bench.py` | Runs binaries on the simulator and reports size and cycles |
+| `llvm/` | LLVM, Clang and LLD changes: a patch plus the new files |
+| `toolchain/` | Compiler driver, runtime library, device headers, linker scripts |
 | `scripts/` | Build helpers |
 
 ## Quick start
@@ -35,6 +37,21 @@ cargo build --release --manifest-path sim/Cargo.toml
 sim/target/release/pic16f1-sim run reference/xc8-v4.00/hello/Os/hello.hex
 python3 tools/bench.py          # every reference binary, as a table
 ```
+
+## Building the compiler
+
+```sh
+scripts/llvm-setup.sh     # fetch the pinned LLVM release and apply the changes
+scripts/build-llvm.sh     # build clang, lld and the runtime into build/toolchain
+build/toolchain/bin/pic16f1-cc -mcpu=pic16f1937 -Os -I tests/common \
+    -o hello.hex tests/programs/hello/main.c tests/common/bench.c
+build/toolchain/bin/pic16f1-sim run hello.hex
+```
+
+`scripts/build-llvm-tests.sh` builds every test program at each optimization
+level, and `tools/bench.py reference/xc8-v4.00 build/out/llvm-pic16f1`
+compares the result with XC8. The design is described in
+[docs/toolchain.md](docs/toolchain.md).
 
 ## Conventions
 

@@ -1,0 +1,22 @@
+
+#ifndef ELF_RELOC
+#error "ELF_RELOC must be defined"
+#endif
+
+// S = symbol value, A = addend, P = place.
+// Program memory uses byte addresses (two per 14-bit word). Data-space
+// addresses are 0x800000 + the 16-bit FSR address.
+ELF_RELOC(R_PIC16F1_NONE,     0)
+ELF_RELOC(R_PIC16F1_8,        1)  // data: (S+A) & 0xFF
+ELF_RELOC(R_PIC16F1_16,       2)  // data: (S+A) & 0xFFFF
+ELF_RELOC(R_PIC16F1_32,       3)  // data: S+A
+ELF_RELOC(R_PIC16F1_PM16,     4)  // data: word address (S+A)/2
+ELF_RELOC(R_PIC16F1_LO8,      5)  // literal: (S+A) & 0xFF
+ELF_RELOC(R_PIC16F1_HI8,      6)  // literal: ((S+A) >> 8) & 0xFF
+ELF_RELOC(R_PIC16F1_PM_LO8,   7)  // literal: ((S+A)/2) & 0xFF
+ELF_RELOC(R_PIC16F1_PM_HI8,   8)  // literal: ((S+A)/2 >> 8) & 0xFF
+ELF_RELOC(R_PIC16F1_CALL11,   9)  // CALL/GOTO: ((S+A)/2) & 0x7FF
+ELF_RELOC(R_PIC16F1_PAGE7,   10)  // MOVLP: ((S+A)/2 >> 8) & 0x7F
+ELF_RELOC(R_PIC16F1_BRA9,    11)  // BRA: ((S+A) - (P+2))/2, signed 9 bits
+ELF_RELOC(R_PIC16F1_BANK5,   12)  // MOVLB: bank of the banked form of S+A
+ELF_RELOC(R_PIC16F1_F7,      13)  // file operand: banked form of S+A, & 0x7F

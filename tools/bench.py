@@ -40,6 +40,48 @@ def run_one(sim, hexfile, max_cycles):
                 "cycles": 0, "uart": "", "program_words": 0, "max_stack_depth": 0}
 
 
+def comparison(results):
+    """Size and speed of each toolchain's -Os build next to the first one's."""
+    tools = []
+    for r in results:
+        if r["toolchain"] not in tools:
+            tools.append(r["toolchain"])
+    if len(tools) < 2:
+        return ""
+    by = {(r["toolchain"], r["program"]): r for r in results if r["level"] == "Os" and r["pass"]}
+    base = tools[0]
+    out = ["", f"### -Os builds compared with {base}", ""]
+    head = "| Program |"
+    rule = "|---|"
+    for t in tools:
+        head += f" {t} words | {t} cycles |"
+        rule += "---:|---:|"
+    for t in tools[1:]:
+        head += f" {t} size ratio | {t} cycle ratio |"
+        rule += "---:|---:|"
+    out += [head, rule]
+    totals = {t: 0 for t in tools}
+    progs = sorted({r["program"] for r in results})
+    for p in progs:
+        if any((t, p) not in by for t in tools):
+            continue
+        row = f"| {p} |"
+        for t in tools:
+            row += f' {by[(t, p)]["flash_words"]} | {by[(t, p)]["cycles"]} |'
+            totals[t] += by[(t, p)]["flash_words"]
+        for t in tools[1:]:
+            row += (f' {by[(t, p)]["flash_words"] / by[(base, p)]["flash_words"]:.2f} |'
+                    f' {by[(t, p)]["cycles"] / by[(base, p)]["cycles"]:.2f} |')
+        out.append(row)
+    row = "| **total** |"
+    for t in tools:
+        row += f" {totals[t]} | |"
+    for t in tools[1:]:
+        row += f" {totals[t] / totals[base]:.2f} | |" if totals[base] else " | |"
+    out.append(row)
+    return "\n".join(out) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("roots", nargs="*")
@@ -95,6 +137,7 @@ def main():
                      f'{"pass" if r["pass"] else "FAIL"} | {r["flash_words"]} | {ram} | '
                      f'{r["cycles"]} | {r["max_stack_depth"]} |')
     table = "\n".join(lines) + "\n"
+    table += comparison(results)
     if args.markdown:
         open(args.markdown, "w").write(table)
     if args.json:

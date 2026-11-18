@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Compiler driver for the PIC16F1 LLVM toolchain.
+
+    pic16f1-cc -mcpu=pic16f1937 -Os -o prog.hex main.c other.c
+
+Compiles C and assembly sources with clang, links them with ld.lld against
+the startup code and runtime library, and converts the result to Intel HEX.
+With -o NAME.hex it also leaves NAME.elf beside it; any other -o name gets
+the ELF file. -c and -S stop after compiling.
+
+Tool locations can be overridden with PIC16F1_LLVM_BIN (clang, ld.lld),
+PIC16F1_LIB (crt0.o, libpicrt.a, linker scripts), PIC16F1_INCLUDE and
+PIC16F1_SIM (pic16f1-sim, used for the HEX conversion).
+"""
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def first_existing(candidates, what):
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    sys.exit(f"pic16f1-cc: cannot find {what}; tried:\n  " + "\n  ".join(c for c in candidates if c))
+
+
+def locate():
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    llvm_bin = first_existing([
+        os.environ.get("PIC16F1_LLVM_BIN"),
+        HERE if os.path.exists(os.path.join(HERE, "clang")) else None,
+        os.path.join(repo, "build", "llvm-build", "bin"),
+    ], "the LLVM tools (clang, ld.lld)")
+    lib = first_existing([
+        os.environ.get("PIC16F1_LIB"),
+        os.path.join(HERE, "..", "lib", "pic16f1"),
+        os.path.join(repo, "build", "toolchain", "lib", "pic16f1"),
+    ], "the runtime library directory")
+    inc = first_existing([
+        os.environ.get("PIC16F1_INCLUDE"),
+        os.path.join(HERE, "..", "include", "pic16f1"),
+        os.path.join(HERE, "..", "include"),
+    ], "the device header directory")
+    sim = first_existing([
+        os.environ.get("PIC16F1_SIM"),
+        os.path.join(HERE, "pic16f1-sim"),
+        os.path.join(repo, "sim", "target", "release", "pic16f1-sim"),
+        shutil.which("pic16f1-sim"),
+    ], "pic16f1-sim")
+    return llvm_bin, lib, inc, sim
+
+
+def run(cmd):
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        sys.exit(r.returncode)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or "--help" in args or "-h" in args:
+        print(__doc__)
+        return 0
+    llvm_bin, lib, inc, sim = locate()
+
+    output = None
+    cpu = "pic16f1937"
+    compile_only = asm_only = False
+    sources, objects, cflags, ldflags = [], [], [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-o":
+            output = args[i + 1]
+            i += 1
+        elif a.startswith("-mcpu="):
+            cpu = a[len("-mcpu="):].lower()
+        elif a == "-c":
+            compile_only = True
+        elif a == "-S":
+            asm_only = True
+        elif a.startswith("-Wl,"):
+            ldflags += a[4:].split(",")
+        elif a.endswith((".c", ".S", ".s", ".ll")):
+            sources.append(a)
+        elif a.endswith((".o", ".a")):
+            objects.append(a)
+        else:
+            cflags.append(a)
+        i += 1
+    if not cpu.startswith("pic"):
+        cpu = "pic" + cpu
+    if not sources and not objects:
+        sys.exit("pic16f1-cc: no input files")
+
+    clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
+             "-ffreestanding", "-fno-builtin", "-ffunction-sections",
+             "-fdata-sections", "-isystem", inc] + cflags
+
+    if compile_only or asm_only:
+        cmd = clang + ["-S" if asm_only else "-c"] + sources
+        if output:
+            cmd += ["-o", output]
+        run(cmd)
+        return 0
+
+    script = os.path.join(lib, cpu + ".ld")
+    if not os.path.exists(script):
+        sys.exit(f"pic16f1-cc: no linker script for {cpu} ({script})")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for n, src in enumerate(sources):
+            obj = os.path.join(tmp, f"{n}-{os.path.splitext(os.path.basename(src))[0]}.o")
+            run(clang + ["-c", src, "-o", obj])
+            objects.append(obj)
+        output = output or "a.hex"
+        want_hex = output.endswith(".hex")
+        elf = output[:-4] + ".elf" if want_hex else output
+        run([os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
+             os.path.join(lib, "crt0.o")] + objects +
+            [os.path.join(lib, "libpicrt.a"), "-o", elf] + ldflags)
+        if want_hex:
+            run([sim, "elf2hex", elf, output])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

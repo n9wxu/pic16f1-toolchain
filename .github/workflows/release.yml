@@ -1,8 +1,8 @@
 name: Release
 
-# Pushing a tag like v0.1.0 builds the simulator for Linux and macOS, runs the
-# benchmark set, and publishes a GitHub release with the simulator binaries,
-# the XC8 reference binaries and the benchmark report.
+# Pushing a tag like v0.1.0 builds the simulator for Linux and macOS and the
+# compiler toolchain for Linux, runs the benchmark set, and publishes a GitHub
+# release with the binaries, the XC8 reference binaries and the reports.
 
 on:
   push:
@@ -45,9 +45,12 @@ jobs:
           name: bench-report
           path: bench-report.*
 
+  toolchain:
+    uses: ./.github/workflows/toolchain.yml
+
   publish:
     name: Publish release
-    needs: simulator
+    needs: [simulator, toolchain]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,5 +71,14 @@ jobs:
             echo
             cat dist/bench-report.md
           } > notes.md
+          {
+            echo
+            echo "## Compiler compared with XC8"
+            echo
+            cat dist/toolchain-report.md
+          } >> notes.md
+          # The full table is long; keep the notes within GitHub's size limit.
+          head -c 100000 notes.md > notes-trimmed.md && mv notes-trimmed.md notes.md
           gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/bench-report.md dist/bench-report.json \
+            dist/toolchain-report.md dist/toolchain-report.json \
             --title "$GITHUB_REF_NAME" --notes-file notes.md

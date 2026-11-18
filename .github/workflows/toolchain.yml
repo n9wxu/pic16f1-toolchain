@@ -1,0 +1,75 @@
+name: Toolchain
+
+# Builds clang and lld with the PIC16F1 target, builds every test program
+# with them, and runs the results on the simulator next to the XC8 reference
+# binaries. An LLVM build takes a long time, so this runs on request and for
+# release tags rather than on every push.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
+
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-
+
+      - name: Build simulator
+        run: |
+          cargo build --release --locked --manifest-path sim/Cargo.toml
+          cargo test --release --locked --manifest-path sim/Cargo.toml
+
+      - name: Fetch LLVM and apply the PIC16F1 changes
+        run: scripts/llvm-setup.sh
+
+      - name: Build toolchain
+        env:
+          CMAKE_EXTRA: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: |
+          ccache --max-size=3G
+          scripts/build-llvm.sh
+          ccache --show-stats
+
+      - name: Build the test programs with the new toolchain
+        env:
+          PIC16F1_CC: build/toolchain/bin/pic16f1-cc
+          PIC16F1_LLVM_BIN: build/toolchain/bin
+        run: scripts/build-llvm-tests.sh build/out/llvm-pic16f1
+
+      - name: Run all binaries on the simulator
+        run: |
+          python3 tools/bench.py --markdown toolchain-report.md --json toolchain-report.json \
+            reference/xc8-v4.00 build/out/llvm-pic16f1
+          cat toolchain-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package
+        run: |
+          name=pic16f1-toolchain-linux-x86_64
+          mv build/toolchain "$name"
+          strip "$name"/bin/clang-* "$name"/bin/lld "$name"/bin/llvm-* || true
+          tar czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-linux-x86_64
+          path: |
+            pic16f1-toolchain-linux-x86_64.tar.gz
+            toolchain-report.md
+            toolchain-report.json
