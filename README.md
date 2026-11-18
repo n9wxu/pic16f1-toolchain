@@ -11,7 +11,7 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | 1 | Repository, CI, releases | done |
 | 2 | Test programs and XC8 reference binaries | done |
 | 3 | Simulator and benchmark runner | done |
-| 4 | LLVM backend, C working | first version: all test programs pass on the simulator |
+| 4 | LLVM backend, C working | first version: all test programs and 97% of the GCC C torture tests that fit the device pass on the simulator |
 
 ## Layout
 
@@ -23,6 +23,7 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | `sim/` | Simulator (`pic16f1-sim`), written in Rust |
 | `tests/programs/` | Test and benchmark programs, each with its expected output |
 | `tests/compiler/` | Further tests for the new compiler: recursion, variadic calls, structs, 64-bit math, large frames, interrupt context |
+| `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
 | `tests/host/` | Stand-in headers for building the programs natively |
 | `reference/xc8-v4.00/` | The programs built with MPLAB XC8 4.00 at `-O0` to `-Os` |

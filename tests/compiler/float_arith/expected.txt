@@ -1,0 +1,8 @@
+add=3FE00000
+sub=C97423CC
+mul=C09C0000
+small=000116C2
+big=7F800000
+cmp=232C
+cmpeq=001A
+geo=4052616A

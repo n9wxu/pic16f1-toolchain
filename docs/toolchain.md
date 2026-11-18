@@ -11,7 +11,7 @@ first, with the simplest design that works.
 | LLVM target `pic16f1` | `llvm/new-files/llvm/lib/Target/PIC16F1` | Assembler, object writer, code generator |
 | Clang target | `llvm/new-files/clang`, `llvm/existing-files.patch` | Type sizes, ABI, `interrupt` attribute |
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
-| Runtime | `toolchain/runtime` | Startup code, multiply, divide, shifts, `memcpy` family |
+| Runtime | `toolchain/runtime` | Startup code, multiply, divide, shifts, `memcpy` family; soft float from LLVM's compiler-rt |
 | Device files | `toolchain/include`, `toolchain/lib` | Generated from the device database |
 | Driver | `toolchain/bin/pic16f1-cc` | Compile, link, convert to HEX |
 
@@ -71,7 +71,6 @@ hardware saves and restores W, STATUS, BSR, the FSRs and PCLATH.
 
 `char` 8 (unsigned), `short` and `int` 16, `long` 32, `long long` 64,
 pointers 16, `float` and `double` 32. Everything is byte aligned.
-Floating point has no runtime support yet.
 
 ## Address spaces and the object format
 
@@ -100,15 +99,45 @@ Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
 `moviw 3[FSR1]`, `addfsr FSR1, -4`. Address parts are written `lo8(x)`,
 `hi8(x)`, `pm_lo8(x)`, `pm_hi8(x)`, `pm(x)`, `bank(x)`, `off(x)`, `page(x)`.
 
+## Test results
+
+All run on the simulator; nothing has run on silicon yet.
+
+| Suite | Result |
+|---|---|
+| Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass |
+| Compiler tests (`tests/compiler`, 16 programs) | 60 of 60 builds pass |
+| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,371 of the 1,407 that build pass (97.4%) |
+| GCC C torture, `execute` at `-Os` | 1,398 of the 1,435 that build pass (97.4%) |
+
+About 270 torture tests do not build for this device: they need `malloc`,
+`printf`, a 32-bit `int`, variable-length arrays, nested functions, or more
+flash than 8K words. Eleven crash Clang in builtins that assume a 32-bit
+`int` (`__builtin_return_address`, `__builtin_prefetch`).
+
+Of the roughly 45 that build and fail, the 20 examined so far all fail for a
+reason outside the compiler: arrays larger than the 512 bytes of RAM,
+recursion deeper than the 16-level return stack, loops too long for the
+simulator's cycle limit, or reliance on GCC-only attributes. The rest have
+not been examined one by one.
+
+The torture tests are not in this repository. `tools/torture.py` explains
+how to fetch and run them.
+
 ## Known limits
 
-- No floating point runtime, no `printf`, no heap.
-- No variable-length arrays or `alloca`.
+- No `printf`, no heap.
+- Floating point works (single precision; `double` is the same type) and
+  matches IEEE results bit for bit in the tests, but uses LLVM's generic
+  compiler-rt routines. Each of add, multiply and divide is 1,500 to 2,100
+  words, so a program using all three nearly fills an 8K-word part.
+- No variable-length arrays or `alloca`; the compiler says so.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - No debug information.
 - Code is about 1.4 times the size of XC8 `-Os` on the benchmark set. Every
-  access to a global sets the bank, and pointer accesses reload FSR0 unless
-  the same pointer was just used.
-- Hardware stack depth is not analysed.
+  access to a global sets the bank, pointer accesses reload FSR0 unless the
+  same pointer was just used, and values wider than a byte are shuffled
+  between the fourteen byte registers.
+- Hardware stack depth is not analysed; the simulator stops on overflow.
 - Not yet run on silicon.

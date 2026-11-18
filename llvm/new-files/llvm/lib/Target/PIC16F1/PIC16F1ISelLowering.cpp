@@ -77,6 +77,9 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
                        VT, Expand);
     setOperationAction(ISD::DYNAMIC_STACKALLOC, VT, Custom);
   }
+  // 32- and 64-bit shifts by a constant: see ReplaceNodeResults.
+  setOperationAction({ISD::SHL, ISD::SRL, ISD::SRA}, {MVT::i32, MVT::i64},
+                     Custom);
   // Wider add and subtract chain through the carry flag in 16-bit steps.
   setOperationAction({ISD::ADDC, ISD::ADDE, ISD::SUBC, ISD::SUBE}, MVT::i16,
                      Legal);
@@ -364,6 +367,35 @@ SDValue PIC16F1TargetLowering::LowerBlockAddress(SDValue Op,
 //===----------------------------------------------------------------------===//
 // Shifts
 //===----------------------------------------------------------------------===//
+
+/// Custom handling of operations on types wider than a register pair. Leaving
+/// Results empty selects the default expansion.
+void PIC16F1TargetLowering::ReplaceNodeResults(SDNode *N,
+                                               SmallVectorImpl<SDValue> &Results,
+                                               SelectionDAG &DAG) const {
+  unsigned Opc = N->getOpcode();
+  if (Opc != ISD::SHL && Opc != ISD::SRL && Opc != ISD::SRA)
+    return;
+  EVT VT = N->getValueType(0);
+  const auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C || (VT != MVT::i32 && VT != MVT::i64))
+    return;
+  // Whole bytes are moves, and one or two bits are short enough inline.
+  // Anything else costs a few instructions per bit for every byte of the
+  // value, so call the shift routine, which loops.
+  uint64_t Amt = C->getZExtValue();
+  if (Amt % 8 == 0 || Amt < 3 || Amt >= VT.getSizeInBits())
+    return;
+  bool Is64 = VT == MVT::i64;
+  RTLIB::Libcall LC =
+      Opc == ISD::SHL   ? (Is64 ? RTLIB::SHL_I64 : RTLIB::SHL_I32)
+      : Opc == ISD::SRL ? (Is64 ? RTLIB::SRL_I64 : RTLIB::SRL_I32)
+                        : (Is64 ? RTLIB::SRA_I64 : RTLIB::SRA_I32);
+  SDLoc dl(N);
+  SDValue Ops[2] = {N->getOperand(0), DAG.getConstant(Amt, dl, MVT::i16)};
+  MakeLibCallOptions CallOptions;
+  Results.push_back(makeLibCall(DAG, LC, VT, Ops, CallOptions, dl).first);
+}
 
 SDValue PIC16F1TargetLowering::LowerShifts(SDValue Op,
                                            SelectionDAG &DAG) const {
