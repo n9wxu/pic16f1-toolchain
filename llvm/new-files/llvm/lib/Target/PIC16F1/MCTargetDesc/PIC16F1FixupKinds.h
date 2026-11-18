@@ -28,6 +28,7 @@ enum Fixups {
   fixup_bank5,                      // MOVLB: bank of a data address
   fixup_f7,                         // file operand: offset within the bank
   fixup_pm16,                       // data: 16-bit word address
+  fixup_bank6,                      // MOVLB on a 64-bank device
 
   LastTargetFixupKind,
   NumTargetFixupKinds = LastTargetFixupKind - FirstTargetFixupKind

@@ -50,6 +50,7 @@ def fileop : Operand<i16> {
 }
 def lit8 : Operand<i8> { let EncoderMethod = "encodeLit8"; }
 def bankop : Operand<i8> { let EncoderMethod = "encodeBank"; }
+def bankop6 : Operand<i8> { let EncoderMethod = "encodeBank6"; }
 def pageop : Operand<i8> { let EncoderMethod = "encodePage"; }
 def calltarget : Operand<i16> { let EncoderMethod = "encodeCall"; }
 def bratarget : Operand<OtherVT> {
@@ -226,10 +227,23 @@ def XORLW : LitOp<0b111010, "xorlw">;
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in
 def RETLW : LitOp<0b110100, "retlw">;
 
+def HasBanks32 : Predicate<"!Subtarget->hasBanks64()">,
+                 AssemblerPredicate<(all_of (not FeatureBanks64))>;
+def HasBanks64 : Predicate<"Subtarget->hasBanks64()">,
+                 AssemblerPredicate<(all_of FeatureBanks64)>;
+
+let Predicates = [HasBanks32] in
 def MOVLB : PICInst<(outs), (ins bankop:$k), "movlb\t$k"> {
   bits<5> k;
   let Inst{13-5} = 0b000000001;
   let Inst{4-0} = k;
+}
+// MOVLB on a device with 64 banks.
+let Predicates = [HasBanks64], DecoderNamespace = "Banks64" in
+def MOVLB6 : PICInst<(outs), (ins bankop6:$k), "movlb\t$k"> {
+  bits<6> k;
+  let Inst{13-6} = 0b00000101;
+  let Inst{5-0} = k;
 }
 def MOVLP : PICInst<(outs), (ins pageop:$k), "movlp\t$k"> {
   bits<7> k;

@@ -54,6 +54,8 @@ protected:
       return ELF::R_PIC16F1_BRA9;
     case PIC16F1::fixup_bank5:
       return ELF::R_PIC16F1_BANK5;
+    case PIC16F1::fixup_bank6:
+      return ELF::R_PIC16F1_BANK6;
     case PIC16F1::fixup_f7:
       return ELF::R_PIC16F1_F7;
     case PIC16F1::fixup_pm16:

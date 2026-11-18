@@ -32,7 +32,14 @@ public:
   PIC16F1DAGToDAGISel(PIC16F1TargetMachine &TM, CodeGenOptLevel OptLevel)
       : SelectionDAGISel(TM, OptLevel) {}
 
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    Subtarget = &MF.getSubtarget<PIC16F1Subtarget>();
+    return SelectionDAGISel::runOnMachineFunction(MF);
+  }
+
 private:
+  const PIC16F1Subtarget *Subtarget = nullptr;
+
 #include "PIC16F1GenDAGISel.inc"
 
   void Select(SDNode *N) override;
@@ -88,7 +95,7 @@ bool PIC16F1DAGToDAGISel::SelectAbs(SDValue Addr, SDValue &Out) {
   // A constant banked address, such as a special function register.
   if (const auto *C = dyn_cast<ConstantSDNode>(Addr)) {
     uint64_t V = C->getZExtValue();
-    if (V >= 0x1000)
+    if (V >= MF->getSubtarget<PIC16F1Subtarget>().bankedEnd())
       return false;
     Out = CurDAG->getTargetConstant(V, dl, MVT::i16);
     return true;

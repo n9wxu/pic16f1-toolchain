@@ -229,6 +229,7 @@
   }
  ],
  "data_end": 4096,
+ "bank_count": 32,
  "gpr": [
   {
    "begin": 32,

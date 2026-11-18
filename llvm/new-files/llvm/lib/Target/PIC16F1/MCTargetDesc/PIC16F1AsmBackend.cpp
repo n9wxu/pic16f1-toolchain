@@ -49,6 +49,7 @@ public:
         {"fixup_call11", 0, 11, 0}, {"fixup_page7", 0, 7, 0},
         {"fixup_bra9", 0, 9, 0},    {"fixup_bank5", 0, 5, 0},
         {"fixup_f7", 0, 7, 0},      {"fixup_pm16", 0, 16, 0},
+        {"fixup_bank6", 0, 6, 0},
     };
     if (Kind < FirstTargetFixupKind)
       return MCAsmBackend::getFixupKindInfo(Kind);
@@ -78,13 +79,18 @@ uint64_t PIC16F1AsmBackend::adjustFixupValue(const MCFixup &Fixup,
   case PIC16F1::fixup_page7:
     return (Value >> 9) & 0x7F;
   case PIC16F1::fixup_bank5:
-  case PIC16F1::fixup_f7:
+  case PIC16F1::fixup_bank6:
+  case PIC16F1::fixup_f7: {
     // Only banked (traditional) addresses can be split without knowing the
     // device's memory layout.
-    if (Value >= 0x1000)
+    bool Wide = Fixup.getKind() == PIC16F1::fixup_bank6;
+    if (Value >= 0x2000 ||
+        (Fixup.getKind() == PIC16F1::fixup_bank5 && Value >= 0x1000))
       Ctx.reportError(Fixup.getLoc(), "address is not a banked data address");
-    return Fixup.getKind() == PIC16F1::fixup_bank5 ? (Value >> 7) & 0x1F
-                                                   : Value & 0x7F;
+    if (Fixup.getKind() == PIC16F1::fixup_f7)
+      return Value & 0x7F;
+    return (Value >> 7) & (Wide ? 0x3F : 0x1F);
+  }
   case PIC16F1::fixup_bra9: {
     // Value is target minus the address of the BRA itself, in bytes.
     int64_t Offset = int64_t(Value) - 2;

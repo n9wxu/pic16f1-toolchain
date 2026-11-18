@@ -62,7 +62,12 @@ public:
   // FSR0 equals this register pair, or no register.
   Register FSR0Holds;
 
+  // The device has 64 banks.
+  bool Banks64 = false;
+
   explicit Emitter(const PIC16F1InstrInfo &TII) : TII(TII) {}
+
+  unsigned movlb() const { return Banks64 ? PIC16F1::MOVLB6 : PIC16F1::MOVLB; }
 
   void setInsertPoint(MachineBasicBlock &B, MachineBasicBlock::iterator It) {
     MBB = &B;
@@ -185,11 +190,11 @@ public:
   /// file-register operand for it.
   MachineOperand selectBank(const MachineOperand &Addr, int64_t Extra) {
     if (Addr.isImm()) {
-      uint64_t A = uint64_t(Addr.getImm() + Extra) & 0xFFF;
+      uint64_t A = uint64_t(Addr.getImm() + Extra) & (Banks64 ? 0x1FFF : 0xFFF);
       unsigned F = A & 0x7F;
       int Bank = A >> 7;
       if (!isUnbanked(F) && !(TrackValues && BSRConst == Bank)) {
-        build(PIC16F1::MOVLB).addImm(Bank);
+        build(movlb()).addImm(Bank);
         BSRConst = Bank;
         BSRGlobal = nullptr;
       }
@@ -199,8 +204,7 @@ public:
     const GlobalValue *GV = Addr.getGlobal();
     int64_t Off = Addr.getOffset() + Extra;
     if (!(TrackValues && BSRGlobal == GV && BSROffset == Off)) {
-      build(PIC16F1::MOVLB)
-          .add(MachineOperand::CreateGA(GV, Off, PIC16F1II::MO_BANK));
+      build(movlb()).add(MachineOperand::CreateGA(GV, Off, PIC16F1II::MO_BANK));
       BSRGlobal = GV;
       BSROffset = Off;
       BSRConst = -1;
@@ -699,6 +703,7 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
   TRI = MF.getSubtarget().getRegisterInfo();
   bool Changed = false;
   Emitter E(*TII);
+  E.Banks64 = MF.getSubtarget<PIC16F1Subtarget>().hasBanks64();
 
   for (MachineBasicBlock &MBB : MF) {
     E.forgetAll();

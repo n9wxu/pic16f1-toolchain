@@ -65,8 +65,8 @@ RelExpr PIC16F1::getRelExpr(RelType type, const Symbol &s,
 
 static const uint64_t dataSpace = 0x800000;
 static const uint64_t linearBase = 0x2000;
-static const uint64_t linearEnd = 0x29B0; // 31 banks of 80 bytes
-static const uint64_t bankedEnd = 0x1000;
+static const uint64_t linearEnd = 0x2FF0; // 51 banks of 80 bytes at most
+static const uint64_t bankedEnd = 0x2000; // 64 banks at most
 
 int64_t PIC16F1::bankedAddress(uint64_t val) const {
   if (val < dataSpace)
@@ -133,6 +133,7 @@ void PIC16F1::relocate(uint8_t *loc, const Relocation &rel,
     break;
   }
   case R_PIC16F1_BANK5:
+  case R_PIC16F1_BANK6:
   case R_PIC16F1_F7: {
     int64_t banked = bankedAddress(val);
     if (banked < 0) {
@@ -141,10 +142,18 @@ void PIC16F1::relocate(uint8_t *loc, const Relocation &rel,
                << "': address is not reachable with banked addressing";
       break;
     }
-    if (rel.type == R_PIC16F1_BANK5)
-      patch(5, banked >> 7);
-    else
+    if (rel.type == R_PIC16F1_F7) {
       patch(7, banked);
+    } else if (rel.type == R_PIC16F1_BANK6) {
+      patch(6, banked >> 7);
+    } else if ((banked >> 7) > 31) {
+      Err(ctx) << getErrorLoc(ctx, loc) << "relocation " << rel.type
+               << " against '" << rel.sym
+               << "': address is beyond bank 31, which this device's MOVLB "
+                  "cannot select";
+    } else {
+      patch(5, banked >> 7);
+    }
     break;
   }
   default:

@@ -156,9 +156,10 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new(dev: Device) -> Cpu {
-        let mut impl_mask = vec![0u8; 0x1000];
-        let mut write_mask = vec![0u8; 0x1000];
-        let mut is_gpr = vec![false; 0x1000];
+        let size = dev.data_size();
+        let mut impl_mask = vec![0u8; size];
+        let mut write_mask = vec![0u8; size];
+        let mut is_gpr = vec![false; size];
         for r in dev.gpr.iter().chain(std::iter::once(&dev.common_ram)) {
             for a in r.begin..r.end {
                 impl_mask[a as usize] = 0xFF;
@@ -178,7 +179,7 @@ impl Cpu {
             flash: vec![0x3FFF; flash_words],
             programmed: vec![false; flash_words],
             config: Vec::new(),
-            ram: vec![0; 0x1000],
+            ram: vec![0; size],
             impl_mask,
             write_mask,
             is_gpr,
@@ -288,7 +289,7 @@ impl Cpu {
         if off < self.dev.core_register_count || off >= self.dev.common_ram.begin {
             off
         } else {
-            addr & 0x0FFF
+            addr & (self.ram.len() as u16 - 1)
         }
     }
 
@@ -398,7 +399,7 @@ impl Cpu {
     }
 
     fn read_indirect(&mut self, fsr: u16) -> u8 {
-        if fsr < 0x1000 {
+        if (fsr as usize) < self.ram.len() {
             let a = self.canon(fsr);
             if a == INDF0 || a == INDF1 {
                 return 0;
@@ -417,7 +418,7 @@ impl Cpu {
     }
 
     fn write_indirect(&mut self, fsr: u16, v: u8) {
-        if fsr < 0x1000 {
+        if (fsr as usize) < self.ram.len() {
             let a = self.canon(fsr);
             if a != INDF0 && a != INDF1 {
                 self.write_reg(a, v);
@@ -508,7 +509,8 @@ impl Cpu {
     }
 
     fn file_addr(&self, f: u8) -> u16 {
-        self.canon(((self.bsr() as u16 & 0x1F) << 7) | f as u16)
+        let bank = self.bsr() as u16 & (self.dev.bank_count - 1);
+        self.canon((bank << 7) | f as u16)
     }
 
     /// Store an ALU result to W or back to the file register.
@@ -732,7 +734,7 @@ impl Cpu {
                 let w = self.w();
                 self.write_indirect(self.fsr(n).wrapping_add(k as u16), w);
             }
-            Op::Movlb(k) => self.ram[BSR as usize] = k,
+            Op::Movlb(k) => self.ram[BSR as usize] = k & (self.dev.bank_count - 1) as u8,
             Op::Option => {
                 if let Some(o) = self.p.option_reg {
                     self.ram[o as usize] = self.w();
@@ -948,7 +950,7 @@ impl Periph {
             }
         }
         p.tmr0if = fm("INTCON", &["TMR0IF"]);
-        for n in 1..=9 {
+        for n in 0..=9 {
             if let (Some(pie), Some(pir)) = (dev.sfr_addr(&format!("PIE{n}")), dev.sfr_addr(&format!("PIR{n}"))) {
                 p.pie_pir.push((pie, pir));
             }
@@ -970,11 +972,13 @@ impl Periph {
             p.pir_tmr2 = (pir1, fm("PIR1", &["TMR2IF"]));
         }
         let spbrgl = dev.sfr_addr("SPBRGL").or(dev.sfr_addr("SPBRG")).or(dev.sfr_addr("SP1BRGL"));
-        if let (Some(txreg), Some(txsta), Some(rcsta), Some(pir1), Some(brgl)) = (
-            dev.sfr_addr("TXREG"),
-            dev.sfr_addr("TXSTA"),
-            dev.sfr_addr("RCSTA"),
-            dev.sfr_addr("PIR1"),
+        let tx_flag = dev.find_field("PIR", &["TXIF", "TX1IF"]);
+        let (tx_name, rc_name) = if dev.sfr("TXSTA").is_some() { ("TXSTA", "RCSTA") } else { ("TX1STA", "RC1STA") };
+        if let (Some(txreg), Some(txsta), Some(rcsta), Some(tx_flag), Some(brgl)) = (
+            dev.sfr_addr("TXREG").or(dev.sfr_addr("TX1REG")),
+            dev.sfr_addr(tx_name),
+            dev.sfr_addr(rc_name),
+            tx_flag,
             spbrgl,
         ) {
             p.txreg = Some(txreg);
@@ -982,13 +986,14 @@ impl Periph {
             p.rcsta = rcsta;
             p.spbrgl = brgl;
             p.spbrgh = dev.sfr_addr("SPBRGH").or(dev.sfr_addr("SP1BRGH")).unwrap_or(brgl);
-            p.baudcon = dev.sfr_addr("BAUDCON").unwrap_or(txsta);
-            p.txen = fm("TXSTA", &["TXEN"]);
-            p.trmt = fm("TXSTA", &["TRMT"]);
-            p.brgh = fm("TXSTA", &["BRGH"]);
-            p.spen = fm("RCSTA", &["SPEN"]);
-            p.brg16 = fm("BAUDCON", &["BRG16"]);
-            p.pir_tx = (pir1, fm("PIR1", &["TXIF"]));
+            let baud_name = if dev.sfr("BAUDCON").is_some() { "BAUDCON" } else { "BAUD1CON" };
+            p.baudcon = dev.sfr_addr(baud_name).unwrap_or(txsta);
+            p.txen = fm(tx_name, &["TXEN"]);
+            p.trmt = fm(tx_name, &["TRMT"]);
+            p.brgh = fm(tx_name, &["BRGH"]);
+            p.spen = fm(rc_name, &["SPEN"]);
+            p.brg16 = fm(baud_name, &["BRG16"]);
+            p.pir_tx = tx_flag;
         }
         for letter in ["A", "B", "C", "D", "E", "F", "G"] {
             if let (Some(port), Some(lat), Some(tris)) = (
@@ -1007,7 +1012,8 @@ impl Periph {
         if addrs.len() == 8 {
             p.shadow = Some([addrs[0], addrs[1], addrs[2], addrs[3], addrs[4], addrs[5], addrs[6], addrs[7]]);
         }
-        p.exit_port = dev.sfr_addr("LATD");
+        // The exit-code port: PORTD's latch, or PORTC's on parts without one.
+        p.exit_port = dev.sfr_addr("LATD").or(dev.sfr_addr("LATC"));
         p
     }
 }

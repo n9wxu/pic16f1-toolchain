@@ -12,14 +12,16 @@ Usage:
   pic16f1-sim elf2hex <in.elf> <out.hex>
 
 Run options:
-  --device NAME       device to simulate (default pic16f1937)
+  --device NAME       device to simulate (default pic16f1937; also pic16f1829,
+                      pic16f1619, pic16f18877, pic16f15276)
   --max-cycles N      stop after N instruction cycles (default 100000000)
   --uart fast|timed   UART transmit timing (default fast)
   --json              print a JSON result record on stdout instead of UART text
   --trace             print every executed instruction on stderr
   --profile FILE      write per-address execution counts to FILE
 
-A program ends by executing SLEEP. Its exit code is the value it left in LATD.
+A program ends by executing SLEEP. Its exit code is the value it left in LATD
+(LATC on a device without PORTD).
 The process exit status is that code, or 124 on timeout, 125 on a fault.";
 
 fn main() -> ExitCode {

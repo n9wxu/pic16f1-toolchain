@@ -82,5 +82,11 @@ DecodeStatus PIC16F1Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
   // CLRW ignores its two low bits.
   if ((Insn & 0x3FFC) == 0x0100)
     Insn |= 3;
+  if (STI.hasFeature(PIC16F1::FeatureBanks64)) {
+    DecodeStatus S =
+        decodeInstruction(DecoderTableBanks6416, Instr, Insn, Address, this, STI);
+    if (S != MCDisassembler::Fail)
+      return S;
+  }
   return decodeInstruction(DecoderTable16, Instr, Insn, Address, this, STI);
 }

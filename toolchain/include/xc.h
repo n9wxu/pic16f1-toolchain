@@ -3,7 +3,15 @@
 #ifndef __XC_H
 #define __XC_H
 
-#if defined(__PIC16F1937__)
+#if defined(__PIC16F15276__)
+#include <pic16f15276.h>
+#elif defined(__PIC16F1619__)
+#include <pic16f1619.h>
+#elif defined(__PIC16F1829__)
+#include <pic16f1829.h>
+#elif defined(__PIC16F18877__)
+#include <pic16f18877.h>
+#elif defined(__PIC16F1937__)
 #include <pic16f1937.h>
 #else
 #error "no device header for this -mcpu value"

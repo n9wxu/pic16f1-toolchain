@@ -20,3 +20,4 @@ ELF_RELOC(R_PIC16F1_PAGE7,   10)  // MOVLP: ((S+A)/2 >> 8) & 0x7F
 ELF_RELOC(R_PIC16F1_BRA9,    11)  // BRA: ((S+A) - (P+2))/2, signed 9 bits
 ELF_RELOC(R_PIC16F1_BANK5,   12)  // MOVLB: bank of the banked form of S+A
 ELF_RELOC(R_PIC16F1_F7,      13)  // file operand: banked form of S+A, & 0x7F
+ELF_RELOC(R_PIC16F1_BANK6,   14)  // MOVLB on a 64-bank device

@@ -24,6 +24,7 @@ class StringRef;
 
 class PIC16F1Subtarget : public PIC16F1GenSubtargetInfo {
   virtual void anchor();
+  bool HasBanks64 = false;
   PIC16F1InstrInfo InstrInfo;
   PIC16F1TargetLowering TLInfo;
   std::unique_ptr<const SelectionDAGTargetInfo> TSInfo;
@@ -35,6 +36,10 @@ public:
   ~PIC16F1Subtarget() override;
 
   void ParseSubtargetFeatures(StringRef CPU, StringRef TuneCPU, StringRef FS);
+
+  bool hasBanks64() const { return HasBanks64; }
+  /// End of the banked (directly addressable) data space.
+  unsigned bankedEnd() const { return HasBanks64 ? 0x2000 : 0x1000; }
 
   const TargetFrameLowering *getFrameLowering() const override {
     return &FrameLowering;

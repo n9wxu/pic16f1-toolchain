@@ -13,11 +13,21 @@
 
 include "llvm/Target/Target.td"
 
+// The newer families (PIC16F188xx, PIC16F152xx, ...) have 64 data banks: a
+// 6-bit BSR and a MOVLB with a 6-bit operand and a different encoding.
+def FeatureBanks64
+    : SubtargetFeature<"banks64", "HasBanks64", "true",
+                       "64 data banks (6-bit BSR)">;
+
 class Proc<string Name, list<SubtargetFeature> Features>
     : Processor<Name, NoItineraries, Features>;
 
 def : Proc<"generic", []>;
 def : Proc<"pic16f1937", []>;
+def : Proc<"pic16f1829", []>;
+def : Proc<"pic16f1619", []>;
+def : Proc<"pic16f18877", [FeatureBanks64]>;
+def : Proc<"pic16f15276", [FeatureBanks64]>;
 
 include "PIC16F1RegisterInfo.td"
 include "PIC16F1CallingConv.td"

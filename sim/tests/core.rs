@@ -284,3 +284,21 @@ fn hex_round_trip() {
     assert_eq!(back.words, img.words);
     assert!(text.contains(":020000040001F9"));
 }
+
+#[test]
+fn sixty_four_bank_devices_use_the_six_bit_movlb() {
+    // MOVLB 40 on a PIC16F18877 is 0x0168 (from Microchip's assembler).
+    // Bank 40 holds general purpose RAM at 0x20; linear offset 40 * 80.
+    let mut img = Image::default();
+    let prog = [0x0168u16, movlw(0x5A), movwf(0x20), 0x0140, SLEEP];
+    for (i, w) in prog.iter().enumerate() {
+        img.words.insert(i as u32, *w);
+    }
+    let mut cpu = Cpu::new(Device::builtin("pic16f18877").unwrap());
+    cpu.load(&img).unwrap();
+    assert_eq!(cpu.run(1000), Halt::Sleep);
+    assert_eq!(cpu.peek(40 * 128 + 0x20), 0x5A);
+    assert_eq!(cpu.bsr(), 0);
+    let d = Device::builtin("pic16f18877").unwrap();
+    assert_eq!(d.linear_to_traditional(40 * 80), Some(40 * 128 + 0x20));
+}

@@ -21,7 +21,8 @@ def a(el, name, default=None):
 
 
 def num(s):
-    return int(s, 0)
+    """Parse a number attribute; None if the pack does not give it."""
+    return None if s is None else int(s, 0)
 
 
 def fields_of(mode):
@@ -129,6 +130,11 @@ def main():
 
     ds = root.find(NS + "DataSpace")
     dev["data_end"] = num(a(ds, "endaddr"))
+    # 128 bytes per bank: 32 banks (5-bit BSR) or 64 banks (6-bit BSR).
+    dev["bank_count"] = dev["data_end"] // 128
+    lin = next(ds.iter(NS + "LinearDataSector"), None)
+    if lin is not None:
+        dev["linear"] = {"begin": num(a(lin, "beginaddr")), "end": num(a(lin, "endaddr"))}
     gpr, common, sfrs, joined = [], None, [], []
     for sec in ds.iter(NS + "GPRDataSector"):
         if a(sec, "shadowidref"):

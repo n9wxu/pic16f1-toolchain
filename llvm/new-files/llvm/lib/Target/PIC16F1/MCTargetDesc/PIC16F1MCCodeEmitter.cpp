@@ -50,6 +50,7 @@ class PIC16F1MCCodeEmitter : public MCCodeEmitter {
   ENCODER(encodeFile, PIC16F1::fixup_f7)
   ENCODER(encodeLit8, PIC16F1::fixup_lo8)
   ENCODER(encodeBank, PIC16F1::fixup_bank5)
+  ENCODER(encodeBank6, PIC16F1::fixup_bank6)
   ENCODER(encodePage, PIC16F1::fixup_page7)
   ENCODER(encodeCall, PIC16F1::fixup_call11)
   ENCODER(encodeBra, PIC16F1::fixup_bra9)
@@ -124,10 +125,16 @@ unsigned PIC16F1MCCodeEmitter::encodeExpr(const MCInst &MI, unsigned OpNo,
   unsigned Kind = Default;
   if (const auto *SE = dyn_cast<MCSpecifierExpr>(Expr)) {
     Kind = fixupForSpecifier(SE->getSpecifier(), Default);
+    // bank() on a 64-bank device's MOVLB is six bits wide.
+    if (Kind == PIC16F1::fixup_bank5 && Default == PIC16F1::fixup_bank6)
+      Kind = Default;
     // A specifier applied to a constant is just a number.
     int64_t Value = 0;
-    if (SE->getSubExpr()->evaluateAsAbsolute(Value))
+    if (SE->getSubExpr()->evaluateAsAbsolute(Value)) {
+      if (Kind == PIC16F1::fixup_bank6)
+        return (Value >> 7) & 0x3F;
       return PIC16F1::applySpecifier(SE->getSpecifier(), Value);
+    }
   }
   Fixups.push_back(MCFixup::create(0, Expr, MCFixupKind(Kind),
                                    Kind == PIC16F1::fixup_bra9));

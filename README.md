@@ -2,7 +2,9 @@
 
 An open compiler, simulator and programming toolchain for the Microchip
 enhanced mid-range core (PIC16F1xxx). The full plan is in
-[docs/plan.md](docs/plan.md). The first target is the PIC16F1937.
+[docs/plan.md](docs/plan.md). The first target is the PIC16F1937; the
+PIC16F1829, PIC16F1619, PIC16F18877 and PIC16F15276 are also supported in
+the simulator and compiler.
 
 ## Status
 
@@ -25,6 +27,7 @@ enhanced mid-range core (PIC16F1xxx). The full plan is in
 | `tests/compiler/` | Further tests for the new compiler: recursion, variadic calls, structs, 64-bit math, large frames, interrupt context |
 | `tests/assembler/` | Instruction encodings checked against Microchip `pic-as`, and a round-trip test |
 | `tests/lit/` | Regression tests for the assembler, linker and code generator (LLVM lit) |
+| `tests/devices/` | A program that must build and run on every device in the database |
 | `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
 | `tests/host/` | Stand-in headers for building the programs natively |

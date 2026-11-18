@@ -65,6 +65,11 @@ jobs:
             reference/xc8-v4.00 build/out/llvm-pic16f1
           cat toolchain-report.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: One program on every supported device
+        env:
+          PIC16F1_CC: build/toolchain/bin/pic16f1-cc
+        run: scripts/test-devices.sh
+
       - name: Compiler tests
         env:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc

@@ -95,6 +95,9 @@ pub fn decode(w: u16) -> Op {
                     Clrf(f)
                 } else if w & 0xFC == 0 {
                     Clrw
+                } else if w & 0xC0 == 0x40 {
+                    // MOVLB on devices with 64 banks: 00 0001 01kk kkkk.
+                    Movlb((w & 0x3F) as u8)
                 } else {
                     Illegal(w)
                 }

@@ -70,8 +70,10 @@ _start:
     movwf   0x06
     movlw   hi8(__stack_top)
     movwf   0x07
-    movlb   0
 
+    ; No bank is selected here: MOVLB is encoded differently on 32- and
+    ; 64-bank devices, and this file serves both. Compiled code selects the
+    ; bank itself before every banked access.
     movlp   page(main)
     call    main
 

@@ -67,10 +67,18 @@ pub struct Device {
     pub common_ram: Range,
     pub gpr_bytes: u16,
     pub core_register_count: u16,
+    /// 32 or 64. Sixty-four-bank devices have a 6-bit BSR and MOVLB operand.
+    pub bank_count: u16,
     pub sfrs: Vec<Sfr>,
 }
 
-const PIC16F1937: &str = include_str!("../../devices/pic16f1937.json");
+const BUILTIN: &[(&str, &str)] = &[
+    ("16f15276", include_str!("../../devices/pic16f15276.json")),
+    ("16f1619", include_str!("../../devices/pic16f1619.json")),
+    ("16f1829", include_str!("../../devices/pic16f1829.json")),
+    ("16f18877", include_str!("../../devices/pic16f18877.json")),
+    ("16f1937", include_str!("../../devices/pic16f1937.json")),
+];
 
 impl Device {
     pub fn from_json(text: &str) -> Result<Device, String> {
@@ -81,9 +89,12 @@ impl Device {
     pub fn builtin(name: &str) -> Result<Device, String> {
         let n = name.to_ascii_lowercase();
         let n = n.strip_prefix("pic").unwrap_or(&n);
-        match n {
-            "16f1937" => Device::from_json(PIC16F1937),
-            _ => Err(format!("unknown device '{name}' (known: pic16f1937)")),
+        match BUILTIN.iter().find(|(k, _)| *k == n) {
+            Some((_, json)) => Device::from_json(json),
+            None => Err(format!(
+                "unknown device '{name}' (known: {})",
+                BUILTIN.iter().map(|(k, _)| format!("pic{k}")).collect::<Vec<_>>().join(", ")
+            )),
         }
     }
 
@@ -93,6 +104,25 @@ impl Device {
 
     pub fn sfr_addr(&self, name: &str) -> Option<u16> {
         self.sfr(name).map(|s| s.addr)
+    }
+
+    /// Size of the banked data space in bytes.
+    pub fn data_size(&self) -> usize {
+        self.bank_count as usize * 128
+    }
+
+    /// The first SFR, in address order, that has a field with one of these
+    /// names, with the field's mask: for flags whose register differs
+    /// between families.
+    pub fn find_field(&self, sfr_prefix: &str, fields: &[&str]) -> Option<(u16, u8)> {
+        for s in self.sfrs.iter().filter(|s| s.name.starts_with(sfr_prefix)) {
+            for name in fields {
+                if let Some(f) = s.field(name) {
+                    return Some((s.addr, (((1u16 << f.width) - 1) as u8) << f.bit));
+                }
+            }
+        }
+        None
     }
 
     /// Mask for a named field of a named SFR, e.g. ("PIR1", "TXIF").
