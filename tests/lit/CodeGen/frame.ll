@@ -11,6 +11,7 @@ define i16 @frame() {
 ; CHECK:      addfsr FSR1, -32
 ; CHECK-NEXT: addfsr FSR1, -8
 ; CHECK:      addfsr FSR1, 31
+; CHECK-NEXT: movlw 7
 ; CHECK-NEXT: movwi 4[FSR1]
 ; CHECK-NEXT: addfsr FSR1, -31
 ; CHECK:      call ext

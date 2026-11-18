@@ -12,6 +12,8 @@
 #include "PIC16F1SelectionDAGInfo.h"
 #include "PIC16F1Subtarget.h"
 #include "PIC16F1TargetMachine.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -21,6 +23,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -137,6 +140,20 @@ EVT PIC16F1TargetLowering::getSetCCResultType(const DataLayout &DL,
   if (VT.isVector())
     return VT.changeVectorElementTypeToInteger();
   return MVT::i8;
+}
+
+bool PIC16F1TargetLowering::fallBackToDAGISel(const Instruction &Inst) const {
+  const auto *Call = dyn_cast<CallBase>(&Inst);
+  if (!Call || !Call->isInlineAsm())
+    return false;
+  const DataLayout &DL = Inst.getDataLayout();
+  auto TooWide = [&](Type *Ty) {
+    return Ty->isSized() && DL.getTypeSizeInBits(Ty) > 16;
+  };
+  if (TooWide(Call->getType()))
+    return true;
+  return any_of(Call->args(),
+                [&](const Use &U) { return TooWide(U->getType()); });
 }
 
 std::pair<unsigned, const TargetRegisterClass *>
@@ -569,16 +586,97 @@ PIC16F1TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   }
 }
 
-/// d = (a CC b) ? t : f  becomes a branch around a block that supplies f.
+static bool isSelectPseudo(unsigned Opc) {
+  return Opc == PIC16F1::SELECT8c8 || Opc == PIC16F1::SELECT8c16 ||
+         Opc == PIC16F1::SELECT16c8 || Opc == PIC16F1::SELECT16c16;
+}
+
+/// d = (a CC b) ? t : f  becomes a branch around a block that supplies one
+/// of the values. Selects that follow with the same condition, as the
+/// pieces of a 32- or 64-bit select do, share the one compare and branch.
 MachineBasicBlock *
 PIC16F1TargetLowering::emitSelect(MachineInstr &MI,
                                   MachineBasicBlock *BB) const {
   const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
   DebugLoc dl = MI.getDebugLoc();
-  bool Cmp16 = MI.getOpcode() == PIC16F1::SELECT8c16 ||
-               MI.getOpcode() == PIC16F1::SELECT16c16;
-
   MachineFunction *F = BB->getParent();
+  MachineRegisterInfo &MRI = F->getRegInfo();
+  const unsigned Opc = MI.getOpcode();
+  bool Cmp16 = Opc == PIC16F1::SELECT8c16 || Opc == PIC16F1::SELECT16c16;
+
+  // The same constant, loaded twice, compares the same.
+  auto SameValue = [&](Register A, Register B) {
+    if (A == B)
+      return true;
+    if (!A.isVirtual() || !B.isVirtual())
+      return false;
+    const MachineInstr *DA = MRI.getVRegDef(A), *DB = MRI.getVRegDef(B);
+    return DA && DB && DA->getOpcode() == DB->getOpcode() &&
+           DA->isMoveImmediate() && DA->getOperand(1).isImm() &&
+           DB->getOperand(1).isImm() &&
+           DA->getOperand(1).getImm() == DB->getOperand(1).getImm();
+  };
+  // The same comparison, or its opposite (conditions pair up as CC and
+  // CC ^ 1), which is the same branch with the two values exchanged.
+  auto SameCondition = [&](const MachineInstr &Other, bool &Opposite) {
+    bool OtherCmp16 = Other.getOpcode() == PIC16F1::SELECT8c16 ||
+                      Other.getOpcode() == PIC16F1::SELECT16c16;
+    int64_t OtherCC = Other.getOperand(1).getImm();
+    int64_t ThisCC = MI.getOperand(1).getImm();
+    Opposite = OtherCC == (ThisCC ^ 1);
+    return OtherCmp16 == Cmp16 && (OtherCC == ThisCC || Opposite) &&
+           Other.getOperand(2).getReg() == MI.getOperand(2).getReg() &&
+           SameValue(Other.getOperand(3).getReg(), MI.getOperand(3).getReg());
+  };
+
+  // Gather the selects that follow with the same condition. Loads of
+  // constants and register moves may stand between them; those move up
+  // above the first.
+  SmallVector<MachineInstr *, 4> Group{&MI};
+  SmallPtrSet<MachineInstr *, 4> OppositeSense;
+  SmallVector<MachineInstr *, 4> Pending, Hoist;
+  SmallSet<Register, 4> Results;
+  Results.insert(MI.getOperand(0).getReg());
+  for (auto It = std::next(MachineBasicBlock::iterator(MI)); It != BB->end();
+       ++It) {
+    if (It->isDebugInstr())
+      continue;
+    if (isSelectPseudo(It->getOpcode())) {
+      // It must not choose between results of the selects before it.
+      bool UsesResult = any_of(It->uses(), [&](const MachineOperand &MO) {
+        return MO.isReg() && Results.count(MO.getReg());
+      });
+      bool Opposite = false;
+      if (UsesResult || !SameCondition(*It, Opposite))
+        break;
+      Group.push_back(&*It);
+      if (Opposite)
+        OppositeSense.insert(&*It);
+      Results.insert(It->getOperand(0).getReg());
+      Hoist.append(Pending.begin(), Pending.end());
+      Pending.clear();
+      continue;
+    }
+    // Register-to-register moves among virtual registers may stand in
+    // between as well, unless they read a result of the group.
+    bool IsMove = It->isMoveImmediate() || It->isImplicitDef() ||
+                  It->isRegSequence() || It->isInsertSubreg() ||
+                  It->isExtractSubreg() ||
+                  (It->isCopy() && It->getOperand(0).getReg().isVirtual() &&
+                   It->getOperand(1).getReg().isVirtual());
+    bool ReadsResult = any_of(It->uses(), [&](const MachineOperand &MO) {
+      return MO.isReg() && Results.count(MO.getReg());
+    });
+    if (IsMove && !ReadsResult) {
+      Pending.push_back(&*It);
+      continue;
+    }
+    break;
+  }
+  for (MachineInstr *H : Hoist)
+    BB->splice(MachineBasicBlock::iterator(MI), BB, H->getIterator());
+  MachineInstr *Last = Group.back();
+
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
   MachineFunction::iterator It = ++BB->getIterator();
   MachineBasicBlock *FalseMBB = F->CreateMachineBasicBlock(LLVM_BB);
@@ -587,27 +685,68 @@ PIC16F1TargetLowering::emitSelect(MachineInstr &MI,
   F->insert(It, SinkMBB);
 
   SinkMBB->splice(SinkMBB->begin(), BB,
-                  std::next(MachineBasicBlock::iterator(MI)), BB->end());
+                  std::next(MachineBasicBlock::iterator(*Last)), BB->end());
   SinkMBB->transferSuccessorsAndUpdatePHIs(BB);
   BB->addSuccessor(FalseMBB);
   BB->addSuccessor(SinkMBB);
 
-  BuildMI(BB, dl, TII.get(Cmp16 ? PIC16F1::BRCC16rr : PIC16F1::BRCC8rr))
-      .addImm(MI.getOperand(1).getImm())
-      .addReg(MI.getOperand(2).getReg())
-      .addReg(MI.getOperand(3).getReg())
-      .addMBB(SinkMBB);
+  // One value of each select comes straight from this block and the other
+  // from the block the branch skips. A value computed here only for the
+  // select can later be moved into the skipped block, so that it is
+  // computed only when it is chosen; give that role to the side that has
+  // such computations.
+  auto ComputedHere = [&](Register R) {
+    if (!R.isVirtual() || !MRI.hasOneNonDBGUse(R))
+      return false;
+    const MachineInstr *Def = MRI.getVRegDef(R);
+    return Def && Def->getParent() == BB && !Def->isPHI() && !Def->isCopy() &&
+           !Def->isMoveImmediate();
+  };
+  unsigned CC = MI.getOperand(1).getImm();
+  bool TakenComputed = false, SkippedComputed = false;
+  for (MachineInstr *Sel : Group) {
+    bool Opp = OppositeSense.count(Sel);
+    TakenComputed |= ComputedHere(Sel->getOperand(Opp ? 5 : 4).getReg());
+    SkippedComputed |= ComputedHere(Sel->getOperand(Opp ? 4 : 5).getReg());
+  }
+  bool Swap = TakenComputed && !SkippedComputed;
+  if (Swap)
+    CC ^= 1;
+
+  // Compare with a constant directly when the right side is one; the load
+  // of the constant is then usually dead.
+  MachineInstr *RHSDef = MRI.getVRegDef(MI.getOperand(3).getReg());
+  if (RHSDef && RHSDef->getOpcode() == (Cmp16 ? PIC16F1::LDI16 : PIC16F1::LDI8) &&
+      RHSDef->getOperand(1).isImm()) {
+    BuildMI(BB, dl, TII.get(Cmp16 ? PIC16F1::BRCC16ri : PIC16F1::BRCC8ri))
+        .addImm(CC)
+        .addReg(MI.getOperand(2).getReg())
+        .addImm(RHSDef->getOperand(1).getImm())
+        .addMBB(SinkMBB);
+  } else {
+    BuildMI(BB, dl, TII.get(Cmp16 ? PIC16F1::BRCC16rr : PIC16F1::BRCC8rr))
+        .addImm(CC)
+        .addReg(MI.getOperand(2).getReg())
+        .addReg(MI.getOperand(3).getReg())
+        .addMBB(SinkMBB);
+  }
 
   FalseMBB->addSuccessor(SinkMBB);
 
-  BuildMI(*SinkMBB, SinkMBB->begin(), dl, TII.get(PIC16F1::PHI),
-          MI.getOperand(0).getReg())
-      .addReg(MI.getOperand(4).getReg())
-      .addMBB(BB)
-      .addReg(MI.getOperand(5).getReg())
-      .addMBB(FalseMBB);
-
-  MI.eraseFromParent();
+  MachineBasicBlock::iterator PhiPos = SinkMBB->begin();
+  for (MachineInstr *Sel : Group) {
+    bool Exchange = Swap != bool(OppositeSense.count(Sel));
+    Register Taken = Sel->getOperand(Exchange ? 5 : 4).getReg();
+    Register Skipped = Sel->getOperand(Exchange ? 4 : 5).getReg();
+    BuildMI(*SinkMBB, PhiPos, Sel->getDebugLoc(), TII.get(PIC16F1::PHI),
+            Sel->getOperand(0).getReg())
+        .addReg(Taken)
+        .addMBB(BB)
+        .addReg(Skipped)
+        .addMBB(FalseMBB);
+  }
+  for (MachineInstr *Sel : Group)
+    Sel->eraseFromParent();
   return SinkMBB;
 }
 

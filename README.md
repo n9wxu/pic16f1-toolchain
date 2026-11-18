@@ -38,6 +38,7 @@ gates G0 to G2.
 | `tests/host/` | Stand-in headers for building the programs natively |
 | `reference/xc8-v4.00/` | The programs built with MPLAB XC8 4.00 at `-O0` to `-Os` |
 | `tools/bench.py` | Runs binaries on the simulator and reports size and cycles |
+| `tools/memguard.py` | Runs a command and kills any process under it that passes a memory limit |
 | `llvm/` | LLVM, Clang and LLD changes: a patch plus the new files |
 | `toolchain/` | Compiler driver, runtime library, device headers, linker scripts |
 | `scripts/` | Build helpers |

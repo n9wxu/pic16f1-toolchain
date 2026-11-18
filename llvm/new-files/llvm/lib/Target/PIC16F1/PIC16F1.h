@@ -25,6 +25,10 @@ enum CondCodes {
   COND_UGE = 3,
   COND_LT = 4,
   COND_GE = 5,
+  // A single bit of a byte is clear or set. Only the 8-bit immediate form
+  // of the branch takes these; the immediate is the bit number.
+  COND_BC = 6,
+  COND_BS = 7,
 };
 } // namespace PIC16F1CC
 

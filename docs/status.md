@@ -30,7 +30,7 @@ roles, and the pinned MPLAB X version.
 
 | Exit criterion | State |
 |---|---|
-| At least 95% of the GCC C torture tests | 97.4% of the tests that build, at `-O0` and at `-Os` |
+| At least 95% of the GCC C torture tests | 97.7% of the tests that build at `-O0`, 97.6% at `-Os` |
 | picolibc passes | picolibc compiles in full. Of the 141 of its test programs run, 103 pass on the simulated PIC16F18877 and none gives a wrong result. Its math, POSIX and locale tests were not run |
 | Blink on three families | One program builds unchanged and passes on five devices in four families, on the simulator; silicon deferred |
 | Simulator matches silicon on core validation | Deferred (hardware) |
@@ -38,7 +38,7 @@ roles, and the pinned MPLAB X version.
 ## What G2 unlocks
 
 Optimization I (static frames, bank and page tracking, the verifier), C++,
-Rust, and LLDB. None of these is started. Code is currently about 1.4 times
+Rust, and LLDB. None of these is started. Code is currently about 1.2 times
 the size of XC8 `-Os`; the G3 target is within 15%.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.

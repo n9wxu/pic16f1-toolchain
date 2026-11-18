@@ -393,6 +393,33 @@ let Uses = [CARRY] in {
 def CARRY8 : Pseudo<(outs GPR8:$d), (ins), []>;
 def BORROW8 : Pseudo<(outs GPR8:$d), (ins), []>;
 }
+// Rotate a pair one bit through the carry: the middle and upper links of a
+// one-bit shift of a 32- or 64-bit value.
+let Constraints = "$d = $a", Uses = [CARRY], Defs = [CARRY] in {
+def ROL16 : Pseudo<(outs GPR16:$d), (ins GPR16:$a), []>;
+def ROR16 : Pseudo<(outs GPR16:$d), (ins GPR16:$a), []>;
+}
+
+// GlobalISel forms of the same, produced by the legalizer when it splits a
+// one-bit right shift of a wide value. The bit shifted out is the carry
+// result. (A left shift is written as x + x with the ordinary carry chain.)
+class PIC16F1GenericInstruction : GenericInstruction {
+  let Namespace = "PIC16F1";
+  let hasSideEffects = 0;
+}
+def G_LSR1 : PIC16F1GenericInstruction {
+  let OutOperandList = (outs type0:$d, type1:$cout);
+  let InOperandList = (ins type0:$a);
+}
+def G_ASR1 : PIC16F1GenericInstruction {
+  let OutOperandList = (outs type0:$d, type1:$cout);
+  let InOperandList = (ins type0:$a);
+}
+def G_RRC : PIC16F1GenericInstruction {
+  let OutOperandList = (outs type0:$d, type1:$cout);
+  let InOperandList = (ins type0:$a, type1:$cin);
+}
+
 // Used only while GlobalISel selects a carry chain: it keeps the earlier
 // link from being removed as dead once the later link, which takes the
 // carry from the flag, no longer names the carry register. The earlier
@@ -488,6 +515,19 @@ def ST8ptr : Pseudo<(outs), (ins GPR8:$s, memptr:$a),
                     [(store GPR8:$s, addrptr8:$a)]>;
 def ST16ptr : Pseudo<(outs), (ins GPR16:$s, memptr:$a),
                      [(store GPR16:$s, addrptr16:$a)]>;
+
+// Store a constant. W carries it, so no register is needed. GlobalISel
+// selects these; they have no SelectionDAG pattern.
+// Without a pattern nothing infers that they write memory, and a load could
+// then be moved across them.
+let mayStore = 1 in {
+def STI8fi : Pseudo<(outs), (ins i8imm:$k, memfi:$a), []>;
+def STI16fi : Pseudo<(outs), (ins i16imm:$k, memfi:$a), []>;
+def STI8abs : Pseudo<(outs), (ins i8imm:$k, memabs:$a), []>;
+def STI16abs : Pseudo<(outs), (ins i16imm:$k, memabs:$a), []>;
+def STI8ptr : Pseudo<(outs), (ins i8imm:$k, memptr:$a), []>;
+def STI16ptr : Pseudo<(outs), (ins i16imm:$k, memptr:$a), []>;
+}
 
 // Read-modify-write of a directly addressed byte: one instruction on the
 // file register instead of load, operate, store. The byte is read once and

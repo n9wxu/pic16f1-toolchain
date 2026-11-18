@@ -447,6 +447,14 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     return true;
   }
   case ADD16ri: {
+    if (!MI.getOperand(2).isImm()) {
+      // The address of a data symbol.
+      E.loadWSym(MI.getOperand(2), PIC16F1II::MO_LO8);
+      E.opToFile(ADDWF, lo(MI.getOperand(0)));
+      E.loadWSym(MI.getOperand(2), PIC16F1II::MO_HI8);
+      E.opToFile(ADDWFC, hi(MI.getOperand(0)));
+      return true;
+    }
     uint64_t K = MI.getOperand(2).getImm();
     if (CarryDead && (K & 0xFF) == 0) {
       // Only the high byte changes.
@@ -459,6 +467,13 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
         E.loadWImm(KHi);
         E.opToFile(ADDWF, hi(MI.getOperand(0)));
       }
+      return true;
+    }
+    if (CarryDead && (K & 0xFFFF) == 1) {
+      // Increment: the high byte follows when the low byte wraps to zero.
+      E.opToFile(INCF, lo(MI.getOperand(0)));
+      E.bitOp(BTFSC, STATUS_ADDR, STATUS_Z);
+      E.opToFile(INCF, hi(MI.getOperand(0)));
       return true;
     }
     E.loadWImm(K);
@@ -509,6 +524,15 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     return true;
   case ASR16:
     E.opToFile(ASRF, hi(MI.getOperand(0)));
+    E.opToFile(RRF, lo(MI.getOperand(0)));
+    return true;
+
+  case ROL16:
+    E.opToFile(RLF, lo(MI.getOperand(0)));
+    E.opToFile(RLF, hi(MI.getOperand(0)));
+    return true;
+  case ROR16:
+    E.opToFile(RRF, hi(MI.getOperand(0)));
     E.opToFile(RRF, lo(MI.getOperand(0)));
     return true;
 
@@ -605,7 +629,39 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     E.storeDirect(hi(MI.getOperand(0)), MI.getOperand(1), 1);
     return true;
 
+  case STI8abs:
+  case STI16abs: {
+    // A constant to a direct address: CLRF for zero, else through W.
+    uint64_t K = MI.getOperand(0).getImm();
+    for (unsigned B = 0, N = Opc == STI16abs ? 2 : 1; B != N; ++B) {
+      unsigned Byte = (K >> (8 * B)) & 0xFF;
+      if (Byte != 0)
+        E.loadWImm(Byte);
+      MachineOperand F = E.selectBank(MI.getOperand(1), B);
+      if (Byte == 0)
+        E.build(CLRF).add(F);
+      else
+        E.build(MOVWF).add(F);
+      if (F.isImm() && Emitter::isUnbanked(F.getImm()))
+        E.forgetAll();
+    }
+    return true;
+  }
+
   // --- Loads and stores through a pointer ----------------------------------
+  case STI8ptr:
+  case STI16ptr: {
+    uint64_t K = MI.getOperand(0).getImm();
+    int64_t Off = MI.getOperand(2).getImm();
+    E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
+    E.loadWImm(K);
+    E.storeIndirect(0, Off);
+    if (Opc == STI16ptr) {
+      E.loadWImm(K >> 8);
+      E.storeIndirect(0, Off + 1);
+    }
+    return true;
+  }
   case LD8ptr:
   case LD16ptr: {
     int64_t Off = MI.getOperand(2).getImm();
@@ -656,6 +712,21 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
       if (Wide) {
         E.loadW(hi(MI.getOperand(0)));
         E.storeIndirect(1, K + 1);
+      }
+    });
+    return true;
+  }
+  case STI8fi:
+  case STI16fi: {
+    uint64_t K = MI.getOperand(0).getImm();
+    int64_t Off = MI.getOperand(1).getImm() + MI.getOperand(2).getImm();
+    bool Wide = Opc == STI16fi;
+    E.withStackSlot(Off, Wide ? 2 : 1, [&](int64_t Slot) {
+      E.loadWImm(K);
+      E.storeIndirect(1, Slot);
+      if (Wide) {
+        E.loadWImm(K >> 8);
+        E.storeIndirect(1, Slot + 1);
       }
     });
     return true;
@@ -780,6 +851,38 @@ FunctionPass *llvm::createPIC16F1ExpandBranchesPass() {
   return new PIC16F1ExpandBranches();
 }
 
+/// True if the instruction before \p Branch wrote its result to the file
+/// register \p File and set Z from it.
+static bool zFlagReflects(const MachineInstr &Branch, unsigned File) {
+  const MachineBasicBlock &MBB = *Branch.getParent();
+  MachineBasicBlock::const_iterator I(Branch);
+  while (I != MBB.begin()) {
+    --I;
+    if (I->isDebugInstr())
+      continue;
+    switch (I->getOpcode()) {
+    case PIC16F1::ADDWF:
+    case PIC16F1::ADDWFC:
+    case PIC16F1::ANDWF:
+    case PIC16F1::ASRF:
+    case PIC16F1::LSLF:
+    case PIC16F1::LSRF:
+    case PIC16F1::COMF:
+    case PIC16F1::DECF:
+    case PIC16F1::INCF:
+    case PIC16F1::IORWF:
+    case PIC16F1::SUBWF:
+    case PIC16F1::SUBWFB:
+    case PIC16F1::XORWF:
+      return I->getOperand(0).isImm() && I->getOperand(0).getImm() == File &&
+             I->getOperand(1).getImm() == 1;
+    default:
+      return false;
+    }
+  }
+  return false;
+}
+
 bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
   const PIC16F1InstrInfo &TII =
       *MF.getSubtarget<PIC16F1Subtarget>().getInstrInfo();
@@ -810,6 +913,13 @@ bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
         SmallVector<PIC16F1RawInst, 12> Seq;
         TII.buildCompareBranch(MI, Seq);
         MachineBasicBlock *Target = MI.getOperand(3).getMBB();
+        // A test of a byte for zero starts by moving it to W for the Z
+        // flag. The flag is already right if the instruction before left
+        // its result in that byte, as the DECF of a loop counter does.
+        if (Seq.size() == 3 && Seq[0].Opc == PIC16F1::MOVF &&
+            Seq[1].NumOps == 2 && Seq[1].Op0 == PIC16F1::STATUS_ADDR &&
+            Seq[1].Op1 == PIC16F1::STATUS_Z && zFlagReflects(MI, Seq[0].Op0))
+          Seq.erase(Seq.begin());
         for (const PIC16F1RawInst &R : Seq) {
           MachineInstrBuilder MIB = BuildMI(MBB, MI, DL, TII.get(R.Opc));
           if (R.IsBranch) {

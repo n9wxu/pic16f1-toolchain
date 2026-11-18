@@ -63,7 +63,7 @@ CROSS
         -Dnewlib-global-errno=true -Dposix-console=false -Dmb-capable=false \
         -Dwant-math-errno=false -Doptimization=s -Dprefix="$out" \
         "$bld" "$src" > "$bld.setup.log" 2>&1 || { tail -20 "$bld.setup.log"; exit 1; }
-    ninja -C "$bld" install > "$bld.log" 2>&1 || {
+    "$root/tools/memguard.py" --max-mb 1500 -- ninja -C "$bld" install > "$bld.log" 2>&1 || {
         grep -E "error|FAILED" "$bld.log" | head -20; exit 1; }
     echo "picolibc for $banks-bank devices installed in $out"
 }

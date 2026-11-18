@@ -23,6 +23,9 @@
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/CommandLine.h"
 
 #define GET_GICOMBINER_DEPS
 #include "PIC16F1GenPreLegalizeGICombiner.inc"
@@ -31,6 +34,15 @@
 #define DEBUG_TYPE "pic16f1-prelegalizer-combiner"
 
 using namespace llvm;
+
+/// A logic operation on two truncations.
+static bool isLogicOfTruncs(const MachineInstr &MI,
+                            const MachineRegisterInfo &MRI) {
+  const MachineInstr *L = MRI.getVRegDef(MI.getOperand(1).getReg());
+  const MachineInstr *R = MRI.getVRegDef(MI.getOperand(2).getReg());
+  return L && R && L->getOpcode() == TargetOpcode::G_TRUNC &&
+         R->getOpcode() == TargetOpcode::G_TRUNC;
+}
 
 namespace {
 
@@ -80,6 +92,40 @@ PIC16F1PreLegalizerCombinerImpl::PIC16F1PreLegalizerCombinerImpl(
 #undef GET_GICOMBINER_CONSTRUCTOR_INITS
 {
 }
+
+static cl::opt<unsigned> PreBudget(
+    "pic16f1-prelegalizer-combine-budget", cl::Hidden, cl::init(1000),
+    cl::desc("Rule applications allowed per function, on top of 100 per "
+             "instruction"));
+
+/// The combiner works until no rule applies, and nothing in it notices two
+/// rules that undo each other: it would then run for ever and allocate
+/// instructions until the machine is out of memory. This stops applying
+/// rules after far more of them than any real function needs. The code is
+/// correct at every step, so stopping early only leaves it less optimized.
+class BoundedPreCombiner : public PIC16F1PreLegalizerCombinerImpl {
+  mutable uint64_t Budget;
+
+public:
+  template <typename... Ts>
+  BoundedPreCombiner(MachineFunction &MF, Ts &&...Args)
+      : PIC16F1PreLegalizerCombinerImpl(MF, std::forward<Ts>(Args)...),
+        Budget(PreBudget + 100 * uint64_t(MF.getInstructionCount())) {}
+
+  bool tryCombineAll(MachineInstr &I) const override {
+    if (Budget == 0)
+      return false;
+    if (!PIC16F1PreLegalizerCombinerImpl::tryCombineAll(I))
+      return false;
+    if (--Budget == 0)
+      I.getMF()->getFunction().getContext().diagnose(DiagnosticInfoGeneric(
+          Twine("PIC16F1 combiner (") + getName() + ") stopped in function '" +
+              I.getMF()->getName() +
+              "': rules keep applying without end; please report this",
+          DS_Warning));
+    return true;
+  }
+};
 
 class PIC16F1PreLegalizerCombiner : public MachineFunctionPass {
 public:
@@ -138,8 +184,8 @@ bool PIC16F1PreLegalizerCombiner::runOnMachineFunction(MachineFunction &MF) {
   CombinerInfo CInfo(/*AllowIllegalOps=*/true, /*ShouldLegalizeIllegal=*/false,
                      /*LegalizerInfo=*/nullptr, EnableOpt, F.hasOptSize(),
                      F.hasMinSize());
-  PIC16F1PreLegalizerCombinerImpl Impl(MF, CInfo, *VT, CSEInfo, RuleConfig,
-                                          ST, MDT, nullptr);
+  BoundedPreCombiner Impl(MF, CInfo, *VT, CSEInfo, RuleConfig,
+                                          ST, MDT, ST.getLegalizerInfo());
   return Impl.combineMachineInstrs();
 }
 

@@ -61,6 +61,8 @@ def locate():
 
 def run(cmd):
     r = subprocess.run(cmd)
+    if r.returncode < 0:
+        sys.exit(f"pic16f1-cc: {os.path.basename(cmd[0])} killed by signal {-r.returncode}")
     if r.returncode != 0:
         sys.exit(r.returncode)
 

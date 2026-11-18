@@ -22,11 +22,15 @@ LLVM itself is not stored here. `llvm/LLVM_VERSION` pins a release;
 
 ## Differences from the plan
 
-- **Instruction selection uses SelectionDAG**, not GlobalISel. Stock LLVM's
-  GlobalISel legalizer has gaps for a target whose only legal type is i8.
-  The assembler layer, linker, runtime and ABI do not depend on this choice.
-- **16-bit values are legal**, held in pairs of byte registers, because
-  SelectionDAG needs the pointer type to be legal.
+- **Instruction selection uses GlobalISel**, as the plan says, but the
+  first working compiler used SelectionDAG. That selector is still in the
+  tree: a function GlobalISel cannot handle falls back to it, and
+  `-mllvm -global-isel=0` selects it for everything. On the two benchmark
+  sets GlobalISel's code is smaller at every optimization level (8% at
+  `-Os`, 11% at `-O2`, 2% at `-O0` on `tests/programs`) and it passes every
+  torture test SelectionDAG passes. See "Instruction selection" below.
+- **16-bit values are legal**, held in pairs of byte registers, as well as
+  bytes. The plan has i8 as the only legal type.
 - **All frames are on the software stack.** Static frames, bank and page
   placement, and the other optimizations of stages C and D are not started.
 - **Test programs exit through `LATD` and `SLEEP`** rather than a
@@ -48,6 +52,57 @@ W, BSR and FSR0 hold within a basic block and leaves out reloads.
 Only the carry flag is modelled as live between instructions, for multi-word
 add and subtract. A conditional branch carries its own comparison, so Z is
 never live across an instruction boundary and copies may clobber it.
+
+## Instruction selection
+
+GlobalISel runs in the usual steps, with the code in
+`llvm/lib/Target/PIC16F1/GISel`:
+
+| Step | What this target does |
+|---|---|
+| Call lowering | Assigns arguments and results by the calling convention below |
+| Combiner, before legalization | All of LLVM's generic combines |
+| Legalizer | Brings every value to 8 or 16 bits |
+| Combiner, after legalization | Folds the constants and undefined pieces that splitting leaves behind |
+| Register bank selection | One bank: the byte registers and their pairs |
+| Instruction selector | Hand-written; picks the pseudo instructions |
+
+What the legalizer does with wider values:
+
+- 32- and 64-bit add and subtract become a chain of 16-bit operations
+  linked through the carry flag.
+- An ordering comparison is the borrow out of a subtract chain. Equality
+  compares piece by piece. A test of the sign looks only at the top piece.
+- A shift by one or two bits is linked through the carry flag as well
+  (`LSLF` then `RLF`, or `LSRF`/`ASRF` then `RRF`). A shift by a multiple
+  of eight moves bytes. Other wide shifts call the runtime.
+- Multiply and divide call the runtime at every width. Division by a
+  constant stays a division, because the usual replacement needs the high
+  half of a double-width product.
+- Floating point is single precision in software: a `float` is carried as
+  a 32-bit integer and each operation is a runtime call.
+
+The selector keeps a carry in the flag only when the next link of the chain
+follows with nothing in between that could change it; otherwise the function
+falls back to SelectionDAG. So does a function with inline assembly that has
+an operand wider than 16 bits. To see whether anything falls back, compile
+with `-mllvm -global-isel-abort=2`, which prints a warning for each such
+function.
+
+Both combiners stop after a fixed number of rule applications per function
+(1,000 plus 100 per instruction) and print a warning. LLVM's combiner runs
+until no rule applies, and two rules that undo each other would otherwise
+run for ever and allocate memory until the machine stops; one such pair in
+LLVM's generic rules did exactly that here and is now excluded
+(`hoist_logic_op_except_trunc` in `PIC16F1Combine.td`).
+
+### Running the test suites safely
+
+macOS enforces no per-process memory limit, so a compiler that allocates
+without bound takes the whole machine down. `tools/memguard.py -- command`
+runs a command and kills any process under it that passes a memory limit;
+`tools/torture.py` and `scripts/build-picolibc.sh` have the same watch built
+in. Use it around anything that runs a freshly changed compiler many times.
 
 ## Calling convention
 
@@ -128,11 +183,13 @@ All run on the simulator; nothing has run on silicon yet.
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass |
 | Compiler tests (`tests/compiler`, 16 programs) | 60 of 60 builds pass |
-| Regression tests (`tests/lit`) | 13 of 13 pass |
+| Regression tests (`tests/lit`) | 14 of 14 pass |
 | One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
-| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,373 of the 1,409 that build pass (97.4%) |
-| GCC C torture, `execute` at `-Os` | 1,400 of the 1,437 that build pass (97.4%) |
-| picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass, 2 exceed 20 billion cycles, 35 do not build |
+| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,388 of the 1,421 that build pass (97.7%) |
+| GCC C torture, `execute` at `-O1` | 1,403 of 1,440 (97.4%) |
+| GCC C torture, `execute` at `-O2` | 1,407 of 1,441 (97.6%) |
+| GCC C torture, `execute` at `-Os` | 1,405 of 1,440 (97.6%) |
+| picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 101 pass within 2 billion cycles, 4 exceed that, 35 do not build |
 | picolibc's tests on the PIC16F1937 | 53 pass, 1 exceeds the cycle limit, 86 do not build (51 are too big for 8K words) |
 
 About 270 torture tests do not build for this device: they need `malloc`,
@@ -154,8 +211,10 @@ All of picolibc compiles. Its own tests were run from the directories `test`,
 On the PIC16F18877 no test gives a wrong result. Of the 35 that do not
 build, most need file I/O (`open`, `unlink`), `setjmp`, or standard input,
 none of which exist here, and 8 are too large even for 32K words.
-`test-abort` ends by calling `abort`, as it is meant to. Two string tests
-were still running at 20 billion cycles and were stopped.
+`test-abort` ends by calling `abort`, as it is meant to. Four string tests
+(`test-ffs`, `test-memchr`, `test-memmem`, `test-memmove`) were still
+running at 2 billion cycles and were stopped; with the SelectionDAG
+selector two of them finished within 20 billion.
 
 The torture tests are not in this repository. `tools/torture.py` explains
 how to fetch and run them.
@@ -175,7 +234,9 @@ how to fetch and run them.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - No debug information.
-- Code is about 1.4 times the size of XC8 `-Os` on the benchmark set. Every
+- Code is about 1.2 times the size of XC8 `-Os` on the benchmark set (7,926
+  words against 6,601) and runs in 0.81 times the cycles (geometric mean;
+  six of the fifteen programs are slower). Every
   access to a global sets the bank, pointer accesses reload FSR0 unless the
   same pointer was just used, and values wider than a byte are shuffled
   between the fourteen byte registers.

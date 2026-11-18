@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
+#include "llvm/CodeGen/GlobalISel/Localizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/InitializePasses.h"
@@ -93,6 +94,7 @@ public:
   bool addLegalizeMachineIR() override;
   void addPreRegBankSelect() override;
   bool addRegBankSelect() override;
+  void addPreGlobalInstructionSelect() override;
   bool addGlobalInstructionSelect() override;
   void addPreEmitPass() override;
   void addPreEmitPass2() override;
@@ -131,8 +133,9 @@ void PIC16F1PassConfig::addPreLegalizeMachineIR() {
 }
 
 void PIC16F1PassConfig::addPreRegBankSelect() {
-  if (getOptLevel() != CodeGenOptLevel::None)
-    addPass(createPIC16F1PostLegalizerCombiner());
+  // Also without optimization: besides combining, this pass puts address
+  // computations next to their users and keeps carry chains together.
+  addPass(createPIC16F1PostLegalizerCombiner());
 }
 
 bool PIC16F1PassConfig::addLegalizeMachineIR() {
@@ -143,6 +146,15 @@ bool PIC16F1PassConfig::addLegalizeMachineIR() {
 bool PIC16F1PassConfig::addRegBankSelect() {
   addPass(new RegBankSelect());
   return false;
+}
+
+void PIC16F1PassConfig::addPreGlobalInstructionSelect() {
+  // The translator puts every constant at the top of the function, and
+  // without optimization each then sits in a stack slot from there on.
+  // Move them next to their users. With optimization the register
+  // allocator forms constants again where that pays, and does it better.
+  if (getOptLevel() == CodeGenOptLevel::None)
+    addPass(new Localizer());
 }
 
 bool PIC16F1PassConfig::addGlobalInstructionSelect() {

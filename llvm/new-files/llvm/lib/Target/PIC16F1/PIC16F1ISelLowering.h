@@ -27,6 +27,10 @@ public:
   }
   EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
                          EVT VT) const override;
+  /// GlobalISel's inline-assembly lowering handles an operand only when it
+  /// fits one register; a wider one goes to SelectionDAG.
+  bool fallBackToDAGISel(const Instruction &Inst) const override;
+
   std::pair<unsigned, const TargetRegisterClass *>
   getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
                                StringRef Constraint, MVT VT) const override;
@@ -34,6 +38,13 @@ public:
   /// reciprocal, needs the high half of a double-width product, which costs
   /// far more here.
   bool isIntDivCheap(EVT VT, AttributeList Attr) const override { return true; }
+
+  /// "x + 1 overflowed" is cheaper here as an add and a compare with zero
+  /// than as an add whose carry is turned into a value.
+  bool shouldFormOverflowOp(unsigned Opcode, EVT VT,
+                            bool MathUsed) const override {
+    return false;
+  }
 
   MVT::SimpleValueType getCmpLibcallReturnType() const override {
     return MVT::i16;

@@ -98,14 +98,30 @@ private:
       return C->Value.getSExtValue();
     return std::nullopt;
   }
+  /// The carry flag and the scratch byte an instruction changes are unused
+  /// afterwards, except between the links of a carry chain. Saying so lets
+  /// later passes move and remove the instruction.
+  static MachineInstrBuilder markDefsDead(MachineInstrBuilder MIB) {
+    for (MachineOperand &MO : MIB->operands())
+      if (MO.isReg() && MO.isImplicit() && MO.isDef() &&
+          (MO.getReg() == PIC16F1::CARRY || MO.getReg() == PIC16F1::TMP0))
+        MO.setIsDead();
+    return MIB;
+  }
+  static void carryIsLive(MachineInstrBuilder MIB) {
+    for (MachineOperand &MO : MIB->operands())
+      if (MO.isReg() && MO.isImplicit() && MO.isDef() &&
+          MO.getReg() == PIC16F1::CARRY)
+        MO.setIsDead(false);
+  }
   MachineInstrBuilder build(MachineInstr &Before, unsigned Opc) const {
-    return BuildMI(*Before.getParent(), Before, Before.getDebugLoc(),
-                   TII.get(Opc));
+    return markDefsDead(BuildMI(*Before.getParent(), Before,
+                                Before.getDebugLoc(), TII.get(Opc)));
   }
   MachineInstrBuilder build(MachineInstr &Before, unsigned Opc,
                             Register Dst) const {
-    return BuildMI(*Before.getParent(), Before, Before.getDebugLoc(),
-                   TII.get(Opc), Dst);
+    return markDefsDead(BuildMI(*Before.getParent(), Before,
+                                Before.getDebugLoc(), TII.get(Opc), Dst));
   }
   /// A register holding the constant \p V.
   Register materialize(MachineInstr &Before, int64_t V, unsigned Bits) const {
@@ -124,7 +140,9 @@ private:
   };
   /// If \p Cond is (possibly through extensions) the result of a G_ICMP,
   /// return it in the form the branch pseudos take.
-  std::optional<Compare> matchCompare(Register Cond) const;
+  std::optional<Compare> matchCompare(Register Cond, MachineInstr &Before) const;
+  std::optional<Compare> matchBitTest(CmpInst::Predicate P, Register LHS,
+                                      Register RHS, MachineInstr &Before) const;
   Compare normalize(CmpInst::Predicate P, Register LHS, Register RHS) const;
   /// Compare \p C as an operand list: condition, left, right register.
   void addCompareOperands(MachineInstr &Before, MachineInstrBuilder &MIB,
@@ -157,6 +175,8 @@ private:
   bool selectSelect(MachineInstr &I) const;
   bool selectShift(MachineInstr &I) const;
   bool selectCarryOp(MachineInstr &I) const;
+  bool selectRightShiftLink(MachineInstr &I) const;
+  bool takeCarryMarkers(Register CarryOut, bool &FlagUsed) const;
   bool carryIsInFlag(const MachineInstr &User, Register Carry) const;
 };
 
@@ -236,10 +256,60 @@ PIC16F1InstructionSelector::normalize(CmpInst::Predicate P, Register LHS,
   return C;
 }
 
+/// "(x & bit) == 0" and "!= 0" test one bit of one byte, which BTFSC and
+/// BTFSS do directly.
 std::optional<PIC16F1InstructionSelector::Compare>
-PIC16F1InstructionSelector::matchCompare(Register Cond) const {
+PIC16F1InstructionSelector::matchBitTest(CmpInst::Predicate P, Register LHS,
+                                         Register RHS,
+                                         MachineInstr &Before) const {
+  if (!CmpInst::isEquality(P) || constantOf(RHS) != 0)
+    return std::nullopt;
+  MachineInstr *And = getDefIgnoringCopies(LHS, *MRI);
+  if (!And || And->getOpcode() != G_AND)
+    return std::nullopt;
+  auto Mask = constantOf(And->getOperand(2).getReg());
+  if (!Mask)
+    return std::nullopt;
+  unsigned Bits = sizeOf(LHS);
+  uint64_t M = uint64_t(*Mask) & (Bits == 16 ? 0xFFFF : 0xFF);
+  if (!isPowerOf2_64(M))
+    return std::nullopt;
+  unsigned Bit = Log2_64(M);
+  Register Src = And->getOperand(1).getReg();
+  // The byte holding the bit. A 16-bit value may itself be an extended
+  // byte.
+  Register Byte = Src;
+  if (Bits == 16) {
+    MachineInstr *SrcDef = getDefIgnoringCopies(Src, *MRI);
+    if (Bit < 8 && SrcDef &&
+        (SrcDef->getOpcode() == G_ZEXT || SrcDef->getOpcode() == G_SEXT ||
+         SrcDef->getOpcode() == G_ANYEXT) &&
+        sizeOf(SrcDef->getOperand(1).getReg()) == 8) {
+      Byte = SrcDef->getOperand(1).getReg();
+    } else {
+      if (!constrain(Src))
+        return std::nullopt;
+      Byte = newReg(8);
+      build(Before, COPY, Byte)
+          .addUse(Src, {}, Bit < 8 ? PIC16F1::sub_lo : PIC16F1::sub_hi);
+    }
+    Bit &= 7;
+  }
+  Compare C;
+  C.CC = P == CmpInst::ICMP_NE ? PIC16F1CC::COND_BS : PIC16F1CC::COND_BC;
+  C.LHS = Byte;
+  C.RHSImm = Bit;
+  C.Wide = false;
+  return C;
+}
+
+std::optional<PIC16F1InstructionSelector::Compare>
+PIC16F1InstructionSelector::matchCompare(Register Cond,
+                                         MachineInstr &Before) const {
   // A comparison result is 0 or 1, so extending it, truncating it or masking
   // it with 1 changes nothing.
+  // "xor 1" inverts it.
+  bool Invert = false;
   for (unsigned Depth = 0; Depth != 6; ++Depth) {
     MachineInstr *Def = getDefIgnoringCopies(Cond, *MRI);
     if (!Def)
@@ -250,13 +320,24 @@ PIC16F1InstructionSelector::matchCompare(Register Cond) const {
       unsigned Bits = sizeOf(L);
       if (Bits != 8 && Bits != 16)
         return std::nullopt;
-      return normalize(
-          static_cast<CmpInst::Predicate>(Def->getOperand(1).getPredicate()), L,
-          Def->getOperand(3).getReg());
+      auto P =
+          static_cast<CmpInst::Predicate>(Def->getOperand(1).getPredicate());
+      if (Invert)
+        P = CmpInst::getInversePredicate(P);
+      if (auto BT = matchBitTest(P, L, Def->getOperand(3).getReg(), Before))
+        return BT;
+      return normalize(P, L, Def->getOperand(3).getReg());
     }
     case G_ZEXT:
     case G_ANYEXT:
     case G_TRUNC:
+    case G_FREEZE:
+      Cond = Def->getOperand(1).getReg();
+      continue;
+    case G_XOR:
+      if (constantOf(Def->getOperand(2).getReg()) != 1)
+        return std::nullopt;
+      Invert = !Invert;
       Cond = Def->getOperand(1).getReg();
       continue;
     case G_AND:
@@ -346,16 +427,26 @@ Address PIC16F1InstructionSelector::matchAddress(Register Ptr,
     break;
   }
   // A pointer in a register pair, with a small offset if the pointer is
-  // "something + constant" and the whole access stays within reach.
+  // "something + constant" and the whole access stays within reach. Of a
+  // chain of such additions, take the innermost base that is in reach: the
+  // pieces of a split wide access then share one base.
   A.Kind = Address::Pointer;
   A.Base = Ptr;
   A.Offset = 0;
-  if (MachineInstr *Def = getDefIgnoringCopies(Ptr, *MRI);
-      Def && Def->getOpcode() == G_PTR_ADD) {
+  Cur = Ptr;
+  Offset = 0;
+  for (unsigned Depth = 0; Depth != 8; ++Depth) {
+    MachineInstr *Def = getDefIgnoringCopies(Cur, *MRI);
+    if (!Def || Def->getOpcode() != G_PTR_ADD)
+      break;
     auto K = constantOf(Def->getOperand(2).getReg());
-    if (K && *K >= -32 && *K + int64_t(AccessBytes) - 1 <= 31) {
-      A.Base = Def->getOperand(1).getReg();
-      A.Offset = *K;
+    if (!K)
+      break;
+    Offset += *K;
+    Cur = Def->getOperand(1).getReg();
+    if (Offset >= -32 && Offset + int64_t(AccessBytes) - 1 <= 31) {
+      A.Base = Cur;
+      A.Offset = Offset;
     }
   }
   return A;
@@ -371,6 +462,20 @@ unsigned PIC16F1InstructionSelector::memOpcode(bool IsLoad, bool Wide,
     return IsLoad ? (Wide ? LD16abs : LD8abs) : (Wide ? ST16abs : ST8abs);
   case Address::Pointer:
     return IsLoad ? (Wide ? LD16ptr : LD8ptr) : (Wide ? ST16ptr : ST8ptr);
+  }
+  llvm_unreachable("unknown address kind");
+}
+
+/// The store-a-constant opcode for an address kind.
+static unsigned storeImmOpcode(bool Wide, Address::KindTy K) {
+  switch (K) {
+  case Address::Frame:
+    return Wide ? STI16fi : STI8fi;
+  case Address::Global:
+  case Address::Constant:
+    return Wide ? STI16abs : STI8abs;
+  case Address::Pointer:
+    return Wide ? STI16ptr : STI8ptr;
   }
   llvm_unreachable("unknown address kind");
 }
@@ -490,9 +595,18 @@ bool PIC16F1InstructionSelector::selectPtrAdd(MachineInstr &I) const {
   Register Dst = I.getOperand(0).getReg();
   Register Base = I.getOperand(1).getReg();
   Register Off = I.getOperand(2).getReg();
+  MachineInstr *BaseDef = getDefIgnoringCopies(Base, *MRI);
+  // A data symbol is a constant: fold a constant offset into it, and add it
+  // to an index as an immediate.
+  bool BaseIsData = BaseDef && BaseDef->getOpcode() == G_GLOBAL_VALUE &&
+                    isa<GlobalVariable>(BaseDef->getOperand(1).getGlobal());
   if (auto K = constantOf(Off)) {
+    if (BaseIsData)
+      return done(I, build(I, PIC16F1::LDI16, Dst)
+                         .addGlobalAddress(BaseDef->getOperand(1).getGlobal(),
+                                           BaseDef->getOperand(1).getOffset() +
+                                               *K));
     // The address of a stack slot plus a constant is one instruction.
-    MachineInstr *BaseDef = getDefIgnoringCopies(Base, *MRI);
     if (BaseDef && BaseDef->getOpcode() == G_FRAME_INDEX && *K >= 0)
       return done(I, build(I, PIC16F1::LEAfi, Dst)
                          .addFrameIndex(BaseDef->getOperand(1).getIndex())
@@ -501,6 +615,11 @@ bool PIC16F1InstructionSelector::selectPtrAdd(MachineInstr &I) const {
                        .addUse(Base)
                        .addImm(*K & 0xFFFF));
   }
+  if (BaseIsData)
+    return done(I, build(I, PIC16F1::ADD16ri, Dst)
+                       .addUse(Off)
+                       .addGlobalAddress(BaseDef->getOperand(1).getGlobal(),
+                                         BaseDef->getOperand(1).getOffset()));
   return done(I, build(I, PIC16F1::ADD16rr, Dst).addUse(Base).addUse(Off));
 }
 
@@ -656,9 +775,14 @@ bool PIC16F1InstructionSelector::selectStore(MachineInstr &I) const {
   if ((A.Kind == Address::Global || A.Kind == Address::Constant) &&
       selectReadModifyWrite(I, A))
     return true;
-  // A constant to store must be in a register.
-  if (auto K = constantOf(Val))
-    Val = materialize(I, *K, Wide ? 16 : 8);
+  // A constant goes through W and needs no register.
+  if (auto K = constantOf(Val)) {
+    MachineInstrBuilder MIB = build(I, storeImmOpcode(Wide, A.Kind))
+                                  .addImm(*K & (Wide ? 0xFFFF : 0xFF));
+    addAddressOperands(MIB, A);
+    MIB.cloneMemRefs(I);
+    return done(I, MIB);
+  }
   MachineInstrBuilder MIB =
       build(I, memOpcode(false, Wide, A.Kind)).addUse(Val);
   addAddressOperands(MIB, A);
@@ -669,9 +793,13 @@ bool PIC16F1InstructionSelector::selectStore(MachineInstr &I) const {
 bool PIC16F1InstructionSelector::selectICmp(MachineInstr &I) const {
   // A comparison whose result is needed as a value: select 1 or 0.
   Register Dst = I.getOperand(0).getReg();
-  Compare C = normalize(
-      static_cast<CmpInst::Predicate>(I.getOperand(1).getPredicate()),
-      I.getOperand(2).getReg(), I.getOperand(3).getReg());
+  auto Pred = static_cast<CmpInst::Predicate>(I.getOperand(1).getPredicate());
+  Compare C;
+  if (auto BT = matchBitTest(Pred, I.getOperand(2).getReg(),
+                             I.getOperand(3).getReg(), I))
+    C = *BT;
+  else
+    C = normalize(Pred, I.getOperand(2).getReg(), I.getOperand(3).getReg());
   Register One = materialize(I, 1, 8);
   Register Zero = materialize(I, 0, 8);
   MachineInstrBuilder MIB =
@@ -684,7 +812,7 @@ bool PIC16F1InstructionSelector::selectICmp(MachineInstr &I) const {
 bool PIC16F1InstructionSelector::selectBrCond(MachineInstr &I) const {
   Register Cond = I.getOperand(0).getReg();
   MachineBasicBlock *Target = I.getOperand(1).getMBB();
-  if (auto C = matchCompare(Cond)) {
+  if (auto C = matchCompare(Cond, I)) {
     bool Imm = C->RHSImm.has_value();
     unsigned Opc = C->Wide ? (Imm ? BRCC16ri : BRCC16rr)
                            : (Imm ? BRCC8ri : BRCC8rr);
@@ -707,7 +835,7 @@ bool PIC16F1InstructionSelector::selectSelect(MachineInstr &I) const {
   Register F = I.getOperand(3).getReg();
   bool Wide = is16(Dst);
   Compare C;
-  if (auto M = matchCompare(Cond)) {
+  if (auto M = matchCompare(Cond, I)) {
     C = *M;
   } else {
     C.CC = PIC16F1CC::COND_NE;
@@ -759,6 +887,22 @@ bool PIC16F1InstructionSelector::selectShift(MachineInstr &I) const {
     I.eraseFromParent();
     return true;
   }
+  // The top bit of a byte as 0 or 1: a test of the sign.
+  auto TopBit = [&](Register Byte, Register To) {
+    Register One = materialize(I, 1, 8);
+    Register Zero = materialize(I, 0, 8);
+    build(I, SELECT8c8, To)
+        .addImm(PIC16F1CC::COND_LT)
+        .addUse(Byte)
+        .addUse(Zero)
+        .addUse(One)
+        .addUse(Zero);
+  };
+  if (!Wide && N == 7 && Opc == G_LSHR) {
+    TopBit(Src, Dst);
+    I.eraseFromParent();
+    return true;
+  }
   // Apply \p Count one-bit shifts to \p From, ending in \p To.
   auto Chain = [&](unsigned ShiftOpc, unsigned Bits, Register From,
                    unsigned Count, Register To) {
@@ -776,7 +920,10 @@ bool PIC16F1InstructionSelector::selectShift(MachineInstr &I) const {
     Register Shifted = Byte;
     if (N > 8) {
       Shifted = newReg(8);
-      Chain(One8, 8, Byte, N - 8, Shifted);
+      if (N == 15 && Opc == G_LSHR)
+        TopBit(Byte, Shifted);
+      else
+        Chain(One8, 8, Byte, N - 8, Shifted);
     }
     if (Opc == G_SHL) {
       Register Zero = materialize(I, 0, 8);
@@ -815,6 +962,12 @@ bool PIC16F1InstructionSelector::carryIsInFlag(const MachineInstr &User,
     if (User.getOpcode() != G_USUBE)
       return false;
     break;
+  case PIC16F1::G_LSR1:
+  case PIC16F1::G_ASR1:
+  case PIC16F1::G_RRC:
+    if (User.getOpcode() != PIC16F1::G_RRC)
+      return false;
+    break;
   default:
     return false;
   }
@@ -843,6 +996,55 @@ bool PIC16F1InstructionSelector::carryIsInFlag(const MachineInstr &User,
   return true;
 }
 
+/// Removes the markers later links left on \p CarryOut. Returns true if
+/// anything else uses it, in which case it is needed as a value.
+bool PIC16F1InstructionSelector::takeCarryMarkers(Register CarryOut,
+                                                  bool &FlagUsed) const {
+  bool NeedValue = false;
+  SmallVector<MachineInstr *, 2> Markers;
+  for (MachineInstr &Use : MRI->use_nodbg_instructions(CarryOut)) {
+    if (Use.getOpcode() == CARRYUSE)
+      Markers.push_back(&Use);
+    else
+      NeedValue = true;
+  }
+  for (MachineInstr *M : Markers)
+    M->eraseFromParent();
+  FlagUsed = NeedValue || !Markers.empty();
+  return NeedValue;
+}
+
+/// One 16-bit link of a one-bit right shift of a wide value. The bit that
+/// leaves stays in the carry flag for the next link down.
+bool PIC16F1InstructionSelector::selectRightShiftLink(MachineInstr &I) const {
+  unsigned Opc = I.getOpcode();
+  Register Dst = I.getOperand(0).getReg();
+  Register CarryOut = I.getOperand(1).getReg();
+  Register Src = I.getOperand(2).getReg();
+  bool HasCarryIn = Opc == PIC16F1::G_RRC;
+
+  bool FlagUsed = false;
+  bool NeedValue = takeCarryMarkers(CarryOut, FlagUsed);
+  if (HasCarryIn && !carryIsInFlag(I, I.getOperand(3).getReg()))
+    return false;
+  if (auto K = constantOf(Src))
+    Src = materialize(I, *K, 16);
+  unsigned NewOpc = Opc == PIC16F1::G_LSR1   ? LSR16
+                    : Opc == PIC16F1::G_ASR1 ? ASR16
+                                             : ROR16;
+  MachineInstrBuilder Op = build(I, NewOpc, Dst).addUse(Src);
+  if (FlagUsed)
+    carryIsLive(Op);
+  if (HasCarryIn)
+    build(I, CARRYUSE).addUse(I.getOperand(3).getReg());
+  if (NeedValue) {
+    if (!constrain(CarryOut))
+      return false;
+    build(I, CARRY8, CarryOut);
+  }
+  return done(I, Op);
+}
+
 bool PIC16F1InstructionSelector::selectCarryOp(MachineInstr &I) const {
   unsigned Opc = I.getOpcode();
   Register Dst = I.getOperand(0).getReg();
@@ -856,17 +1058,9 @@ bool PIC16F1InstructionSelector::selectCarryOp(MachineInstr &I) const {
   // mentions the carry register. If anything else still uses the carry out,
   // it is copied from the flag into a byte right after this instruction.
   // Later links left a CARRYUSE marker so that this instruction would
-  // survive until now; remove those.
-  bool NeedValue = false;
-  SmallVector<MachineInstr *, 2> Markers;
-  for (MachineInstr &Use : MRI->use_nodbg_instructions(CarryOut)) {
-    if (Use.getOpcode() == CARRYUSE)
-      Markers.push_back(&Use);
-    else
-      NeedValue = true;
-  }
-  for (MachineInstr *M : Markers)
-    M->eraseFromParent();
+  // survive until now.
+  bool FlagUsed = false;
+  bool NeedValue = takeCarryMarkers(CarryOut, FlagUsed);
   if (HasCarryIn && !carryIsInFlag(I, I.getOperand(4).getReg()))
     return false;
 
@@ -879,8 +1073,16 @@ bool PIC16F1InstructionSelector::selectCarryOp(MachineInstr &I) const {
                     : Opc == G_UADDE ? ADC16rr
                     : Opc == G_USUBO ? SUB16rr
                                      : SBC16rr;
-  Register LV = Operand(L), RV = Operand(R);
-  MachineInstrBuilder Op = build(I, NewOpc, Dst).addUse(LV).addUse(RV);
+  MachineInstrBuilder Op;
+  if (L == R && (Opc == G_UADDO || Opc == G_UADDE)) {
+    // x + x is a shift left by one; with carry in, a rotate.
+    Op = build(I, Opc == G_UADDO ? SHL16 : ROL16, Dst).addUse(L);
+  } else {
+    Register LV = Operand(L), RV = Operand(R);
+    Op = build(I, NewOpc, Dst).addUse(LV).addUse(RV);
+  }
+  if (FlagUsed)
+    carryIsLive(Op);
   if (HasCarryIn)
     build(I, CARRYUSE).addUse(I.getOperand(4).getReg());
   if (NeedValue) {
@@ -896,9 +1098,26 @@ bool PIC16F1InstructionSelector::select(MachineInstr &I) {
   MRI = &I.getMF()->getRegInfo();
   unsigned Opc = I.getOpcode();
 
+  if (Opc == PIC16F1::G_LSR1 || Opc == PIC16F1::G_ASR1 ||
+      Opc == PIC16F1::G_RRC)
+    return selectRightShiftLink(I);
+
   if (!isPreISelGenericOpcode(Opc)) {
     if (I.isCopy())
       return selectCopy(I);
+    // A call argument stored on the stack by call lowering: a constant
+    // needs no register.
+    if (Opc == ST8fi || Opc == ST16fi) {
+      Register Val = I.getOperand(0).getReg();
+      if (auto K = Val.isVirtual() ? constantOf(Val) : std::nullopt) {
+        bool Wide = Opc == ST16fi;
+        MachineInstrBuilder MIB = build(I, Wide ? STI16fi : STI8fi)
+                                      .addImm(*K & (Wide ? 0xFFFF : 0xFF))
+                                      .add(I.getOperand(1))
+                                      .add(I.getOperand(2));
+        return done(I, MIB);
+      }
+    }
     return true;
   }
 

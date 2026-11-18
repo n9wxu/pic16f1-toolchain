@@ -26,6 +26,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import memguard
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELAX = ["-std=gnu17", "-fhosted", "-w", "-Wno-error=implicit-function-declaration", "-Wno-error=implicit-int",
@@ -76,6 +80,8 @@ def run_test(path, level, cc, sim, harness, max_cycles, tmp, flags=(), device="p
         return name, level, "crash", "compiler timed out"
     if r.returncode != 0:
         err = r.stderr
+        if r.returncode < 0 or "killed by signal" in err:
+            return name, level, "crash", "compiler killed (memory limit or signal)"
         if "is not supported on PIC16F1" in err or "are not supported on PIC16F1" in err:
             return name, level, "unsupported", "feature not supported by the backend"
         if "PLEASE submit a bug report" in err or "Assertion failed" in err or "LLVM ERROR" in err \
@@ -119,6 +125,8 @@ def main():
     ap.add_argument("--cflag", action="append", default=[],
                     help="extra compiler flag; {name} and {dir} are replaced per test")
     ap.add_argument("--cc", default=os.environ.get("PIC16F1_CC", os.path.join(ROOT, "toolchain", "bin", "pic16f1-cc")))
+    ap.add_argument("--max-mb", type=int, default=1500,
+                    help="kill a compiler or simulator that uses more memory than this")
     ap.add_argument("--sim", default=os.path.join(ROOT, "sim", "target", "release", "pic16f1-sim"))
     args = ap.parse_args()
 
@@ -130,6 +138,14 @@ def main():
     harness = os.path.join(ROOT, "tests", "torture", "harness_libc.c" if args.libc else "harness.c")
     flags = (["--libc"] if args.libc else []) + args.cflag
     results = []
+    # A compiler that allocates without bound would take the machine down:
+    # macOS enforces no memory limit. Watch everything this run starts.
+    done = threading.Event()
+
+    def watch():
+        while not done.wait(0.2):
+            memguard.check(os.getpid(), args.max_mb * 1024, 4 * args.max_mb * 1024)
+    threading.Thread(target=watch, daemon=True).start()
     with tempfile.TemporaryDirectory() as tmp, \
             concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = [pool.submit(run_test, f, lv, args.cc, args.sim, harness, args.max_cycles, tmp, flags,
@@ -137,6 +153,7 @@ def main():
                    for f in files for lv in levels]
         for fut in concurrent.futures.as_completed(futures):
             results.append(fut.result())
+    done.set()
     results.sort()
 
     for lv in levels:

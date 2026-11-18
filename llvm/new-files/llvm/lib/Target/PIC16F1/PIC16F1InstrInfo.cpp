@@ -392,6 +392,13 @@ void PIC16F1InstrInfo::buildCompareBranch(
     BranchIfStatus(STATUS_C, WantGE);
     return;
   }
+  case PIC16F1CC::COND_BC:
+  case PIC16F1CC::COND_BS:
+    assert(Opc == BRCC8ri && "bit test needs the 8-bit immediate form");
+    // BTFSC skips the branch when the bit is clear.
+    F(CC == PIC16F1CC::COND_BS ? BTFSC : BTFSS, A, K & 7);
+    Branch();
+    return;
   default:
     llvm_unreachable("invalid condition code");
   }
