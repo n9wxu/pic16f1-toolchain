@@ -47,6 +47,7 @@ namespace PIC16F1 {
 // File addresses of the core registers, which the instruction set fixes at
 // the bottom of every bank.
 enum CoreReg : unsigned {
+  PCL_ADDR = 0x02,
   STATUS_ADDR = 0x03,
   FSR0L_ADDR = 0x04,
   FSR0H_ADDR = 0x05,

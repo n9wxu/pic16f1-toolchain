@@ -31,6 +31,19 @@ void PIC16F1InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    Register SrcReg, bool KillSrc,
                                    bool RenamableDest, bool RenamableSrc) const {
   unsigned Opc;
+  // The stack pointer is FSR1. An interrupt handler has its own stack, so
+  // FSR1 may be read or written a byte at a time.
+  if (DestReg == PIC16F1::SP || SrcReg == PIC16F1::SP) {
+    bool ToSP = DestReg == PIC16F1::SP;
+    unsigned Pair = fileAddr(ToSP ? SrcReg : DestReg);
+    for (unsigned B = 0; B != 2; ++B) {
+      unsigned From = ToSP ? Pair + B : PIC16F1::FSR1L_ADDR + B;
+      unsigned To = ToSP ? PIC16F1::FSR1L_ADDR + B : Pair + B;
+      BuildMI(MBB, I, DL, get(PIC16F1::MOVF)).addImm(From).addImm(0);
+      BuildMI(MBB, I, DL, get(PIC16F1::MOVWF)).addImm(To);
+    }
+    return;
+  }
   if (PIC16F1::GPR16RegClass.contains(DestReg, SrcReg))
     Opc = PIC16F1::MOV16rr;
   else if (PIC16F1::GPR8RegClass.contains(DestReg, SrcReg))
@@ -372,6 +385,8 @@ unsigned PIC16F1InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return 2;
   case PIC16F1::JMPFAR:
     return 4;
+  case PIC16F1::JMPreg:
+    return 8;
   case TargetOpcode::INLINEASM:
   case TargetOpcode::INLINEASM_BR: {
     const MachineFunction *MF = MI.getParent()->getParent();

@@ -75,7 +75,7 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
                         ISD::USUBO_CARRY, ISD::UADDSAT, ISD::USUBSAT,
                         ISD::SADDSAT, ISD::SSUBSAT},
                        VT, Expand);
-    setOperationAction(ISD::DYNAMIC_STACKALLOC, VT, Expand);
+    setOperationAction(ISD::DYNAMIC_STACKALLOC, VT, Custom);
   }
   // Wider add and subtract chain through the carry flag in 16-bit steps.
   setOperationAction({ISD::ADDC, ISD::ADDE, ISD::SUBC, ISD::SUBE}, MVT::i16,
@@ -89,7 +89,6 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
                      MVT::i16, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Expand);
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
-  setOperationAction(ISD::BRIND, MVT::Other, Expand);
   setOperationAction({ISD::STACKSAVE, ISD::STACKRESTORE}, MVT::Other, Expand);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setOperationAction({ISD::VAARG, ISD::VAEND, ISD::VACOPY}, MVT::Other, Expand);
@@ -119,9 +118,34 @@ SDValue PIC16F1TargetLowering::LowerOperation(SDValue Op,
     return LowerSELECT_CC(Op, DAG);
   case ISD::VASTART:
     return LowerVASTART(Op, DAG);
+  case ISD::DYNAMIC_STACKALLOC:
+    // Stack slots are addressed from the stack pointer, so it cannot move
+    // while a function runs.
+    report_fatal_error(
+        "variable-length arrays and alloca are not supported on PIC16F1");
   default:
     llvm_unreachable("unimplemented operand");
   }
+}
+
+EVT PIC16F1TargetLowering::getSetCCResultType(const DataLayout &DL,
+                                              LLVMContext &Context,
+                                              EVT VT) const {
+  if (VT.isVector())
+    return VT.changeVectorElementTypeToInteger();
+  return MVT::i8;
+}
+
+std::pair<unsigned, const TargetRegisterClass *>
+PIC16F1TargetLowering::getRegForInlineAsmConstraint(
+    const TargetRegisterInfo *TRI, StringRef Constraint, MVT VT) const {
+  if (Constraint == "r") {
+    if (VT == MVT::i8)
+      return {0U, &PIC16F1::GPR8RegClass};
+    if (VT == MVT::i16)
+      return {0U, &PIC16F1::GPR16RegClass};
+  }
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }
 
 //===----------------------------------------------------------------------===//

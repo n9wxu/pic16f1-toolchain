@@ -475,6 +475,9 @@ def JMP : Pseudo<(outs), (ins brtarget:$t), [(br bb:$t)]>;
 // Branch that cannot reach its target with BRA.
 let isBarrier = 1 in
 def JMPFAR : Pseudo<(outs), (ins brtarget:$t), []>;
+// Jump to the code address in a register pair.
+let isBarrier = 1, isIndirectBranch = 1 in
+def JMPreg : Pseudo<(outs), (ins GPR16:$t), [(brind GPR16:$t)]>;
 
 let Defs = [CARRY, TMP0] in {
 def BRCC8rr : Pseudo<(outs), (ins cc:$c, GPR8:$a, GPR8:$b, brtarget:$t),

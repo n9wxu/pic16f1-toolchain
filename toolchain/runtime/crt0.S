@@ -75,7 +75,13 @@ _start:
     movlp   page(main)
     call    main
 
-    ; main returned: stop.
-.Lhalt:
+    ; main's result is in R0:R1, which is also where exit takes its argument.
+    movlp   page(exit)
+    call    exit
+
+    ; The default exit stops the processor. A program may define its own.
+    .weak   exit
+exit:
+.Lstop:
     sleep
-    bra     .Lhalt
+    bra     .Lstop

@@ -37,6 +37,14 @@ private:
 
   void Select(SDNode *N) override;
 
+  /// A memory operand of inline assembly is passed as its address.
+  bool SelectInlineAsmMemoryOperand(const SDValue &Op,
+                                    InlineAsm::ConstraintCode ConstraintID,
+                                    std::vector<SDValue> &OutOps) override {
+    OutOps.push_back(Op);
+    return false;
+  }
+
   bool SelectAbs(SDValue Addr, SDValue &Out);
   bool SelectPtr(SDValue Addr, SDValue &Base, SDValue &Off, int64_t MaxOff);
   bool SelectPtr8(SDValue Addr, SDValue &Base, SDValue &Off) {

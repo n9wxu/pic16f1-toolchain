@@ -727,6 +727,14 @@ bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
         BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVLP))
             .addMBB(Target, PIC16F1II::MO_PAGE);
         BuildMI(MBB, MI, DL, TII.get(PIC16F1::GOTO)).addMBB(Target);
+      } else if (Opc == PIC16F1::JMPreg) {
+        // PCLATH takes the high byte; writing PCL then performs the jump.
+        unsigned Pair = TII.fileAddr(MI.getOperand(0).getReg());
+        BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVF)).addImm(Pair + 1).addImm(0);
+        BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVWF))
+            .addImm(PIC16F1::PCLATH_ADDR);
+        BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVF)).addImm(Pair).addImm(0);
+        BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVWF)).addImm(PIC16F1::PCL_ADDR);
       } else if (PIC16F1InstrInfo::isCompareBranch(Opc)) {
         SmallVector<PIC16F1RawInst, 12> Seq;
         TII.buildCompareBranch(MI, Seq);
