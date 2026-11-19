@@ -37,16 +37,17 @@ roles, and the pinned MPLAB X version.
 
 ## What G2 unlocks
 
-Optimization I, C++, Rust, and LLDB. Optimization I is under way: at `-Os`
-the benchmark set is 0.77 times the size of XC8 `-Os`, every one of the
-fifteen programs is smaller than XC8's, and the set runs in 0.57 times the
-cycles (two programs are slower, by 6% and 17%). That meets the G3 size
-criterion (within 15%) with room to spare. Done: a peephole pass over the
+Optimization I, C++, Rust, and LLDB. Optimization I is under way: every
+one of the fifteen benchmark programs is no larger and no slower than
+XC8's at each of XC8's five levels (`-O0` to `-O3` and `-Os`). At `-Os`
+the set is 0.77 times XC8's size and runs in 0.52 times the cycles. That
+meets the G3 size criterion (within 15%) with room to spare. Done: a peephole pass over the
 final code, register usage across calls, startup code linked by need, a
 one-page code model, one bank selection per variable, FSR0 as a register
 the allocator keeps pointers in, shared instruction sequences (outlining),
 tail calls, variables changed in place, assembly multiply and divide
-routines, whole-program builds with `-flto`. Not started: static frames,
+routines, short multiplies by constants in line, optimization levels
+retuned for a small machine, whole-program builds with `-flto`. Not started: static frames,
 the verifier, skip predication, stack-depth analysis. C++, Rust and LLDB
 are not started.
 

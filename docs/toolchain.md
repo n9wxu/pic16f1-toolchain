@@ -113,6 +113,26 @@ LLVM's generic rules did exactly that here and is now excluded
 
 ## Optimization
 
+### What the levels mean
+
+The aim at every level is code no larger and no slower than XC8's at the
+same level, program by program; see "Test results" for where that stands.
+LLVM's levels were tuned for machines with memory to spend on speed, so
+`pic16f1-cc` adjusts them (clang called directly does none of this):
+
+| Level | What `pic16f1-cc` does |
+|---|---|
+| `-O0`, or no `-O` option | Clang's `-O1` with `-fno-inline`: every function is kept and none is inlined, but variables live in registers and each function is tidied up. `-munoptimized` gives clang's own `-O0`, with every variable in memory, at about twice the size |
+| `-O1`, `-O2` | Clang's level, with less inlining and no loop unrolling (`-funroll-loops` turns unrolling back on) |
+| `-O3` | Clang's `-Os` without outlining: small, and nothing that costs time. Clang's own `-O3` spends words on speed that this processor does not have |
+| `-Os`, `-Oz` | Clang's level, with less inlining, and shared sequences made into subroutines (outlining) |
+
+At every level a bitwise CRC loop stays a loop: LLVM would replace it with
+a 256-entry table (`-mllvm -disable-loop-idiom-hashrecognize`), which is
+five times as fast and 450 words larger.
+
+### After instruction selection
+
 What runs after instruction selection, in order:
 
 | Step | What it does |
@@ -190,9 +210,9 @@ program does not use are gone before code is generated.
 
 LLVM's inliner assumes that a call costs several instructions and that a
 function of about ten is small. Here a call is one or two words and each
-instruction of the function several. At `-Os` and `-Oz`, `pic16f1-cc`
-therefore passes `-mllvm -inline-threshold=10 -mllvm
--inline-call-penalty=5`. A function with one caller is still always
+instruction of the function several. `pic16f1-cc` therefore passes
+`-mllvm -inline-threshold=10 -mllvm -inline-call-penalty=5` at every
+level (give your own `-mllvm -inline-threshold=` to override it). A function with one caller is still always
 inlined. Less inlining means deeper calls: a program close to the 16
 levels of the hardware stack may need a higher threshold.
 
@@ -234,10 +254,18 @@ levels of the hardware stack may need a higher threshold.
   (`toolchain/runtime/muldiv.S`): 21 words for the 16-bit multiply and 24
   for the 16-bit divide. The 8- and 16-bit ones use only `R0`-`R5` and the
   scratch bytes, and the compiler knows that `R6`, `R7` and FSR0 survive a
-  call to them.
+  call to them. The 32-bit divide lines the divisor up with the top of the
+  word first and runs only as many rounds as that took, so dividing by a
+  large number is quick; it leaves the remainder in place of the dividend,
+  which makes it the remainder routine as well.
+- **Multiplying by a constant** with two set bits, or by the difference of
+  two powers of two (3, 5, 6, 7, 10, 257...), is two shifts and an add or
+  subtract when the shifts are short: eight instructions for `x * 3`
+  against some sixty in the multiply routine, in about the room of the
+  call.
 - **The same routines on any registers.** The algorithms are assembler
   macros in `toolchain/include/picmath.inc` (`pic_mul8/16/32`,
-  `pic_udivmod8/16/32`, `pic_divmod8/16/32`, `pic_neg…`, `pic_abs…`, and
+  `pic_udivmod8/16/32`, `pic_udivmod32_norm`, `pic_divmod8/16/32`, `pic_neg…`, `pic_abs…`, and
   the 32- and 64-bit shifts). Each takes one file-register address per
   byte, so an assembly source can place one on its own registers:
   `#include <picmath.inc>`, then `pic_mul16 a0, a1, b0, b1, p0, p1`. The
@@ -339,14 +367,15 @@ All run on the simulator; nothing has run on silicon yet.
 | Suite | Result |
 |---|---|
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
-| Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass, with either instruction selector |
-| Compiler tests (`tests/compiler`, 18 programs) | 68 of 68 builds pass, with either instruction selector |
+| Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
+| Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
 | Regression tests (`tests/lit`) | 20 of 20 pass |
 | One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
-| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,389 of the 1,422 that build pass (97.7%) |
-| GCC C torture, `execute` at `-O1` | 1,403 of 1,440 (97.4%) |
-| GCC C torture, `execute` at `-O2` | 1,407 of 1,442 (97.6%) |
-| GCC C torture, `execute` at `-Os` | 1,407 of 1,447 (97.2%); seven more programs fit than before the size work |
+| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,400 of the 1,438 that build pass (97.4%) |
+| GCC C torture, `execute` at `-O0 -munoptimized` | 1,389 of 1,422 (97.7%) |
+| GCC C torture, `execute` at `-O1` | 1,402 of 1,440 (97.4%) |
+| GCC C torture, `execute` at `-O2` and at `-O3` | 1,404 of 1,440 (97.5%) |
+| GCC C torture, `execute` at `-Os` | 1,407 of 1,447 (97.2%) |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 104 pass within 2 billion cycles, 3 exceed that, 33 do not build |
 | picolibc's tests on the PIC16F1937 | 74 pass, 66 do not build (39 are too big for 8K words) |
 
@@ -376,6 +405,75 @@ none of which exist here, and 6 are too large even for 32K words.
 The torture tests are not in this repository. `tools/torture.py` explains
 how to fetch and run them.
 
+## Hand-written assembly as a yardstick
+
+`tests/asm` has each of the fifteen benchmark programs written by hand in
+assembly, taking the C program as the specification: the same output, exit
+code and effect on the hardware. `scripts/build-asm-refs.sh` builds them
+(stand-alone: no startup code, no library) and
+`tools/bench.py build/out/asm-pic16f1` runs and checks them like any other
+build. There are two versions of each:
+
+- **`main.S`: the smallest and fastest program that does the job.**
+  Whatever can be worked out beforehand is, as someone writing assembly
+  would. None of the programs has input, so for thirteen of them that is
+  all of the output, and the program is the initialisation, one loop
+  that sends a string, and the exit. Two programs touch the hardware in
+  ways that stay: `bitops` writes the port latch six times and reads a
+  pin, which decides the last digit it prints and its exit code;
+  `timer_isr` waits for ten real Timer0 interrupts.
+- **`runtime.S`: everything computed when the program runs**, by the
+  algorithm the C uses (a bit-at-a-time CRC stays bit-at-a-time, a bubble
+  sort stays a bubble sort). It is free in where values live, how
+  routines are called, and in widths and special cases that follow from
+  the values the program uses; a product or shift by a loop counter is
+  carried from one round to the next. This is the measure of the code a
+  compiler generates.
+
+At `-Os`:
+
+| Program | Hand, words | Hand at run time, words | LLVM, words | XC8, words | Hand, cycles | Hand at run time, cycles | LLVM, cycles | XC8, cycles |
+|---|---|---|---|---|---|---|---|---|
+| arith16 | 99 | 334 | 265 | 763 | 686 | 50,489 | 3,356 | 147,863 |
+| arith32 | 88 | 377 | 374 | 885 | 576 | 25,109 | 57,081 | 97,697 |
+| bitops | 95 | 162 | 318 | 346 | 570 | 29,360 | 75,254 | 120,595 |
+| crc16 | 53 | 131 | 235 | 279 | 226 | 6,684 | 11,905 | 16,918 |
+| crc32 | 48 | 124 | 208 | 274 | 176 | 1,294 | 2,025 | 2,851 |
+| crc8tab | 55 | 381 | 458 | 461 | 246 | 3,829 | 6,930 | 22,451 |
+| fib | 59 | 140 | 155 | 311 | 286 | 1,012 | 676 | 2,952 |
+| fsm | 57 | 310 | 555 | 596 | 266 | 1,997 | 3,068 | 4,585 |
+| hello | 48 | 48 | 75 | 83 | 176 | 176 | 308 | 488 |
+| matrix | 53 | 258 | 571 | 585 | 226 | 17,826 | 32,912 | 44,196 |
+| sieve | 54 | 141 | 281 | 287 | 236 | 16,542 | 32,705 | 33,838 |
+| sort | 75 | 266 | 478 | 529 | 446 | 12,493 | 26,268 | 28,704 |
+| strings | 74 | 238 | 494 | 532 | 436 | 3,661 | 8,294 | 11,015 |
+| structs | 53 | 170 | 336 | 405 | 226 | 914 | 3,028 | 3,292 |
+| timer_isr | 85 | 145 | 252 | 265 | 5,468 | 5,645 | 5,933 | 6,181 |
+| **Total** | 996 | 3,225 | 5,055 | 6,601 | | | | |
+
+LLVM's code is 5.1 times the size of the smallest programs and
+1.57 times the size of the ones that compute at run time; in
+cycles, 19.2 and 1.4 times (geometric means).
+
+LLVM does some of the working out itself: all of `fib`, every loop of
+`arith16` but the `gcd` loops, and part of `arith32` are evaluated while
+compiling, which is why it is smaller or faster than the run-time hand
+version in those rows. It does not get as far as a person does for the
+rest, because it will not run a long loop at compile time.
+
+Where the run-time hand versions gain most, and so where the compiler
+has most to find:
+
+- No software stack and no calling convention: values stay where the next
+  routine wants them, and nothing is saved.
+- Both FSRs are used as pointers (the compiler has one; FSR1 is its stack
+  pointer), with `MOVIW`/`MOVWI` stepping them.
+- Arrays are placed so that an address is one byte.
+- Counted loops run down to zero with `DECFSZ`, and flags left by one
+  instruction are used by the next test.
+- The output routines are a fraction of the size of `tests/common/bench.c`
+  compiled: 48 words for the whole of `hello` against 75.
+
 ## Known limits
 
 - `printf` and the rest of the C library come from picolibc, built
@@ -391,16 +489,23 @@ how to fetch and run them.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - No debug information.
-- At `-Os` the benchmark set is 5,094 words against 6,601 for XC8 `-Os`
-  (0.77), and every one of the fifteen programs is smaller than XC8's
-  (from 0.35 times for `arith16` to 0.99 for `crc8tab`, `matrix`, `sieve`
-  and `timer_isr`). With `-flto` it is 4,957 words. The set runs in 0.57
-  times the cycles (geometric mean); two programs are slower than XC8's:
-  `structs` (1.17 times) and `arith32` (1.06). At `-O1` the set is 0.92
-  times XC8 `-O1` in size (four programs larger) and no program is
-  slower. `-O2` inlines and unrolls for speed: 1.22 times XC8 `-O2` in
-  size, 0.24 times the cycles.
-- Outlining and the lower inlining threshold at `-Os` trade hardware
+- Against XC8 at the same level, every one of the fifteen benchmark
+  programs is no larger and no slower, at each of XC8's five levels:
+
+  | Level | Words, LLVM / XC8 | Closest program in size | Cycles (geometric mean) | Closest program in speed |
+  |---|---|---|---|---|
+  | `-O0` | 5,570 / 8,542 (0.65) | `crc8tab` 0.87 | 0.38 | `timer_isr` 0.89 |
+  | `-O1` | 5,347 / 7,818 (0.68) | `fsm` 0.96 | 0.43 | `timer_isr` 0.90 |
+  | `-O2` | 5,260 / 7,697 (0.68) | `crc8tab` 0.92 | 0.42 | `timer_isr` 0.90 |
+  | `-O3` | 5,171 / 6,790 (0.76) | `crc8tab` 0.99 (5 words) | 0.52 | `sieve` 0.98 |
+  | `-Os` | 5,055 / 6,601 (0.77) | `crc8tab` 0.99 (3 words) | 0.52 | `sieve` 0.97 |
+
+  That holds because of what `pic16f1-cc` makes of each level; see "What
+  the levels mean". `-Oz` has no XC8 counterpart; against XC8 `-Os` it is
+  smaller in total (4,999 words) but two programs are larger (`crc8tab`
+  by 1 word, `matrix` by 19). `-munoptimized` is about 1.4 times XC8
+  `-O0` in size. With `-flto` the `-Os` set is 4,922 words.
+- Outlining at `-Os` and the lower inlining threshold at every level trade hardware
   stack levels for space; see "Shared sequences" and "Inlining".
 - Only one pointer at a time can be in FSR0 (FSR1 is the stack pointer),
   so a loop over two arrays copies each pointer to FSR0 in turn.
