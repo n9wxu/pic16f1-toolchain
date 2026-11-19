@@ -86,6 +86,9 @@ FunctionPass *createPIC16F1PeepholePass();
 /// Mark the functions that cannot be re-entered and give their small
 /// variables fixed addresses.
 ModulePass *createPIC16F1StaticFramesPass();
+/// Step a pointer through an array in place of indexing it in a loop.
+FunctionPass *createPIC16F1PointerIVsPass();
+void initializePIC16F1PointerIVsPass(PassRegistry &);
 void initializePIC16F1StaticFramesPass(PassRegistry &);
 /// The largest frame object that gets a fixed address in a function with a
 /// static frame (-pic16f1-static-slot-limit); 0 if none does.

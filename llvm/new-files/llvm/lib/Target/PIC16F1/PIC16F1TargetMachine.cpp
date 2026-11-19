@@ -41,6 +41,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() 
   initializePIC16F1PeepholePass(PR);
   initializePIC16F1PointerSetupPass(PR);
   initializePIC16F1StaticFramesPass(PR);
+  initializePIC16F1PointerIVsPass(PR);
 }
 
 namespace {
@@ -140,9 +141,13 @@ MachineFunctionInfo *PIC16F1TargetMachine::createMachineFunctionInfo(
 
 void PIC16F1PassConfig::addIRPasses() {
   addPass(createAtomicExpandLegacyPass());
-  TargetPassConfig::addIRPasses();
-  if (getOptLevel() != CodeGenOptLevel::None)
+  // Both before the generic passes: loop strength reduction is among them
+  // and does better on a counter that no longer indexes anything.
+  if (getOptLevel() != CodeGenOptLevel::None) {
     addPass(createPIC16F1StaticFramesPass());
+    addPass(createPIC16F1PointerIVsPass());
+  }
+  TargetPassConfig::addIRPasses();
 }
 
 bool PIC16F1PassConfig::addInstSelector() {

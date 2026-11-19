@@ -39,6 +39,20 @@ public:
   /// far more here.
   bool isIntDivCheap(EVT VT, AttributeList Attr) const override { return true; }
 
+  /// What an address can be made of: a constant address, or a pointer plus
+  /// a small constant (MOVIW k[FSRn]). There is no indexed mode, which tells
+  /// the loop optimizer to step a pointer through an array instead of
+  /// adding the index to its address on every round.
+  bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
+                             Type *Ty, unsigned AddrSpace,
+                             Instruction *I = nullptr) const override {
+    if (AM.Scale != 0)
+      return false;
+    if (AM.BaseGV)
+      return !AM.HasBaseReg;
+    return AM.BaseOffs >= -32 && AM.BaseOffs <= 30;
+  }
+
   /// "x + 1 overflowed" is cheaper here as an add and a compare with zero
   /// than as an add whose carry is turned into a value.
   bool shouldFormOverflowOp(unsigned Opcode, EVT VT,

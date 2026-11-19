@@ -80,7 +80,7 @@ BitVector PIC16F1RegisterInfo::getReservedRegs(const MachineFunction &MF) const 
 
 const TargetRegisterClass *PIC16F1RegisterInfo::getLargestLegalSuperClass(
     const TargetRegisterClass *RC, const MachineFunction &MF) const {
-  if (RC == &PIC16F1::FSR1CRegClass)
+  if (RC == &PIC16F1::FSR1CRegClass || RC == &PIC16F1::FSR0CRegClass)
     return &PIC16F1::GPR16RegClass;
   return RC;
 }

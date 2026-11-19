@@ -235,6 +235,35 @@ saved registers and outgoing arguments are still on the stack; and
 arguments are still passed in registers and on the stack, not in fixed
 locations.
 
+### Pointers through arrays
+
+`a[i]` in a loop is the address of `a` plus `i`: a 16-bit addition into an
+FSR for every access. Three things turn it into a pointer that walks the
+array and stays in an FSR:
+
+- **`PIC16F1PointerIVs.cpp`** rewrites an address made of something fixed
+  for the loop plus a constant multiple of a loop counter into a pointer
+  that starts at the first element and is stepped each round. LLVM's own
+  loop strength reduction does not, because the counter is usually a byte
+  widened for the address and it does not look through the widening. The
+  pass runs first, so the generic one then sees a counter that only counts
+  and makes it count down to zero (`DECFSZ`). Elements a small constant
+  apart share a pointer (`MOVIW -1[FSR0]`). A loop that needs more
+  addresses than there are pointer registers (one, or two in a function
+  with a static frame) is left alone, and so is a loop with calls.
+  `-mllvm -pic16f1-pointer-ivs=0` turns it off.
+- **The pointer-setup pass pins the pointer.** A pointer that a loop keeps
+  from round to round gets FSR0 (or FSR1, see "Static frames") for the
+  loop: its loads and stores become forms that take their pointer in that
+  FSR only (`LD8ptr0`, `LD8ptr1`...), which holds the register allocator
+  to it. A hint alone often left the pointer in a register pair, copied to
+  FSR0 for each access. An increment in front of an access through the old
+  value is moved to after it.
+- **The peephole joins the step to the access** (`MOVIW FSR0++`), and moves
+  a decrement down to its test for zero where it can (`DECFSZ`).
+
+A loop that fills an array is then `MOVWI FSR0++; DECFSZ n; BRA`.
+
 ### Shared sequences (outlining)
 
 XC8 calls this procedural abstraction. With `-Os` or `-Oz`, LLVM's machine
@@ -426,7 +455,7 @@ All run on the simulator; nothing has run on silicon yet.
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
-| Regression tests (`tests/lit`) | 21 of 21 pass |
+| Regression tests (`tests/lit`) | 22 of 22 pass |
 | One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
 | GCC C torture, `execute` (1,701 tests) at `-O0` | 1,400 of the 1,438 that build pass (97.4%) |
 | GCC C torture, `execute` at `-O0 -munoptimized` | 1,389 of 1,422 (97.7%) |
@@ -494,23 +523,23 @@ At `-Os`:
 | arith16 | 99 | 334 | 265 | 763 | 686 | 50,489 | 3,356 | 147,863 |
 | arith32 | 88 | 377 | 374 | 885 | 576 | 25,109 | 57,081 | 97,697 |
 | bitops | 95 | 162 | 318 | 346 | 570 | 29,360 | 75,254 | 120,595 |
-| crc16 | 53 | 131 | 235 | 279 | 226 | 6,684 | 11,905 | 16,918 |
-| crc32 | 48 | 124 | 208 | 274 | 176 | 1,294 | 2,025 | 2,851 |
+| crc16 | 53 | 131 | 230 | 279 | 226 | 6,684 | 11,261 | 16,918 |
+| crc32 | 48 | 124 | 206 | 274 | 176 | 1,294 | 1,881 | 2,851 |
 | crc8tab | 55 | 381 | 454 | 461 | 246 | 3,829 | 6,922 | 22,451 |
 | fib | 59 | 140 | 155 | 311 | 286 | 1,012 | 676 | 2,952 |
 | fsm | 57 | 310 | 556 | 596 | 266 | 1,997 | 3,058 | 4,585 |
 | hello | 48 | 48 | 75 | 83 | 176 | 176 | 308 | 488 |
-| matrix | 53 | 258 | 571 | 585 | 226 | 17,826 | 32,912 | 44,196 |
+| matrix | 53 | 258 | 577 | 585 | 226 | 17,826 | 31,956 | 44,196 |
 | sieve | 54 | 141 | 281 | 287 | 236 | 16,542 | 32,705 | 33,838 |
-| sort | 75 | 266 | 478 | 529 | 446 | 12,493 | 26,268 | 28,704 |
+| sort | 75 | 266 | 464 | 529 | 446 | 12,493 | 24,142 | 28,704 |
 | strings | 74 | 238 | 487 | 532 | 436 | 3,661 | 7,837 | 11,015 |
-| structs | 53 | 170 | 336 | 405 | 226 | 914 | 3,028 | 3,292 |
+| structs | 53 | 170 | 341 | 405 | 226 | 914 | 2,968 | 3,292 |
 | timer_isr | 85 | 145 | 252 | 265 | 5,468 | 5,645 | 5,933 | 6,181 |
-| **Total** | 996 | 3,225 | 5,045 | 6,601 | | | | |
+| **Total** | 996 | 3,225 | 5,035 | 6,601 | | | | |
 
 LLVM's code is 5.1 times the size of the smallest programs and
 1.56 times the size of the ones that compute at run time; in
-cycles, 19.1 and 1.42 times (geometric means).
+cycles, 18.7 and 1.40 times (geometric means).
 
 LLVM does some of the working out itself: all of `fib`, every loop of
 `arith16` but the `gcd` loops, and part of `arith32` are evaluated while
@@ -551,11 +580,11 @@ has most to find:
 
   | Level | Words, LLVM / XC8 | Closest program in size | Cycles (geometric mean) | Closest program in speed |
   |---|---|---|---|---|
-  | `-O0` | 5,580 / 8,542 (0.65) | `crc8tab` 0.89 | 0.37 | `timer_isr` 0.89 |
-  | `-O1` | 5,351 / 7,818 (0.68) | `fsm` 0.95 | 0.42 | `timer_isr` 0.90 |
-  | `-O2` | 5,264 / 7,697 (0.68) | `crc8tab` 0.94 | 0.41 | `timer_isr` 0.90 |
-  | `-O3` | 5,157 / 6,790 (0.76) | `crc8tab` 0.98 (9 words) | 0.52 | `sieve` 0.98 |
-  | `-Os` | 5,045 / 6,601 (0.76) | `crc8tab` 0.98 (7 words) | 0.52 | `sieve` 0.97 |
+  | `-O0` | 5,557 / 8,542 (0.65) | `crc8tab` 0.89 | 0.37 | `timer_isr` 0.89 |
+  | `-O1` | 5,330 / 7,818 (0.68) | `fsm` 0.95 | 0.41 | `timer_isr` 0.90 |
+  | `-O2` | 5,243 / 7,697 (0.68) | `crc8tab` 0.94 | 0.40 | `timer_isr` 0.90 |
+  | `-O3` | 5,129 / 6,790 (0.76) | `crc8tab` 0.98 (9 words) | 0.51 | `sieve` 0.98 |
+  | `-Os` | 5,035 / 6,601 (0.76) | `matrix` 0.99 (8 words) | 0.51 | `sieve` 0.97 |
 
   That holds because of what `pic16f1-cc` makes of each level; see "What
   the levels mean". `-Oz` has no XC8 counterpart; against XC8 `-Os` it is

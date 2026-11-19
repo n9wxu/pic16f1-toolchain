@@ -90,6 +90,8 @@ def SPV : RegisterClass<"PIC16F1", [i16], 8,
 // FSR1 alone: what the "ptr1" forms of the loads and stores through a
 // pointer take their address in (see PIC16F1PointerSetup.cpp).
 def FSR1C : RegisterClass<"PIC16F1", [i16], 8, (add SP)>;
+// FSR0 alone, for the "ptr0" forms.
+def FSR0C : RegisterClass<"PIC16F1", [i16], 8, (add FSR0)>;
 
 def SCRATCH8 : RegisterClass<"PIC16F1", [i8], 8, (add TMP0, TMP1, W)> {
   let isAllocatable = 0;

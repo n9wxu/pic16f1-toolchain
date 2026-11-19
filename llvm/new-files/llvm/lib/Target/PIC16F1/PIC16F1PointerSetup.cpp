@@ -77,15 +77,15 @@ static bool isPointerAccess(const MachineInstr &MI) {
   }
 }
 
-/// The form of a pointer access that takes its pointer in FSR1.
-static unsigned inFSR1Form(unsigned Opc) {
+/// The form of a pointer access that takes its pointer in FSR \p N only.
+static unsigned inFSRForm(unsigned Opc, unsigned N) {
   switch (Opc) {
-  case PIC16F1::LD8ptr:   return PIC16F1::LD8ptr1;
-  case PIC16F1::LD16ptr:  return PIC16F1::LD16ptr1;
-  case PIC16F1::ST8ptr:   return PIC16F1::ST8ptr1;
-  case PIC16F1::ST16ptr:  return PIC16F1::ST16ptr1;
-  case PIC16F1::STI8ptr:  return PIC16F1::STI8ptr1;
-  case PIC16F1::STI16ptr: return PIC16F1::STI16ptr1;
+  case PIC16F1::LD8ptr:   return N ? PIC16F1::LD8ptr1 : PIC16F1::LD8ptr0;
+  case PIC16F1::LD16ptr:  return N ? PIC16F1::LD16ptr1 : PIC16F1::LD16ptr0;
+  case PIC16F1::ST8ptr:   return N ? PIC16F1::ST8ptr1 : PIC16F1::ST8ptr0;
+  case PIC16F1::ST16ptr:  return N ? PIC16F1::ST16ptr1 : PIC16F1::ST16ptr0;
+  case PIC16F1::STI8ptr:  return N ? PIC16F1::STI8ptr1 : PIC16F1::STI8ptr0;
+  case PIC16F1::STI16ptr: return N ? PIC16F1::STI16ptr1 : PIC16F1::STI16ptr0;
   default:
     llvm_unreachable("not a pointer access");
   }
@@ -154,16 +154,25 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
   for (MachineBasicBlock &MBB : MF)
     Changed |= sinkIncrements(MBB, MRI, TRI);
 
-  // Where FSR1 is a register too, it takes a pointer that would otherwise
-  // be copied to FSR0 again and again: one that a loop keeps from round to
-  // round while FSR0 is busy with another. Moving the stack pointer out of
-  // FSR1 and back costs eight instructions, so not for less.
-  SmallSet<Register, 4> InFSR1;
-  if (MF.getInfo<PIC16F1MachineFunctionInfo>()->fsr1IsRegister()) {
+  // A pointer that a loop keeps from round to round (it is defined outside
+  // the loop, or carried round it) should stay in an FSR for the whole
+  // loop. With only a hint to go on the register allocator often puts it
+  // in a register pair and copies it for each access, so the choice is made
+  // here and the accesses become forms that take their pointer in that FSR
+  // only:
+  //  - If the loop also has accesses through addresses worked out in it,
+  //    those need FSR0; a kept pointer can have FSR1, where FSR1 is a
+  //    register (a function with a static frame). Moving the stack pointer
+  //    out of FSR1 and back costs eight instructions, so when optimizing
+  //    for size only a pointer used at two places or more.
+  //  - Otherwise the most used kept pointer has FSR0, and the next FSR1.
+  // Not in a loop with calls: they change FSR0 and need the stack pointer
+  // in FSR1.
+  bool FSR1Free = MF.getInfo<PIC16F1MachineFunctionInfo>()->fsr1IsRegister();
+  SmallSet<Register, 4> InFSR0, InFSR1;
+  {
     struct Use {
-      // Pointers the loop keeps: defined outside it, or carried round it.
       MapVector<Register, unsigned> Kept;
-      // Accesses through an address worked out in the loop.
       unsigned Computed = 0;
     };
     MapVector<const MachineLoop *, Use> PerLoop;
@@ -173,9 +182,10 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
       if (!L)
         continue;
       for (const MachineInstr &MI : MBB) {
-        // A call wants the stack pointer in FSR1 every time round.
         if (MI.isCall())
-          HasCall.insert(L);
+          for (const MachineLoop *Outer = L; Outer;
+               Outer = Outer->getParentLoop())
+            HasCall.insert(Outer);
         if (!isPointerAccess(MI) || !MI.getOperand(1).isReg() ||
             !MI.getOperand(1).getReg().isVirtual())
           continue;
@@ -199,14 +209,18 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
         return A.second > B.second;
       });
       if (U.Computed == 0) {
-        // Two kept pointers: one each.
-        if (Kept.size() >= 2)
+        if (!Kept.empty())
+          InFSR0.insert(Kept[0].first);
+        if (Kept.size() >= 2 && FSR1Free)
           InFSR1.insert(Kept[1].first);
-      } else if (!Kept.empty() && (Kept[0].second >= 2 || !ForSize)) {
-        // FSR0 goes to the computed addresses.
+      } else if (FSR1Free && !Kept.empty() &&
+                 (Kept[0].second >= 2 || !ForSize)) {
         InFSR1.insert(Kept[0].first);
       }
     }
+    // One FSR per pointer: a loop's choice for FSR1 stands.
+    for (Register R : InFSR1)
+      InFSR0.erase(R);
   }
 
   for (MachineBasicBlock &MBB : MF) {
@@ -219,12 +233,15 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
           Base.getReg() == PIC16F1::SP)
         continue;
       Register Ptr = Base.getReg();
-      if (InFSR1.count(Ptr) && !Base.getSubReg()) {
-        // The pointer itself is held to FSR1, and what it is copied from
-        // and to follows when the copies are merged.
-        MI.setDesc(TII.get(inFSR1Form(MI.getOpcode())));
-        if (!MRI.constrainRegClass(Ptr, &PIC16F1::FSR1CRegClass)) {
-          Register In = MRI.createVirtualRegister(&PIC16F1::FSR1CRegClass);
+      if ((InFSR0.count(Ptr) || InFSR1.count(Ptr)) && !Base.getSubReg()) {
+        // The pointer itself is held to the FSR, and what it is copied
+        // from and to follows when the copies are merged.
+        unsigned N = InFSR1.count(Ptr);
+        const TargetRegisterClass *RC =
+            N ? &PIC16F1::FSR1CRegClass : &PIC16F1::FSR0CRegClass;
+        MI.setDesc(TII.get(inFSRForm(MI.getOpcode(), N)));
+        if (!MRI.constrainRegClass(Ptr, RC)) {
+          Register In = MRI.createVirtualRegister(RC);
           BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(TargetOpcode::COPY), In)
               .addReg(Ptr);
           Base.setReg(In);

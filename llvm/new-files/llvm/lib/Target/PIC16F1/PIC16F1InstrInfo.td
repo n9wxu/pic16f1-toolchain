@@ -80,6 +80,9 @@ def memptr : Operand<i16> {
 def memptr1 : Operand<i16> {
   let MIOperandInfo = (ops FSR1C:$base, i8imm:$off);
 }
+def memptr0 : Operand<i16> {
+  let MIOperandInfo = (ops FSR0C:$base, i8imm:$off);
+}
 def addrptr8 : ComplexPattern<i16, 2, "SelectPtr8", [], []>;
 def addrptr16 : ComplexPattern<i16, 2, "SelectPtr16", [], []>;
 
@@ -538,15 +541,22 @@ def ST8ptr : Pseudo<(outs), (ins GPR8:$s, memptr:$a),
 def ST16ptr : Pseudo<(outs), (ins GPR16:$s, memptr:$a),
                      [(store GPR16:$s, addrptr16:$a)]>;
 
-// The forms with the pointer in FSR1, which the pointer-setup pass chooses
-// for a pointer that is to stay there. Being instructions of their own,
+// The forms with the pointer in FSR0 only or in FSR1 only, which the
+// pointer-setup pass chooses for a pointer that is to stay there. Being instructions of their own,
 // they hold the register allocator to it.
 let mayLoad = 1 in {
+def LD8ptr0 : Pseudo<(outs GPR8:$d), (ins memptr0:$a), []>;
+let Constraints = "@earlyclobber $d" in
+def LD16ptr0 : Pseudo<(outs GPR16:$d), (ins memptr0:$a), []>;
 def LD8ptr1 : Pseudo<(outs GPR8:$d), (ins memptr1:$a), []>;
 let Constraints = "@earlyclobber $d" in
 def LD16ptr1 : Pseudo<(outs GPR16:$d), (ins memptr1:$a), []>;
 }
 let mayStore = 1 in {
+def ST8ptr0 : Pseudo<(outs), (ins GPR8:$s, memptr0:$a), []>;
+def ST16ptr0 : Pseudo<(outs), (ins GPR16:$s, memptr0:$a), []>;
+def STI8ptr0 : Pseudo<(outs), (ins i8imm:$k, memptr0:$a), []>;
+def STI16ptr0 : Pseudo<(outs), (ins i16imm:$k, memptr0:$a), []>;
 def ST8ptr1 : Pseudo<(outs), (ins GPR8:$s, memptr1:$a), []>;
 def ST16ptr1 : Pseudo<(outs), (ins GPR16:$s, memptr1:$a), []>;
 def STI8ptr1 : Pseudo<(outs), (ins i8imm:$k, memptr1:$a), []>;

@@ -817,6 +817,8 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
   // --- Loads and stores through a pointer ----------------------------------
   case STI8ptr:
   case STI16ptr:
+  case STI8ptr0:
+  case STI16ptr0:
   case STI8ptr1:
   case STI16ptr1: {
     uint64_t K = MI.getOperand(0).getImm();
@@ -824,7 +826,7 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
     E.loadWImm(K);
     E.storeIndirect(N, Off);
-    if (Opc == STI16ptr || Opc == STI16ptr1) {
+    if (Opc == STI16ptr || Opc == STI16ptr0 || Opc == STI16ptr1) {
       E.loadWImm(K >> 8);
       E.storeIndirect(N, Off + 1);
     }
@@ -832,13 +834,15 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
   }
   case LD8ptr:
   case LD16ptr:
+  case LD8ptr0:
+  case LD16ptr0:
   case LD8ptr1:
   case LD16ptr1: {
     int64_t Off = MI.getOperand(2).getImm();
     unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
     E.loadIndirect(N, Off);
     E.storeW(lo(MI.getOperand(0)));
-    if (Opc == LD16ptr || Opc == LD16ptr1) {
+    if (Opc == LD16ptr || Opc == LD16ptr0 || Opc == LD16ptr1) {
       E.loadIndirect(N, Off + 1);
       E.storeW(hi(MI.getOperand(0)));
     }
@@ -846,13 +850,15 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
   }
   case ST8ptr:
   case ST16ptr:
+  case ST8ptr0:
+  case ST16ptr0:
   case ST8ptr1:
   case ST16ptr1: {
     int64_t Off = MI.getOperand(2).getImm();
     unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
     E.loadW(lo(MI.getOperand(0)));
     E.storeIndirect(N, Off);
-    if (Opc == ST16ptr || Opc == ST16ptr1) {
+    if (Opc == ST16ptr || Opc == ST16ptr0 || Opc == ST16ptr1) {
       E.loadW(hi(MI.getOperand(0)));
       E.storeIndirect(N, Off + 1);
     }

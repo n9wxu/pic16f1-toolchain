@@ -646,6 +646,57 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
       continue;
     }
 
+    // decf F, F ; ... ; movf F, W ; btfss STATUS, Z   =>   ... ; decfsz F, F
+    // (and the same for INCF) when nothing in between touches F or reads
+    // the flags, and neither W nor Z is read afterwards: the decrement
+    // moves down to the test.
+    if ((Steps & 256) && MI.getOpcode() == BTFSS && !Cond &&
+        MI.getOperand(0).isImm() &&
+        (MI.getOperand(0).getImm() & 0x7F) == STATUS_ADDR &&
+        MI.getOperand(1).getImm() == STATUS_Z && !(Live & (ZBit | WBit)) &&
+        It != MBB.rend() && It->getOpcode() == MOVF &&
+        It->getOperand(0).isImm() && It->getOperand(1).getImm() == 0 &&
+        !isConditional(*It)) {
+      int Idx = indexOfFile(It->getOperand(0).getImm());
+      MachineInstr *Dec = nullptr;
+      if (Idx >= 0 && Idx < 16 && fileBits(It->getOperand(0)) != ~0u) {
+        for (auto J = std::next(It); J != MBB.rend(); ++J) {
+          if (!isReal(*J))
+            continue;
+          bool IsDec = (J->getOpcode() == DECF || J->getOpcode() == INCF) &&
+                       J->getOperand(0).isImm() &&
+                       indexOfFile(J->getOperand(0).getImm()) == Idx &&
+                       J->getOperand(1).getImm() == 1;
+          if (IsDec) {
+            if (!isConditional(*J))
+              Dec = &*J;
+            break;
+          }
+          Effect EJ = effectOf(*J);
+          if (EJ.Barrier || EJ.Skip || isConditional(*J) || J->isBranch() ||
+              J->isCall() || J->isReturn() ||
+              ((EJ.Reads | EJ.Writes) & (1u << Idx)) || (EJ.Reads & ZBit))
+            break;
+        }
+      }
+      if (Dec) {
+        const PIC16F1InstrInfo &TII =
+            *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+        MachineInstr *Load = &*It;
+        MI.setDesc(TII.get(Dec->getOpcode() == DECF ? DECFSZ : INCFSZ));
+        MI.getOperand(0).setImm(Load->getOperand(0).getImm());
+        MI.getOperand(1).setImm(1);
+        ++It;
+        if (It != MBB.rend() && &*It == Dec)
+          ++It;
+        Load->eraseFromParent();
+        Dec->eraseFromParent();
+        Changed = true;
+        Live = transfer(MI, Live);
+        continue;
+      }
+    }
+
     // OP F, F ; movf F, W   =>   OP F, W
     // when F is not read afterwards. Z comes out the same, except after
     // the operations that leave it alone; then it must not be read.
