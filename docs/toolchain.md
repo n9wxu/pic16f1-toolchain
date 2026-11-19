@@ -357,6 +357,36 @@ left. These functions are compiled by the SelectionDAG selector.
 `scripts/test-vla.sh` runs `tests/vla/main.c` on two devices at six levels,
 whole program and file by file.
 
+### `setjmp` and `longjmp`
+
+In the runtime library (`toolchain/runtime/setjmp.S`, declared in
+`<setjmp.h>`), so they are there with or without the C library.
+`__builtin_setjmp` and `__builtin_longjmp` are calls to the same two
+routines.
+
+Return addresses are on the core's 16-level hardware stack, not in memory,
+but the enhanced mid-range core lets a program write that stack's pointer
+and top entry. `longjmp` only ever goes back to a function that is still
+running, so the entries below the one `setjmp` was called with are still
+what they were: `longjmp` sets the pointer back, writes back the one entry
+`setjmp` returned through (it has been used again since) and returns.
+
+The buffer is 10 bytes: that return address, the stack pointer cell `__sp`
+and the hardware stack pointer (packed into three bytes), and the six
+registers a function preserves, since a function that is jumped over never
+gets to restore the ones it saved. Restoring `__sp` also gives back every
+variable-length array made since.
+
+- Variables with static storage, which is where a function with a static
+  frame keeps its own, are left as they are. C makes the variables changed
+  between `setjmp` and `longjmp` indeterminate unless they are `volatile`.
+- A function that calls `setjmp` is not outlined from: the return address
+  kept must be in the function itself, not in a shared sequence.
+- Not for leaving an interrupt handler, which has a stack of its own.
+
+`scripts/test-setjmp.sh` runs `tests/setjmp/main.c` on two devices at six
+levels, whole program and file by file.
+
 ### Pointers through arrays
 
 `a[i]` in a loop is the address of `a` plus `i`: a 16-bit addition into an
@@ -624,21 +654,21 @@ All run on the simulator; nothing has run on silicon yet.
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
 | Regression tests (`tests/lit`) | 23 of 23 pass |
 | One program on all seven devices (`scripts/test-devices.sh`) | 14 of 14 builds pass |
-| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,486 of the 1,505 that build pass (98.7%) |
-| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,490 of 1,508 (98.8%) |
-| GCC C torture, `execute` at `-Os` | 1,491 of 1,509 (98.8%) |
+| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,490 of the 1,511 that build pass (98.6%) |
+| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,494 of 1,514 (98.7%) |
+| GCC C torture, `execute` at `-Os` | 1,495 of 1,515 (98.7%) |
 | The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
 | Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
+| `setjmp` and `longjmp` (`scripts/test-setjmp.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
 | picolibc's tests on the PIC16F1937 | 74 pass, 66 do not build (39 are too big for 8K words) |
 
 About 195 torture tests do not build even on the large device: they need
-`malloc`, `printf`, a 32-bit `int`, `__builtin_longjmp` or nested
-functions.
+`malloc`, `printf`, a 32-bit `int` or nested functions.
 
-The 20 that build and do not pass at one level or another have each been examined; none is wrong
+The 22 that build and do not pass at one level or another have each been examined; none is wrong
 code from the compiler:
 
 | Reason | Tests |
@@ -649,6 +679,7 @@ code from the compiler:
 | Type-based aliasing across a call in a whole-program build; the test says itself that it may not be conforming, and passes with `-fno-lto` | `20000603-1` (at `-O0` only) |
 | Needs the C library, or more than 200 million cycles; they pass with `--libc` and a 2-billion-cycle limit | `printf-1`, `920501-6`, `arith-rand-ll` |
 | Recursion deeper than the 16-level return stack | `20000412-2`, `pr58209` |
+| A variable changed between `setjmp` and `longjmp` without being `volatile`; a comparison with a new `alloca` that Clang folds | `pr60003`, `pr64242` |
 | `__builtin_frame_address` gives 0: there is no chain of frames | `frame-address` |
 
 `tools/torture.py` gives tests that size themselves to the stack

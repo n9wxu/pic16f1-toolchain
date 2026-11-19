@@ -26,6 +26,10 @@ class LLVM_LIBRARY_VISIBILITY PIC16F1TargetInfo : public TargetInfo {
   std::string CPU;
 
 public:
+  /// __builtin_setjmp and __builtin_longjmp are calls to the setjmp and
+  /// longjmp of the runtime library (see CGBuiltin.cpp).
+  bool hasSjLjLowering() const override { return true; }
+
   PIC16F1TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
     TLSSupported = false;

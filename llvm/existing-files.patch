@@ -71,7 +71,7 @@ index 8c01cfca8..e3869fe09 100644
      switch (os) {
      case llvm::Triple::Linux:
 diff --git a/clang/lib/CodeGen/CGBuiltin.cpp b/clang/lib/CodeGen/CGBuiltin.cpp
-index 37846bbb0..20c58b023 100644
+index 37846bbb0..f78af7662 100644
 --- a/clang/lib/CodeGen/CGBuiltin.cpp
 +++ b/clang/lib/CodeGen/CGBuiltin.cpp
 @@ -4305,6 +4305,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
@@ -101,6 +101,51 @@ index 37846bbb0..20c58b023 100644
      Function *F = CGM.getIntrinsic(Intrinsic::frameaddress, AllocaInt8PtrTy);
      return RValue::get(Builder.CreateCall(F, Depth));
    }
+@@ -5416,6 +5422,22 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+     // Buffer is a void**.
+     Address Buf = EmitPointerWithAlignment(E->getArg(0));
+ 
++    if (getTarget().getTriple().getArch() == llvm::Triple::pic16f1) {
++      // The runtime library's setjmp does it all; its buffer is the size
++      // of the five pointers this builtin is given.
++      llvm::FunctionType *FTy =
++          llvm::FunctionType::get(IntTy, {Int8PtrTy}, /*isVarArg=*/false);
++      llvm::AttributeList Attrs = llvm::AttributeList::get(
++          getLLVMContext(), llvm::AttributeList::FunctionIndex,
++          {llvm::Attribute::ReturnsTwice, llvm::Attribute::NoUnwind});
++      llvm::FunctionCallee Fn =
++          CGM.CreateRuntimeFunction(FTy, "setjmp", Attrs);
++      llvm::CallInst *Call =
++          Builder.CreateCall(Fn, Buf.emitRawPointer(*this));
++      Call->setAttributes(Attrs);
++      return RValue::get(Call);
++    }
++
+     if (getTarget().getTriple().getArch() == llvm::Triple::systemz) {
+       // On this target, the back end fills in the context buffer completely.
+       // It doesn't really matter if the frontend stores to the buffer before
+@@ -5444,6 +5466,21 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+   case Builtin::BI__builtin_longjmp: {
+     Value *Buf = EmitScalarExpr(E->getArg(0));
+ 
++    if (getTarget().getTriple().getArch() == llvm::Triple::pic16f1) {
++      // The second argument of the builtin is always 1.
++      llvm::FunctionType *FTy = llvm::FunctionType::get(
++          VoidTy, {Int8PtrTy, IntTy}, /*isVarArg=*/false);
++      llvm::AttributeList Attrs = llvm::AttributeList::get(
++          getLLVMContext(), llvm::AttributeList::FunctionIndex,
++          {llvm::Attribute::NoReturn, llvm::Attribute::NoUnwind});
++      llvm::FunctionCallee Fn =
++          CGM.CreateRuntimeFunction(FTy, "longjmp", Attrs);
++      Builder.CreateCall(Fn, {Buf, llvm::ConstantInt::get(IntTy, 1)});
++      Builder.CreateUnreachable();
++      EmitBlock(createBasicBlock("longjmp.cont"));
++      return RValue::get(nullptr);
++    }
++
+     // Call LLVM's EH longjmp, which is lightweight.
+     Builder.CreateCall(CGM.getIntrinsic(Intrinsic::eh_sjlj_longjmp), Buf);
+ 
 diff --git a/clang/lib/CodeGen/CGCall.cpp b/clang/lib/CodeGen/CGCall.cpp
 index 08cb9860f..639deaf6d 100644
 --- a/clang/lib/CodeGen/CGCall.cpp

@@ -483,6 +483,11 @@ bool PIC16F1InstrInfo::isFunctionSafeToOutlineFrom(
   const Function &F = MF.getFunction();
   if (!OutlineFromLinkOnceODRs && F.hasLinkOnceODRLinkage())
     return false;
+  // setjmp keeps the return address of its call to come back to. Called
+  // from an outlined sequence, that would be an address inside the
+  // sequence, whose own return address is gone by the time longjmp runs.
+  if (F.callsFunctionThatReturnsTwice())
+    return false;
   // Of a function compiled several ways (PIC16F1StaticFrames.cpp) only the
   // static version is outlined from. They are all nearly the same code, and
   // counting both would make sequences look repeated that the program has

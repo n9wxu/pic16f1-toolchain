@@ -23,7 +23,7 @@ index 84d700e..5e36cc4 100644
  #endif
  
 +#ifdef __PIC16F1__
-+/* Not implemented; sized for R8-R13, FSR1 and a return address. */
++/* See toolchain/runtime/setjmp.S, which has setjmp and longjmp.     */
 +#define _JBLEN 10
 +#define _JBTYPE unsigned char
 +#endif
