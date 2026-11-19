@@ -6,6 +6,8 @@
 # Usage: scripts/build-llvm-tests.sh [out-dir] [program ...]
 #   out-dir defaults to build/out/llvm-pic16f1
 #   TESTS_DIR selects the test directory (default tests/programs)
+#   LEVELS selects the levels (default "O0 O1 O2 Os"). The extra level O0u
+#   is -O0 -munoptimized: clang's own -O0, which the driver's -O0 is not.
 # Exit status is 1 if any program fails to build.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,10 +26,12 @@ for prog in "$@"; do
     for level in $LEVELS; do
         # A file named skip-<level> in the test directory excludes that level.
         [ -e "$tests/$prog/skip-$level" ] && continue
+        flags="-$level"
+        [ "$level" = O0u ] && flags="-O0 -munoptimized"
         dir="$out/$prog/$level"
         mkdir -p "$dir"
         rm -f "$dir/$prog.hex" "$dir/$prog.elf"
-        if ! "$cc" -mcpu=pic16f1937 -"$level" -std=c99 -I"$root/tests/common" \
+        if ! "$cc" -mcpu=pic16f1937 $flags -std=c99 -I"$root/tests/common" \
                 -o "$dir/$prog.hex" "$tests/$prog/main.c" $asm \
                 "$root/tests/common/bench.c" > "$dir/build.log" 2>&1; then
             echo "BUILD FAILED: $prog $level (see $dir/build.log)" >&2
@@ -42,7 +46,7 @@ for prog in "$@"; do
  "program": "$prog",
  "compiler": "llvm-pic16f1",
  "device": "PIC16F1937",
- "flags": "-$level -std=c99",
+ "flags": "$flags -std=c99",
  "data_bytes": $data
 }
 JSON

@@ -10,7 +10,7 @@
 extern uint8_t pm_regs[14];
 void pm_mul8(void), pm_udivmod8(void), pm_divmod8(void);
 void pm_mul16(void), pm_mul16_fsr(void), pm_udivmod16(void), pm_divmod16(void);
-void pm_mul32(void), pm_udivmod32(void), pm_divmod32(void);
+void pm_mul32(void), pm_udivmod32(void), pm_udivmod32_norm(void), pm_divmod32(void);
 void pm_neg(void), pm_abs(void);
 void pm_shl32(void), pm_lsr32(void), pm_asr32(void);
 void pm_shl64(void), pm_lsr64(void), pm_asr64(void);
@@ -119,6 +119,10 @@ static void bits32(void)
             pm_udivmod32();
             CHECK32(0, ua / ub);
             CHECK32(8, ua % ub);
+            set(ua, ub);
+            pm_udivmod32_norm();
+            CHECK32(8, ua / ub);
+            CHECK32(0, ua % ub);
             if (a == -2147483647 - 1 && b == -1)
                 continue;
             set(ua, ub);

@@ -122,3 +122,69 @@ define i16 @divrem(i16 %a, i16 %b, ptr %q) {
   store i16 %d, ptr %q
   ret i16 %r
 }
+
+; A multiplication by a constant with two set bits, or by one less than a
+; power of two, is shifts and an add or subtract when the shifts are short;
+; other constants call the multiply routine.
+define i16 @mul3(i16 %x) {
+; CHECK-LABEL: mul3:
+; CHECK-NOT:  __mulhi3
+; CHECK:      lslf
+; CHECK:      rlf
+; CHECK-NOT:  lslf
+; CHECK:      addwf
+; CHECK:      addwfc
+; CHECK:      return
+  %r = mul i16 %x, 3
+  ret i16 %r
+}
+
+define i16 @mul7(i16 %x) {
+; CHECK-LABEL: mul7:
+; CHECK-NOT:  __mulhi3
+; CHECK:      subwf
+; CHECK:      subwfb
+; CHECK:      return
+  %r = mul i16 %x, 7
+  ret i16 %r
+}
+
+define i16 @mul321(i16 %x) {
+; CHECK-LABEL: mul321:
+; CHECK:      __mulhi3
+  %r = mul i16 %x, 321
+  ret i16 %r
+}
+
+; The remainder written as x - (x / 10) * 10 on the low bytes is the
+; remainder the divide routine leaves behind: one call and no multiply.
+define i8 @digit(i16 %x, ptr %q) {
+; CHECK-LABEL: digit:
+; CHECK:      __udivhi3
+; CHECK-NOT:  __mul
+; CHECK-NOT:  lslf
+; CHECK:      return
+  %div = udiv i16 %x, 10
+  store i16 %div, ptr %q
+  %lo = trunc i16 %x to i8
+  %dlo = trunc i16 %div to i8
+  %m = mul i8 %dlo, 10
+  %r = sub i8 %lo, %m
+  ret i8 %r
+}
+
+; A byte taken from a 16-bit value and shifted right is shifted as a byte.
+@table = global [32 x i8] zeroinitializer
+define i8 @byteshift(i16 %j) {
+; CHECK-LABEL: byteshift:
+; CHECK-NOT:  rrf
+; CHECK:      lsrf 0x70
+; CHECK-NOT:  rrf
+; CHECK:      return
+  %c = trunc nuw i16 %j to i8
+  %s = lshr i8 %c, 3
+  %z = zext nneg i8 %s to i16
+  %p = getelementptr inbounds nuw i8, ptr @table, i16 %z
+  %v = load i8, ptr %p
+  ret i8 %v
+}

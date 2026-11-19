@@ -18,12 +18,13 @@
 ;     registers named.
 ;   - The code is placed in line where the macro is written, and falls out
 ;     of its end. Wrap it in a label and a return to make a subroutine.
-;   - Numeric labels 1 to 3 and 7 to 9 are used inside.
+;   - Numeric labels 1 to 5 and 7 to 9 are used inside.
 ;
 ; Multiplication is shift-and-add and stops when no bits of the multiplier
-; are left. Division is restoring division, one quotient bit per round.
-; Dividing by zero gives an all-ones quotient and the dividend as the
-; remainder.
+; are left. Division is restoring division, one quotient bit per round, and
+; takes the same time whatever the operands; dividing by zero gives an
+; all-ones quotient and the dividend as the remainder. pic_udivmod32_norm
+; is a second 32-bit divide that takes less time the larger the divisor.
 
 #ifndef PICMATH_INC
 #define PICMATH_INC
@@ -290,6 +291,68 @@
 3:
     decfsz  \cnt, F
     bra     1b
+.endm
+
+; q = n / d, n = n % d, unsigned. d is destroyed. cnt is a scratch byte.
+; The divisor is first shifted up until its top bit is set, and only as many
+; rounds are run as that took: 32 for a divisor of 1, one for a divisor of
+; 0x80000000 or more. Dividing by zero gives a quotient of zero and leaves
+; n as it was.
+.macro pic_udivmod32_norm n0, n1, n2, n3, d0, d1, d2, d3, q0, q1, q2, q3, cnt
+    clrf    \q0
+    clrf    \q1
+    clrf    \q2
+    clrf    \q3
+    movf    \d0, W
+    iorwf   \d1, W
+    iorwf   \d2, W
+    iorwf   \d3, W
+    btfsc   PICMATH_STATUS, PICMATH_Z
+    bra     5f
+    movlw   1
+    movwf   \cnt
+    bra     2f
+1:
+    lslf    \d0, F              ; divisor up one place, one more round
+    rlf     \d1, F
+    rlf     \d2, F
+    rlf     \d3, F
+    incf    \cnt, F
+2:
+    btfss   \d3, 7
+    bra     1b
+3:
+    lslf    \q0, F
+    rlf     \q1, F
+    rlf     \q2, F
+    rlf     \q3, F
+    movf    \d0, W
+    subwf   \n0, W
+    movf    \d1, W
+    subwfb  \n1, W
+    movf    \d2, W
+    subwfb  \n2, W
+    movf    \d3, W
+    subwfb  \n3, W              ; carry set if what is left >= divisor
+    btfss   PICMATH_STATUS, PICMATH_C
+    bra     4f
+    movf    \d0, W
+    subwf   \n0, F
+    movf    \d1, W
+    subwfb  \n1, F
+    movf    \d2, W
+    subwfb  \n2, F
+    movf    \d3, W
+    subwfb  \n3, F
+    bsf     \q0, 0
+4:
+    lsrf    \d3, F
+    rrf     \d2, F
+    rrf     \d1, F
+    rrf     \d0, F
+    decfsz  \cnt, F
+    bra     3b
+5:
 .endm
 
 ; x = -x

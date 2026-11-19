@@ -24,6 +24,17 @@ it does not, because the startup code keeps nothing in them; a program that
 calls main from another source file needs this option on the file that
 defines main.
 
+-O0, and no -O option at all, mean "as written, but not wasteful": every
+function is kept and none is inlined, loops and calls stay as the source has
+them, but variables live in registers and each function is tidied up (this
+is clang's -O1 with -fno-inline). -munoptimized gives clang's own -O0, which
+keeps every variable in memory and is about twice the size.
+
+-O3 means "small, and nothing that costs time": clang's -Os without the
+sharing of repeated sequences, which saves words at the price of a call each
+time one runs. (Clang's own -O3 spends words on speed that this processor
+does not have.)
+
 --libc compiles and links against picolibc (stdio, string, stdlib, math),
 if it has been built (scripts/build-picolibc.sh). The program must supply
 `stdout` for printf; see docs/toolchain.md.
@@ -92,7 +103,7 @@ def main():
 
     output = None
     cpu = "pic16f1937"
-    compile_only = asm_only = use_libc = False
+    compile_only = asm_only = use_libc = unoptimized = False
     model = None
     sources, objects, cflags, ldflags = [], [], [], []
     i = 0
@@ -111,6 +122,8 @@ def main():
             model = a[len("-mcmodel="):]
             if model not in ("small", "medium"):
                 sys.exit("pic16f1-cc: -mcmodel must be small or medium")
+        elif a == "-munoptimized":
+            unoptimized = True
         elif a == "-mmain-saves-registers":
             cflags += ["-mllvm", "-pic16f1-main-saves-registers"]
         elif a == "--libc":
@@ -153,14 +166,32 @@ def main():
         libs = [os.path.join(libc, "lib", "libc.a")] + libs
     else:
         clang += ["-ffreestanding"]
+    # The level is the last -O option; without one it is -O0. See the
+    # header for what -O0 means here.
+    levels = [f for f in cflags if f.startswith("-O")]
+    level = levels[-1] if levels else "-O0"
+    if level == "-O0":
+        cflags = [f for f in cflags if not f.startswith("-O")]
+        cflags += ["-O0"] if unoptimized else ["-O1", "-fno-inline"]
+    elif level == "-O3":
+        cflags = [f for f in cflags if not f.startswith("-O")]
+        cflags += ["-Os"] + ([] if "-moutline" in cflags else ["-mno-outline"])
     clang += ["-isystem", inc] + cflags
-    # LLVM's inlining at -Os assumes that a call costs several instructions
-    # and that a function of ten or so is small. Here a call is one or two
-    # words and every instruction of the function several, so less is
-    # inlined. (A function with a single caller is still always inlined.)
+    # LLVM's defaults assume a machine where a call costs several
+    # instructions, a function of ten or so is small, and memory is there to
+    # be spent on speed. Here a call is one or two words and flash is a few
+    # thousand, so at every level:
+    #   - less is inlined (a function with a single caller still always is);
+    #   - loops are not unrolled (-funroll-loops turns that back on), except
+    #     at -Os and -Oz, where LLVM only unrolls a loop that gets smaller;
+    #   - a bitwise CRC loop is not replaced by a 256-entry table.
     tuning = []
-    if any(f in ("-Os", "-Oz") for f in cflags) and not any("inline-threshold" in f for f in cflags):
-        tuning = ["-mllvm", "-inline-threshold=10", "-mllvm", "-inline-call-penalty=5"]
+    if not any("inline-threshold" in f for f in cflags):
+        tuning += ["-mllvm", "-inline-threshold=10", "-mllvm", "-inline-call-penalty=5"]
+    tuning += ["-mllvm", "-disable-loop-idiom-hashrecognize"]
+    size_level = any(f in ("-Os", "-Oz") for f in cflags)
+    unroll = [] if size_level or "-funroll-loops" in cflags else ["-fno-unroll-loops"]
+    clang += unroll
     clang += tuning
     # With -flto the linker generates the code and needs the same options.
     lto = any(f == "-flto" or f.startswith("-flto=") for f in cflags)

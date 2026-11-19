@@ -104,6 +104,14 @@ pm_udivmod32:
     pic_udivmod32 A0, A1, A2, A3,  B0, B1, B2, B3,  Q0, Q1, Q2, Q3,  CNT
     return
 
+; Quotient where the others leave the remainder, and the other way round.
+    .section .text.pm_udivmod32_norm,"ax",@progbits
+    .globl  pm_udivmod32_norm
+pm_udivmod32_norm:
+    movlb   bank(pm_regs)
+    pic_udivmod32_norm A0, A1, A2, A3,  B0, B1, B2, B3,  Q0, Q1, Q2, Q3,  CNT
+    return
+
     .section .text.pm_divmod32,"ax",@progbits
     .globl  pm_divmod32
 pm_divmod32:

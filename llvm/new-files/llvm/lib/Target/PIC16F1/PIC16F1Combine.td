@@ -30,19 +30,13 @@ def hoist_logic_op_except_trunc : GICombineRule<
               Helper.matchHoistLogicOpWithSameOpcodeHands(*${root}, ${info}); }]),
   (apply [{ Helper.applyBuildInstructionSteps(*${root}, ${info}); }])>;
 
-// x - (x / y) * y is the remainder, which the divide routine computes
-// anyway (LLVM writes a remainder this way when it sees no instruction that
-// gives both). As a remainder it joins the division into one G_UDIVREM,
-// which is one library call. Up to 32 bits; the 64-bit routines are
-// separate.
+// x - (x / y) * y is the remainder; see matchSubMulUDiv.
+def sub_mul_udiv_matchdata : GIDefMatchData<"const MachineInstr *">;
 def sub_mul_udiv_to_urem : GICombineRule<
-  (defs root:$root),
-  (match (G_UDIV $q, $x, $y),
-         (G_MUL $m, $q, $y),
-         (G_SUB $root, $x, $m),
-         [{ return MRI.getType(${x}.getReg()).isScalar() &&
-                   MRI.getType(${x}.getReg()).getSizeInBits() <= 32; }]),
-  (apply (G_UREM $root, $x, $y))>;
+  (defs root:$root, sub_mul_udiv_matchdata:$div),
+  (match (wip_match_opcode G_SUB):$root,
+         [{ return matchSubMulUDiv(*${root}, MRI, ${div}); }]),
+  (apply [{ applySubMulUDiv(*${root}, MRI, B, ${div}); }])>;
 
 // A signed division by a power of two of up to 16 bits is left for the
 // legalizer, which has a short form for it; wider ones become shifts here.
@@ -52,6 +46,30 @@ def sdiv_by_pow2_wide : GICombineRule<
    [{ return MRI.getType(${x}.getReg()).getScalarSizeInBits() > 16 &&
              Helper.matchDivByPow2(*${root}, /*IsSigned=*/true); }]),
   (apply [{ Helper.applySDivByPow2(*${root}); }])>;
+
+// x * (2^a + 2^b) and x * (2^a - 2^b) as two shifts and an add or subtract,
+// when the shifts are short: far quicker than the multiply routine, in
+// about the room of the call.
+def mul_by_two_bits_matchdata : GIDefMatchData<"std::tuple<unsigned, unsigned, bool>">;
+def mul_by_two_bits : GICombineRule<
+  (defs root:$root, mul_by_two_bits_matchdata:$info),
+  (match (wip_match_opcode G_MUL):$root,
+         [{ return matchMulByTwoBits(*${root}, MRI, std::get<0>(${info}),
+                                     std::get<1>(${info}),
+                                     std::get<2>(${info})); }]),
+  (apply [{ applyMulByTwoBits(*${root}, MRI, B, std::get<0>(${info}),
+                              std::get<1>(${info}), std::get<2>(${info})); }])>;
+
+// LLVM's zext_trunc, which turns zext(trunc x) into x when the truncation
+// is known to lose nothing, except in front of a right shift by a constant:
+// there the extension is what says that the shift is a shift of one byte.
+def zext_trunc_keep_byte_shift : GICombineRule<
+   (defs root:$root, build_fn_matchinfo:$matchinfo),
+   (match (G_TRUNC $src, $x, (MIFlags NoUWrap)),
+          (G_ZEXT $root, $src),
+   [{ return !feedsByteShift(${root}.getReg(), MRI) &&
+             Helper.matchZextOfTrunc(${root}, ${matchinfo}); }]),
+   (apply [{ Helper.applyBuildFnMO(${root}, ${matchinfo}); }])>;
 
 def pic16f1_prelegalizer_combines : GICombineGroup<[
     integer_reassoc_combines, trivial_combines, vector_ops_combines,
@@ -66,7 +84,7 @@ def pic16f1_prelegalizer_combines : GICombineGroup<[
     known_bits_simplifications, trunc_shift, not_cmp_fold,
     opt_brcond_by_inverting_cond, const_combines, xor_of_and_with_same_reg,
     ptr_add_with_zero, shift_immed_chain, shift_of_shifted_logic_chain,
-    load_or_combine, sub_mul_udiv_to_urem, div_rem_to_divrem,
+    load_or_combine, sub_mul_udiv_to_urem, mul_by_two_bits, div_rem_to_divrem,
     funnel_shift_combines,
     bitreverse_shift, commute_shift, form_bitfield_extract,
     constant_fold_binops, constant_fold_fma, constant_fold_cast_op,
@@ -76,7 +94,7 @@ def pic16f1_prelegalizer_combines : GICombineGroup<[
     sdiv_by_pow2_wide, udiv_by_const, sdiv_by_const,
     fdiv_repeated_divison, sub_add_reg, select_to_minmax, fsub_to_fneg,
     commute_constant_to_rhs, match_ands, match_ors, or_and_xor_combines,
-    simplify_neg_minmax, combine_concat_vector, sext_trunc, zext_trunc,
+    simplify_neg_minmax, combine_concat_vector, sext_trunc, zext_trunc_keep_byte_shift,
     prefer_sign_combines, shuffle_combines, combine_use_vector_truncate,
     merge_combines, overflow_combines, truncsat_combines,
     lshr_of_trunc_of_lshr, ctls_combines, add_shift, sub_one_from_sub,

@@ -12,9 +12,9 @@
 ; STATUS is 0x03: bit 0 is carry, bit 2 is zero.
 ;
 ; Multiplication is shift-and-add and stops when no bits of the multiplier
-; are left. Division is restoring division, one quotient bit per round; the
-; quotient replaces the dividend bit by bit. Dividing by zero gives an
-; all-ones quotient.
+; are left. Division is restoring division, one quotient bit per round; in
+; the 8- and 16-bit routines the quotient replaces the dividend bit by bit,
+; and dividing by zero gives an all-ones quotient.
 ;
 ; Every routine is in a section of its own, so that a program gets only the
 ; ones it calls.
@@ -205,7 +205,7 @@ __mulsi3:
     PAGESEL(__pic_movsi)
     goto    __pic_movsi
 
-; R0-R3 = FSR0L, FSR0H, TMP0, TMP1: where the product and the remainder
+; R0-R3 = FSR0L, FSR0H, TMP0, TMP1: where the product and the quotient
 ; are built.
     .section .text.__pic_movsi,"ax",@progbits
     .globl  __pic_movsi
@@ -220,40 +220,45 @@ __pic_movsi:
     movwf   R3
     return
 
-; Quotient in 0x70-73, remainder in FSR0L, FSR0H, TMP0, TMP1. The round
-; counter is R8, which the caller expects back: it goes on the stack.
-    .section .text.__udivsi3,"ax",@progbits
-    .globl  __udivsi3
-__udivsi3:
+; The 32-bit divide is the one that lines the divisor up first, so that a
+; large divisor takes few rounds. It leaves the remainder where the
+; dividend was (R0-R3), which makes it the remainder routine as it stands,
+; and the quotient in FSR0L, FSR0H, TMP0, TMP1. The round counter is R8,
+; which the caller expects back: it goes on the stack. Dividing by zero
+; gives a quotient of zero and the dividend as the remainder.
+    .section .text.__umodsi3,"ax",@progbits
+    .globl  __umodsi3
+__umodsi3:
     movf    R8, W
     movwi   --FSR1
-    pic_udivmod32 R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  R8
+    pic_udivmod32_norm R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  R8
     moviw   FSR1++
     movwf   R8
     return
+
+    .section .text.__udivsi3,"ax",@progbits
+    .globl  __udivsi3
+__udivsi3:
+    PAGESEL(__umodsi3)
+    call    __umodsi3
+    PAGESEL(__pic_movsi)
+    goto    __pic_movsi
 
 ; Quotient in 0x70-73 and remainder in 0x74-77: what the compiler calls
 ; when it wants both.
     .section .text.__udivmodsi4,"ax",@progbits
     .globl  __udivmodsi4
 __udivmodsi4:
-    PAGESEL(__udivsi3)
-    call    __udivsi3
-    movf    FSR0L, W
+    PAGESEL(__umodsi3)
+    call    __umodsi3
+    movf    R0, W
     movwf   R4
-    movf    FSR0H, W
+    movf    R1, W
     movwf   R5
-    movf    TMP0, W
+    movf    R2, W
     movwf   R6
-    movf    TMP1, W
+    movf    R3, W
     movwf   R7
-    return
-
-    .section .text.__umodsi3,"ax",@progbits
-    .globl  __umodsi3
-__umodsi3:
-    PAGESEL(__udivsi3)
-    call    __udivsi3
     PAGESEL(__pic_movsi)
     goto    __pic_movsi
 
