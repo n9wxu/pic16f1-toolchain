@@ -3,7 +3,11 @@
 #ifndef __XC_H
 #define __XC_H
 
-#if defined(__PIC16F15276__)
+#if defined(__PIC16F1032__)
+#include <pic16f1032.h>
+#elif defined(__PIC16F1064__)
+#include <pic16f1064.h>
+#elif defined(__PIC16F15276__)
 #include <pic16f15276.h>
 #elif defined(__PIC16F1619__)
 #include <pic16f1619.h>

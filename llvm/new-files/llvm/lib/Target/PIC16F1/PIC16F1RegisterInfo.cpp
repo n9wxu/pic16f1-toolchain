@@ -10,6 +10,8 @@
 #include "PIC16F1.h"
 #include "PIC16F1FrameLowering.h"
 #include "PIC16F1MachineFunctionInfo.h"
+#include "PIC16F1Subtarget.h"
+#include "llvm/IR/Module.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -46,13 +48,46 @@ PIC16F1RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   if (F.doesNotReturn() || (!MainSavesRegisters && F.getName() == "main" &&
                             F.use_empty() && !F.hasAddressTaken()))
     return CSR_NoRegs_SaveList;
+  // The static version of a function compiled both ways. Its callers were
+  // compiled against the stack version and may rely on every register that
+  // one leaves alone, so this one saves those too if it uses them. (If the
+  // stack version has not been compiled yet, it is the one that adjusts:
+  // see PIC16F1ExpandPseudo.cpp.)
+  if (F.hasFnAttribute("pic16f1-dual-of")) {
+    auto *Info = const_cast<MachineFunction *>(MF)
+                     ->getInfo<PIC16F1MachineFunctionInfo>();
+    if (!Info->dualSaveListDecided()) {
+      Info->setDualSaveListDecided();
+      const auto &Table =
+          MF->getSubtarget<PIC16F1Subtarget>().dualClobbers();
+      const Function *Stack = F.getParent()->getFunction(
+          F.getFnAttribute("pic16f1-dual-of").getValueAsString());
+      auto It = Stack ? Table.find(Stack) : Table.end();
+      if (It != Table.end()) {
+        std::vector<MCPhysReg> &List = Info->dualSaveList();
+        for (const MCPhysReg *R = CSR_Normal_SaveList; *R; ++R)
+          List.push_back(*R);
+        for (MCPhysReg Reg : PIC16F1::GPR8RegClass)
+          if (!It->second.test(Reg) && !is_contained(List, Reg) &&
+              Reg != PIC16F1::FSR1L && Reg != PIC16F1::FSR1H)
+            List.push_back(Reg);
+        List.push_back(0);
+      }
+    }
+    if (!Info->dualSaveList().empty())
+      return Info->dualSaveList().data();
+  }
   return CSR_Normal_SaveList;
 }
 
 const uint32_t *
 PIC16F1RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                                           CallingConv::ID) const {
-  return CSR_NormalCall_RegMask;
+  return CSR_Normal_RegMask;
+}
+
+const uint32_t *PIC16F1RegisterInfo::getInterruptCopyMask() {
+  return CSR_NoRegs_RegMask;
 }
 
 const uint32_t *PIC16F1RegisterInfo::getLibcallPreservedMask(StringRef Name) {
@@ -67,7 +102,9 @@ const uint32_t *PIC16F1RegisterInfo::getLibcallPreservedMask(StringRef Name) {
 
 BitVector PIC16F1RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  if (!MF.getInfo<PIC16F1MachineFunctionInfo>()->fsr1IsRegister()) {
+  // FSR1 is the stack pointer in a function that has a stack frame, and a
+  // register in one that has a static frame.
+  if (!MF.getFunction().hasFnAttribute("pic16f1-static-frame")) {
     Reserved.set(PIC16F1::SP);
     Reserved.set(PIC16F1::FSR1L);
     Reserved.set(PIC16F1::FSR1H);

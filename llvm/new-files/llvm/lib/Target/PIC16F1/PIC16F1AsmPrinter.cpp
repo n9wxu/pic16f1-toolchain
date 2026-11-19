@@ -11,7 +11,10 @@
 #include "PIC16F1.h"
 #include "PIC16F1TargetMachine.h"
 #include "TargetInfo/PIC16F1TargetInfo.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Constants.h"
@@ -21,6 +24,7 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -41,6 +45,7 @@ public:
   StringRef getPassName() const override { return "PIC16F1 Assembly Printer"; }
 
   void emitInstruction(const MachineInstr *MI) override;
+  void emitFunctionBodyEnd() override;
   void emitEndOfAsmFile(Module &M) override;
   const MCExpr *lowerConstant(const Constant *CV, const Constant *BaseCV,
                               uint64_t Offset) override;
@@ -49,6 +54,10 @@ public:
 
 private:
   MCOperand lowerSymbol(const MachineOperand &MO, const MCSymbol *Sym) const;
+
+  /// What the linker needs to tell which functions can be re-entered: see
+  /// emitFunctionBodyEnd.
+  std::string FrameRecords;
 };
 } // end of anonymous namespace
 
@@ -121,10 +130,98 @@ void PIC16F1AsmPrinter::emitInstruction(const MachineInstr *MI) {
   EmitToStreamer(*OutStreamer, Out);
 }
 
+/// A record of the function for the linker, which chooses between the stack
+/// and static versions of a function (PIC16F1StaticFrames.cpp; lld,
+/// PIC16F1Frames.cpp) and for that needs every call in the program. One
+/// line each, in the section .pic16f1.frames:
+///   F name flags   a function; flags: i interrupt handler, p calls through
+///                  a pointer, - none
+///   V name static  the static version of the function "name"
+///   C name         a call from the function of the last F or V line
+///   A name         a function whose address is taken (anywhere)
+///   I alias name   "alias" stands for the function "name" when called from
+///                  code that runs in an interrupt handler
+///   V name static K   with K = i: the static version for use in a handler
+void PIC16F1AsmPrinter::emitFunctionBodyEnd() {
+  const Function &F = MF->getFunction();
+  raw_string_ostream OS(FrameRecords);
+  StringRef Name = CurrentFnSym->getName();
+  if (F.hasFnAttribute("pic16f1-dual-of")) {
+    OS << "V " << F.getFnAttribute("pic16f1-dual-of").getValueAsString() << ' '
+       << Name << (F.hasFnAttribute("pic16f1-isr-copy") ? " i" : " s") << '\n';
+  } else {
+    bool Indirect = false;
+    for (const MachineBasicBlock &MBB : *MF)
+      for (const MachineInstr &MI : MBB)
+        if (MI.isCall())
+          Indirect |= llvm::none_of(MI.operands(), [](const MachineOperand &MO) {
+            return MO.isGlobal() || MO.isSymbol();
+          });
+    OS << "F " << Name << ' '
+       << (F.hasFnAttribute("interrupt") ? "i" : Indirect ? "p" : "-") << '\n';
+  }
+  for (const MachineBasicBlock &MBB : *MF) {
+    for (const MachineInstr &MI : MBB) {
+      // A jump to a symbol is a call that will not come back.
+      bool Calls = MI.isCall() || MI.getOpcode() == PIC16F1::GOTO;
+      for (const MachineOperand &MO : MI.operands()) {
+        // The page selection in front of a call names the callee too.
+        if ((MO.isGlobal() || MO.isSymbol()) &&
+            MO.getTargetFlags() == PIC16F1II::MO_PAGE)
+          continue;
+        if (MO.isGlobal() && isa<Function>(MO.getGlobal()))
+          OS << (Calls ? "C " : "A ") << getSymbol(MO.getGlobal())->getName()
+             << '\n';
+        else if (MO.isSymbol() && Calls)
+          OS << "C " << GetExternalSymbolSymbol(MO.getSymbolName())->getName()
+             << '\n';
+      }
+    }
+  }
+}
+
+/// Functions whose address is in the initial value of a variable.
+static void addressesIn(const Constant *C, SmallPtrSetImpl<const Constant *> &Seen,
+                        SmallVectorImpl<const Function *> &Out) {
+  if (!Seen.insert(C).second)
+    return;
+  if (const auto *F = dyn_cast<Function>(C)) {
+    Out.push_back(F);
+    return;
+  }
+  if (isa<GlobalValue>(C))
+    return;
+  for (const Use &Op : C->operands())
+    if (const auto *OC = dyn_cast<Constant>(Op))
+      addressesIn(OC, Seen, Out);
+}
+
 /// The startup code copies initialised data to RAM and clears .bss only if
 /// something asks for it: those loops are library members that define
 /// __do_copy_data and __do_clear_bss. Refer to the one this module needs.
 void PIC16F1AsmPrinter::emitEndOfAsmFile(Module &M) {
+  {
+    SmallPtrSet<const Constant *, 16> Seen;
+    SmallVector<const Function *, 8> Taken;
+    for (const GlobalVariable &GV : M.globals())
+      if (GV.hasInitializer())
+        addressesIn(GV.getInitializer(), Seen, Taken);
+    raw_string_ostream OS(FrameRecords);
+    for (const Function *F : Taken)
+      OS << "A " << getSymbol(F)->getName() << '\n';
+    for (const Function &F : M)
+      if (F.hasFnAttribute("pic16f1-isr-of"))
+        if (const Function *Of = M.getFunction(
+                F.getFnAttribute("pic16f1-isr-of").getValueAsString()))
+          OS << "I " << getSymbol(&F)->getName() << ' '
+             << getSymbol(Of)->getName() << '\n';
+  }
+  if (!FrameRecords.empty()) {
+    OutStreamer->switchSection(
+        OutContext.getELFSection(".pic16f1.frames", ELF::SHT_PROGBITS, 0));
+    OutStreamer->emitBytes(FrameRecords);
+    FrameRecords.clear();
+  }
   bool NeedsCopy = false, NeedsClear = false;
   for (const GlobalVariable &GV : M.globals()) {
     // Not data of the program: llvm.used and the like.

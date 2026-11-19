@@ -13,7 +13,9 @@ Usage:
 
 Run options:
   --device NAME       device to simulate (default pic16f1937; also pic16f1829,
-                      pic16f1619, pic16f18877, pic16f15276)
+                      pic16f1619, pic16f18877, pic16f15276, and the two
+                      imaginary devices pic16f1032 and pic16f1064, the
+                      largest 32- and 64-bank parts there could be)
   --max-cycles N      stop after N instruction cycles (default 100000000)
   --uart fast|timed   UART transmit timing (default fast)
   --json              print a JSON result record on stdout instead of UART text

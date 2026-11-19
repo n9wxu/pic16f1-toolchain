@@ -3,12 +3,15 @@
 ; RUN: llc -mcpu=pic16f1937 -O2 -enable-machine-outliner=never -pic16f1-fsr1-pointer=0 < %s | FileCheck %s --check-prefix=ONE
 
 ; Static frames. A function that cannot be entered while it is running keeps
-; its variables at fixed addresses, and may use FSR1, otherwise the stack
-; pointer, as a second pointer register.
+; its variables at fixed addresses and never touches the stack, so FSR1,
+; elsewhere the stack pointer, is a second pointer register in it.
 
 ; visible can be called from another file, where it might run in an
-; interrupt handler: its array is on the stack.
+; interrupt handler. This version has its array on the stack, with the
+; stack pointer taken from the cell __sp; the linker may replace it by
+; visible.sf, which has a static frame.
 ; CHECK-LABEL: visible:
+; CHECK:      movf __sp, W
 ; CHECK:      addfsr FSR1, -4
 ; CHECK:      movwi 0[FSR1]
 ; CHECK:      addfsr FSR1, 4
@@ -16,6 +19,7 @@
 ; local is called only from main: its array has a fixed address.
 ; CHECK-LABEL: local:
 ; CHECK-NOT:  addfsr
+; CHECK-NOT:  __sp
 ; CHECK:      movlb bank(local.frame)
 ; CHECK:      movwf local.frame
 ; CHECK:      movlw lo8(local.frame)
@@ -29,21 +33,25 @@
 ; CHECK:      addfsr FSR1, -4
 ; CHECK:      call recurse
 
-; cmp steps through two strings. One pointer is in FSR0 and the other in
-; FSR1; the stack pointer waits in a register pair and is put back before
-; the return.
+; cmp steps through two strings, with one pointer in FSR0 and the other in
+; FSR1. Nothing has to be moved out of FSR1 first.
 ; CHECK-LABEL: cmp:
-; CHECK:      movf 0x06, W
-; CHECK-NEXT: movwf [[SPL:0x7[0-9a-f]]]
+; CHECK-NOT:  __sp
+; CHECK:      movwf 0x05
+; CHECK:      movwf 0x07
 ; CHECK:      moviw 0[FSR1]
 ; CHECK:      addfsr FSR1, 1
 ; CHECK-NEXT: moviw ++FSR0
-; CHECK:      movf [[SPL]], W
-; CHECK-NEXT: movwf 0x06
 ; CHECK:      return
 ; ONE-LABEL: cmp:
 ; ONE-NOT:    FSR1
 ; ONE:        return
+
+; The static version of visible.
+; CHECK-LABEL: visible.sf:
+; CHECK-NOT:  FSR1
+; CHECK:      movwf visible.sf.frame
+; CHECK:      return
 
 ; The fixed variables are not cleared at startup and take no room in the
 ; file.

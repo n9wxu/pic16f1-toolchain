@@ -58,3 +58,9 @@ __ashrdi3:
     movwf   TMP0
     pic_asr64 R0, R1, R2, R3, R4, R5, R6, R7,  TMP0
     return
+
+; For the linker's choice between stack and static frames (see "Static
+; frames" in docs/toolchain.md): what this file's code calls. An object
+; file without this section is taken to call everything it refers to.
+    .section .pic16f1.frames,"",@progbits
+    .ascii  "F __ashlsi3 -\n"

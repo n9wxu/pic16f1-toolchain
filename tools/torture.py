@@ -42,7 +42,8 @@ RELAX = ["-std=gnu17", "-fhosted", "-w", "-Wno-error=implicit-function-declarati
 # 32-bit int or other things this target lacks is not applicable.
 PASS_THROUGH = ("-fwrapv", "-fno-strict-aliasing", "-fsigned-char", "-funsigned-char",
                 "-fno-builtin", "-fgnu89-inline", "-fno-delete-null-pointer-checks",
-                "-fno-strict-overflow", "-fwrapv-pointer", "-fno-tree-vrp", "-fno-inline")
+                "-fno-strict-overflow", "-fwrapv-pointer", "-fno-tree-vrp", "-fno-inline",
+                "-finstrument-functions")
 NOT_APPLICABLE = ("int32plus", "int32", "size32plus", "size20plus", "ptr32plus", "trampolines",
                   "alloca", "int128", "float128", "dfp", "label_values_32", "mmap", "untyped_assembly")
 
@@ -54,14 +55,23 @@ def directives(path):
         text = open(path, errors="replace").read()
     except OSError:
         return opts, None
-    for m in re.finditer(r"dg-(?:additional-)?options\s+\"([^\"]*)\"", text):
+    for m in re.finditer(r"dg-(?:additional-)?options\s+(?:\{\s*)?\"([^\"]*)\"", text):
         for o in m.group(1).split():
             if o.startswith(PASS_THROUGH):
                 opts.append(o)
+    if re.search(r"dg-add-options\s+stack_size", text):
+        opts.append("{stack_size}")
     for m in re.finditer(r"dg-require-effective-target\s+(\w+)", text):
         if m.group(1) in NOT_APPLICABLE:
             reason = "requires " + m.group(1)
     return opts, reason
+
+
+def stack_size(device):
+    try:
+        return json.load(open(os.path.join(ROOT, "devices", device + ".json")))["gpr_bytes"] // 4
+    except (OSError, KeyError, ValueError):
+        return 124
 
 
 def run_test(path, level, cc, sim, harness, max_cycles, tmp, flags=(), device="pic16f1937"):
@@ -69,6 +79,8 @@ def run_test(path, level, cc, sim, harness, max_cycles, tmp, flags=(), device="p
     extra, reason = directives(path)
     if reason:
         return name, level, "unsupported", reason
+    # Tests that size themselves to the stack get a quarter of the RAM.
+    extra = [f"-DSTACK_SIZE={stack_size(device)}" if o == "{stack_size}" else o for o in extra]
     extra = extra + [f.replace("{name}", name).replace("{dir}", os.path.dirname(path)) for f in flags]
     out = os.path.join(tmp, f"{name}-{level}.hex")
     # The stand-in C library headers are only for builds without picolibc.

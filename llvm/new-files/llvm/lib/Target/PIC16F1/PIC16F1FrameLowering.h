@@ -33,8 +33,21 @@ public:
   // Callee-saved registers are pushed on entry and popped before the
   // return, in a fixed order. The instructions are then the same in every
   // function that saves the same registers, and the outliner shares them.
+  /// The static version of a function compiled both ways
+  /// (PIC16F1StaticFrames.cpp) has no callers of its own and saves what its
+  /// stack version's callers expect; see getCalleeSavedRegs.
+  bool isProfitableForNoCSROpt(const Function &F) const override {
+    return !F.hasFnAttribute("pic16f1-dual-of");
+  }
+  /// Where debug information should look for a frame object. One with a
+  /// fixed address has no place in the frame.
+  StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
+                                     Register &FrameReg) const override;
   void processFunctionBeforeFrameFinalized(
       MachineFunction &MF, RegScavenger *RS = nullptr) const override;
+  bool assignCalleeSavedSpillSlots(
+      MachineFunction &MF, const TargetRegisterInfo *TRI,
+      std::vector<CalleeSavedInfo> &CSI) const override;
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
                                  ArrayRef<CalleeSavedInfo> CSI,

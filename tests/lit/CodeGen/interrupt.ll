@@ -22,7 +22,10 @@ define void @isr() "interrupt" {
 
 ; A handler that calls a function switches to its own stack and must save
 ; every register the callee may change: R0-R7 and the two scratch bytes at
-; 0x7E and 0x7F. (FSR0 comes back from the shadow registers.)
+; 0x7E and 0x7F. (The FSRs come back from the shadow registers.) What it
+; calls may have a stack frame, and would take its stack pointer from the
+; cell __sp: the handler keeps the interrupted code's value aside, puts its
+; own there, and puts the old one back at the end.
 define void @isr_calls() "interrupt" {
 ; CHECK-LABEL: isr_calls:
 ; CHECK:      movlw lo8(__isr_stack_top)
@@ -37,8 +40,18 @@ define void @isr_calls() "interrupt" {
 ; CHECK-NEXT: movwi --FSR1
 ; CHECK-NEXT: movf 0x7f, W
 ; CHECK-NEXT: movwi --FSR1
-; CHECK:      call work
-; CHECK-NEXT: moviw FSR1++
+; CHECK:      movf __sp, W
+; CHECK:      movwf isr_calls.sp
+; CHECK:      movf 0x06, W
+; CHECK:      movwf __sp
+; The call is to work$isr: the linker makes that work itself, or a copy of
+; it for interrupt handlers (see staticframe.ll).
+; CHECK:      call work$isr
+; CHECK:      movf __sp, W
+; CHECK-NEXT: movwf 0x06
+; CHECK:      movf isr_calls.sp, W
+; CHECK:      movwf __sp
+; CHECK:      moviw FSR1++
 ; CHECK-NEXT: movwf 0x7f
 ; CHECK:      movwf 0x70
 ; CHECK-NEXT: retfie

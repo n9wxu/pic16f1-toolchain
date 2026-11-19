@@ -130,55 +130,15 @@ struct OutgoingHandler : public CallLowering::OutgoingValueHandler {
 
 } // end anonymous namespace
 
-static cl::opt<bool> FSR1Pointer(
-    "pic16f1-fsr1-pointer", cl::Hidden, cl::init(true),
-    cl::desc("Use FSR1 as a second pointer register in functions that keep "
-             "nothing on the stack but saved registers"));
-
-/// FSR1 can be a register in \p F if nothing in it will need the stack
-/// pointer between calls: it has a static frame that takes everything it
-/// keeps in memory, and neither receives nor passes arguments on the stack.
-/// The checks on calls here are deliberately wide; lowerCall refuses a
-/// call that turns out to need the stack after all, and the function then
-/// goes to the other instruction selector, which never uses FSR1 this way.
-static bool canUseFSR1(const Function &F, uint64_t IncomingStackBytes) {
-  if (!FSR1Pointer || !F.hasFnAttribute("pic16f1-static-frame") ||
-      F.isVarArg() || IncomingStackBytes != 0 || !pic16f1StaticSlotLimit())
-    return false;
-  const DataLayout &DL = F.getDataLayout();
-  auto TooWide = [](Type *Ty) {
-    return Ty->isIntegerTy() && Ty->getIntegerBitWidth() > 32;
-  };
-  for (const BasicBlock &BB : F) {
-    for (const Instruction &I : BB) {
-      if (const auto *AI = dyn_cast<AllocaInst>(&I)) {
-        auto Size = AI->getAllocationSize(DL);
-        if (!AI->isStaticAlloca() || !Size || Size->isScalable() ||
-            Size->getFixedValue() > pic16f1StaticSlotLimit())
-          return false;
-      }
-      // 64-bit arithmetic calls library routines with stack arguments.
-      if (TooWide(I.getType()))
-        return false;
-      for (const Use &Op : I.operands())
-        if (TooWide(Op->getType()))
-          return false;
-      if (const auto *CB = dyn_cast<CallBase>(&I)) {
-        if (CB->isInlineAsm())
-          return false;
-        if (isa<IntrinsicInst>(CB))
-          continue;
-        if (CB->getFunctionType()->isVarArg())
-          return false;
-        uint64_t Bytes = 0;
-        for (const Use &Arg : CB->args())
-          Bytes += DL.getTypeAllocSize(Arg->getType());
-        if (Bytes > 8)
-          return false;
-      }
-    }
-  }
-  return true;
+/// A function with a static frame is compiled without a stack pointer
+/// (PIC16F1StaticFrames.cpp), which was decided from its source. If code
+/// generation finds it needs the stack after all, stop rather than emit
+/// code that scribbles through FSR1.
+static void checkNoStack(const MachineFunction &MF, uint64_t StackBytes) {
+  if (StackBytes != 0 && MF.getFunction().hasFnAttribute("pic16f1-static-frame"))
+    report_fatal_error("PIC16F1: function '" + MF.getName() +
+                       "' has a static frame but passes arguments on the "
+                       "stack; build with -mllvm -pic16f1-static-frames=0");
 }
 
 bool PIC16F1CallLowering::canLowerReturn(MachineFunction &MF,
@@ -221,12 +181,6 @@ bool PIC16F1CallLowering::lowerReturn(MachineIRBuilder &MIRBuilder,
                                        F.getCallingConv(), F.isVarArg()))
       return false;
   }
-  // The stack pointer goes back to FSR1.
-  if (Register SP = MF.getInfo<PIC16F1MachineFunctionInfo>()
-                        ->getStackPointerValue()) {
-    MIRBuilder.buildCopy(Register(PIC16F1::SP), SP);
-    MIB.addUse(PIC16F1::SP, RegState::Implicit);
-  }
   MIRBuilder.insertInstr(MIB);
   return true;
 }
@@ -260,21 +214,7 @@ bool PIC16F1CallLowering::lowerFormalArguments(
                                      F.getCallingConv(), F.isVarArg()))
     return false;
 
-  // Where FSR1 is to be a register, the stack pointer it holds on entry
-  // becomes a value like any other.
-  if (canUseFSR1(F, Assigner.StackSize)) {
-    MachineRegisterInfo &MRI = MF.getRegInfo();
-    Register SP = MRI.createVirtualRegister(&PIC16F1::SPVRegClass);
-    MRI.setType(SP, LLT::scalar(16));
-    MF.getInfo<PIC16F1MachineFunctionInfo>()->setStackPointerValue(SP);
-    MRI.addLiveIn(PIC16F1::SP);
-    MachineBasicBlock &Entry = MIRBuilder.getMBB();
-    Entry.addLiveIn(PIC16F1::SP);
-    // First of all, so that FSR1 is free from the start.
-    BuildMI(Entry, Entry.begin(), DebugLoc(),
-            MIRBuilder.getTII().get(TargetOpcode::COPY), SP)
-        .addReg(PIC16F1::SP);
-  }
+  checkNoStack(MF, Assigner.StackSize);
 
   // The variable arguments start just past the named ones.
   if (F.isVarArg()) {
@@ -316,6 +256,10 @@ bool PIC16F1CallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
     if (const uint32_t *More = PIC16F1RegisterInfo::getLibcallPreservedMask(
             Info.Callee.getSymbolName()))
       Preserved = More;
+  if (Info.Callee.isGlobal())
+    if (const auto *Callee = dyn_cast<Function>(Info.Callee.getGlobal()))
+      if (Callee->hasFnAttribute("pic16f1-isr-of-local"))
+        Preserved = PIC16F1RegisterInfo::getInterruptCopyMask();
   auto MIB = MIRBuilder
                  .buildInstrNoInsert(Info.Callee.isReg() ? PIC16F1::CALLreg
                                                          : PIC16F1::CALLsym)
@@ -331,15 +275,7 @@ bool PIC16F1CallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
   if (Info.Callee.isReg())
     constrainOperandRegClass(MF, *TRI, MRI, TII, *STI.getRegBankInfo(), *MIB,
                              MIB->getDesc(), Info.Callee, 0);
-  // With FSR1 in use as a register, the stack pointer goes back to it for
-  // the call. A call with stack arguments would need it there earlier.
-  if (Register SP = MF.getInfo<PIC16F1MachineFunctionInfo>()
-                        ->getStackPointerValue()) {
-    if (Assigner.StackSize != 0)
-      return false;
-    MIRBuilder.buildCopy(Register(PIC16F1::SP), SP);
-    MIB.addUse(PIC16F1::SP, RegState::Implicit);
-  }
+  checkNoStack(MF, Assigner.StackSize);
   MIRBuilder.insertInstr(MIB);
 
   if (!Info.OrigRet.Ty->isVoidTy()) {

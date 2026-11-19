@@ -24,6 +24,18 @@ index 2c62f46d4..291cbe9f7 100644
  def AVRSignal : InheritableAttr, TargetSpecificAttr<TargetAVR> {
    let Spellings = [GCC<"signal">];
    let Subjects = SubjectList<[Function]>;
+diff --git a/clang/include/clang/Basic/LangOptions.def b/clang/include/clang/Basic/LangOptions.def
+index 1fb491a54..7d19b133a 100644
+--- a/clang/include/clang/Basic/LangOptions.def
++++ b/clang/include/clang/Basic/LangOptions.def
+@@ -112,6 +112,7 @@ ENUM_LANGOPT(LayoutCompatibility, LayoutCompatibilityKind, 2,
+ LANGOPT(MSVolatile        , 1, 0, NotCompatible, "Microsoft-compatible volatile loads and stores")
+ LANGOPT(Freestanding      , 1, 0, NotCompatible, "freestanding implementation")
+ LANGOPT(NoBuiltin         , 1, 0, NotCompatible, "disable builtin functions")
++LANGOPT(PIC16F1MemBuiltins, 1, 0, NotCompatible, "PIC16F1: memcpy, memmove, memset and memcmp stay builtins in a freestanding build")
+ LANGOPT(NoMathBuiltin     , 1, 0, NotCompatible, "disable math builtin functions")
+ LANGOPT(GNUAsm            , 1, 1, NotCompatible, "GNU-style inline assembly")
+ LANGOPT(Coroutines        , 1, 0, NotCompatible, "C++20 coroutines")
 diff --git a/clang/lib/Basic/CMakeLists.txt b/clang/lib/Basic/CMakeLists.txt
 index 21851e79b..d30cca396 100644
 --- a/clang/lib/Basic/CMakeLists.txt
@@ -58,6 +70,66 @@ index 8c01cfca8..e3869fe09 100644
    case llvm::Triple::mips:
      switch (os) {
      case llvm::Triple::Linux:
+diff --git a/clang/lib/CodeGen/CGBuiltin.cpp b/clang/lib/CodeGen/CGBuiltin.cpp
+index 37846bbb0..20c58b023 100644
+--- a/clang/lib/CodeGen/CGBuiltin.cpp
++++ b/clang/lib/CodeGen/CGBuiltin.cpp
+@@ -4305,6 +4305,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+     Locality = (E->getNumArgs() > 2)
+                    ? EmitScalarOrConstFoldImmArg(ICEArguments, 2, E)
+                    : llvm::ConstantInt::get(Int32Ty, 3);
++    // The intrinsic takes i32 whatever the width of 'int' is.
++    RW = Builder.CreateIntCast(RW, Int32Ty, /*isSigned=*/true);
++    Locality = Builder.CreateIntCast(Locality, Int32Ty, /*isSigned=*/true);
+     Value *Data = llvm::ConstantInt::get(Int32Ty, 1);
+     Function *F = CGM.getIntrinsic(Intrinsic::prefetch, Address->getType());
+     Builder.CreateCall(F, {Address, RW, Locality, Data});
+@@ -5319,6 +5322,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+   case Builtin::BI__builtin_return_address: {
+     Value *Depth = ConstantEmitter(*this).emitAbstract(E->getArg(0),
+                                                    getContext().UnsignedIntTy);
++    // The intrinsic takes i32 whatever the width of 'unsigned int' is.
++    Depth = Builder.CreateIntCast(Depth, Int32Ty, /*isSigned=*/false);
+     Function *F =
+         CGM.getIntrinsic(Intrinsic::returnaddress, {CGM.ProgramPtrTy});
+     return RValue::get(Builder.CreateCall(F, Depth));
+@@ -5331,6 +5336,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+   case Builtin::BI__builtin_frame_address: {
+     Value *Depth = ConstantEmitter(*this).emitAbstract(E->getArg(0),
+                                                    getContext().UnsignedIntTy);
++    Depth = Builder.CreateIntCast(Depth, Int32Ty, /*isSigned=*/false);
+     Function *F = CGM.getIntrinsic(Intrinsic::frameaddress, AllocaInt8PtrTy);
+     return RValue::get(Builder.CreateCall(F, Depth));
+   }
+diff --git a/clang/lib/CodeGen/CGCall.cpp b/clang/lib/CodeGen/CGCall.cpp
+index 08cb9860f..639deaf6d 100644
+--- a/clang/lib/CodeGen/CGCall.cpp
++++ b/clang/lib/CodeGen/CGCall.cpp
+@@ -2269,7 +2269,14 @@ static void getTrivialDefaultFunctionAttributes(
+     // Attributes that should go on the call site only.
+     // FIXME: Look for 'BuiltinAttr' on the function rather than re-checking
+     // the -fno-builtin-foo list.
+-    if (!CodeGenOpts.SimplifyLibCalls || LangOpts.isNoBuiltinFunc(Name))
++    // PIC16F1: calls to the four memory functions of the runtime library
++    // stay builtin calls in a freestanding build (but not with -fno-builtin).
++    bool KeptBuiltin =
++        LangOpts.PIC16F1MemBuiltins &&
++        (Name == "memcpy" || Name == "memmove" || Name == "memset" ||
++         Name == "memcmp");
++    if ((!CodeGenOpts.SimplifyLibCalls && !KeptBuiltin) ||
++        LangOpts.isNoBuiltinFunc(Name))
+       FuncAttrs.addAttribute(llvm::Attribute::NoBuiltin);
+     if (!CodeGenOpts.TrapFuncName.empty())
+       FuncAttrs.addAttribute("trap-func-name", CodeGenOpts.TrapFuncName);
+@@ -2513,6 +2520,8 @@ static void addNoBuiltinAttributes(llvm::AttrBuilder &FuncAttrs,
+   };
+ 
+   // First, handle the language options passed through -fno-builtin.
++  if (LangOpts.NoBuiltin && LangOpts.PIC16F1MemBuiltins)
++    FuncAttrs.addAttribute("pic16f1-mem-builtins");
+   if (LangOpts.NoBuiltin) {
+     // -fno-builtin disables them all.
+     FuncAttrs.addAttribute("no-builtins");
 diff --git a/clang/lib/CodeGen/CMakeLists.txt b/clang/lib/CodeGen/CMakeLists.txt
 index 853f038c4..661c18042 100644
 --- a/clang/lib/CodeGen/CMakeLists.txt
@@ -136,6 +208,34 @@ index 08c06951c..4a54929d2 100644
      }
      if (Ok) {
        CmdArgs.push_back(Args.MakeArgString("-mcmodel=" + CM));
+diff --git a/clang/lib/Frontend/CompilerInvocation.cpp b/clang/lib/Frontend/CompilerInvocation.cpp
+index 8898e63ab..441b32022 100644
+--- a/clang/lib/Frontend/CompilerInvocation.cpp
++++ b/clang/lib/Frontend/CompilerInvocation.cpp
+@@ -3854,7 +3854,11 @@ void CompilerInvocationBase::GenerateLangArgs(const LangOptions &Opts,
+   else
+     GenerateArg(Consumer, OPT_fno_convergent_functions);
+ 
+-  if (Opts.NoBuiltin && !Opts.Freestanding)
++  // On PIC16F1 -fno-builtin says something -ffreestanding does not: that
++  // the four memory functions are not builtins either.
++  if (Opts.NoBuiltin &&
++      (!Opts.Freestanding || (T.getArch() == llvm::Triple::pic16f1 &&
++                              !Opts.PIC16F1MemBuiltins)))
+     GenerateArg(Consumer, OPT_fno_builtin);
+ 
+   if (!Opts.NoBuiltin)
+@@ -4276,6 +4280,10 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
+                    HasConvergentOperations);
+ 
+   Opts.NoBuiltin = Args.hasArg(OPT_fno_builtin) || Opts.Freestanding;
++  // The PIC16F1 runtime library always has the four memory functions, so a
++  // freestanding build keeps them as builtins unless -fno-builtin says not.
++  Opts.PIC16F1MemBuiltins = T.getArch() == llvm::Triple::pic16f1 &&
++                            Opts.Freestanding && !Args.hasArg(OPT_fno_builtin);
+   if (!Opts.NoBuiltin)
+     getAllNoBuiltinFuncValues(Args, Opts.NoBuiltinFuncs);
+   if (Arg *A = Args.getLastArg(options::OPT_LongDouble_Group)) {
 diff --git a/clang/lib/Sema/SemaDeclAttr.cpp b/clang/lib/Sema/SemaDeclAttr.cpp
 index 1b272b541..5873a2499 100644
 --- a/clang/lib/Sema/SemaDeclAttr.cpp
@@ -174,7 +274,7 @@ index e22897c27..3ae60e1f1 100644
    Arch/PPC64.cpp
    Arch/RISCV.cpp
 diff --git a/lld/ELF/Driver.cpp b/lld/ELF/Driver.cpp
-index 51d9e3241..88de9749d 100644
+index 51d9e3241..15b6719e2 100644
 --- a/lld/ELF/Driver.cpp
 +++ b/lld/ELF/Driver.cpp
 @@ -174,6 +174,7 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
@@ -194,6 +294,19 @@ index 51d9e3241..88de9749d 100644
      osabi = ELFOSABI_STANDALONE;
    else if (ret.second == EM_AMDGPU)
      osabi = ELFOSABI_AMDGPU_HSA;
+@@ -3524,6 +3525,12 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
+   // Split SHF_MERGE and .eh_frame sections into pieces in preparation for garbage collection.
+   splitSections<ELFT>(ctx);
+ 
++  // PIC16F1: decide which functions get static frames, before the versions
++  // not chosen are collected.
++  if (ctx.arg.emachine == EM_PIC16F1)
++    pic16f1SelectFrames(ctx,
++                        hasZOption(args, "pic16f1-interrupt-copies"));
++
+   // Garbage collection and removal of shared symbols from unused shared objects.
+   markLive<ELFT>(ctx);
+ 
 diff --git a/lld/ELF/InputFiles.cpp b/lld/ELF/InputFiles.cpp
 index 05c0f3f1c..111e5d729 100644
 --- a/lld/ELF/InputFiles.cpp
@@ -272,17 +385,40 @@ index 89e4dbeed..e2739024a 100644
      return setPPCTargetInfo(ctx);
    case EM_PPC64:
 diff --git a/lld/ELF/Target.h b/lld/ELF/Target.h
-index 50f0cd8a9..30a890f92 100644
+index 50f0cd8a9..b1b42ff24 100644
 --- a/lld/ELF/Target.h
 +++ b/lld/ELF/Target.h
-@@ -212,6 +212,7 @@ void setAVRTargetInfo(Ctx &);
+@@ -212,6 +212,9 @@ void setAVRTargetInfo(Ctx &);
  void setHexagonTargetInfo(Ctx &);
  void setLoongArchTargetInfo(Ctx &);
  void setMSP430TargetInfo(Ctx &);
 +void setPIC16F1TargetInfo(Ctx &);
++// Choose between the stack-frame and static-frame versions of functions.
++void pic16f1SelectFrames(Ctx &, bool copiesWanted);
  void setMipsTargetInfo(Ctx &);
  void setPPC64TargetInfo(Ctx &);
  void setPPCTargetInfo(Ctx &);
+diff --git a/llvm/include/llvm/Analysis/TargetLibraryInfo.h b/llvm/include/llvm/Analysis/TargetLibraryInfo.h
+index 629b126db..71c7c1434 100644
+--- a/llvm/include/llvm/Analysis/TargetLibraryInfo.h
++++ b/llvm/include/llvm/Analysis/TargetLibraryInfo.h
+@@ -282,8 +282,15 @@ public:
+       : Impl(&Impl) {
+     if (!F)
+       return;
+-    if ((*F)->hasFnAttribute("no-builtins"))
++    if ((*F)->hasFnAttribute("no-builtins")) {
+       disableAllFunctions();
++      // PIC16F1: the runtime library always has the four memory functions,
++      // so Clang marks freestanding code to keep them known.
++      if ((*F)->hasFnAttribute("pic16f1-mem-builtins"))
++        for (LibFunc LF : {LibFunc_memcpy, LibFunc_memmove, LibFunc_memset,
++                           LibFunc_memcmp})
++          OverrideAsUnavailable.reset(LF);
++    }
+     else {
+       // Disable individual libc/libm calls in TargetLibraryInfo.
+       LibFunc LF;
 diff --git a/llvm/include/llvm/BinaryFormat/ELF.h b/llvm/include/llvm/BinaryFormat/ELF.h
 index 3f1889f23..667e96910 100644
 --- a/llvm/include/llvm/BinaryFormat/ELF.h
@@ -308,10 +444,10 @@ index 3f1889f23..667e96910 100644
  enum {
  #include "ELFRelocs/MSP430.def"
 diff --git a/llvm/include/llvm/IR/RuntimeLibcalls.td b/llvm/include/llvm/IR/RuntimeLibcalls.td
-index d5f38b967..5a6a18cb7 100644
+index d5f38b967..4d9c7d755 100644
 --- a/llvm/include/llvm/IR/RuntimeLibcalls.td
 +++ b/llvm/include/llvm/IR/RuntimeLibcalls.td
-@@ -2584,6 +2584,15 @@ def AVRSystemLibrary
+@@ -2584,6 +2584,18 @@ def AVRSystemLibrary
                // Trigonometric rtlib functions
                avr_sin, avr_cos)>;
  
@@ -321,8 +457,11 @@ index d5f38b967..5a6a18cb7 100644
 +
 +def isPIC16F1 : RuntimeLibcallPredicate<"TT.getArch() == Triple::pic16f1">;
 +
++// The runtime library has no multiply-with-overflow routine; without the
++// name the operation is expanded in line.
 +def PIC16F1SystemLibrary
-+    : SystemRuntimeLibrary<isPIC16F1, (add DefaultRuntimeLibcallImpls)>;
++    : SystemRuntimeLibrary<isPIC16F1,
++                           (add (sub DefaultRuntimeLibcallImpls, __mulosi4))>;
 +
  //===----------------------------------------------------------------------===//
  // DXIL Runtime Libcalls

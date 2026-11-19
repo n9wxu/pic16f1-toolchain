@@ -23,3 +23,9 @@ __do_clear_bss:
     xorlw   hi8(__bss_end)
     btfss   0x03, 2
     bra     .Lclear
+
+; For the linker's choice between stack and static frames (see "Static
+; frames" in docs/toolchain.md): what this file's code calls. An object
+; file without this section is taken to call everything it refers to.
+    .section .pic16f1.frames,"",@progbits
+    .ascii  "F __do_clear_bss -\n"

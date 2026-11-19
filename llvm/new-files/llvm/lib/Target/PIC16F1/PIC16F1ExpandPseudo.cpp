@@ -243,6 +243,33 @@ public:
       forgetAll();
   }
 
+  // --- The stack pointer ----------------------------------------------------
+
+  /// The function has a stack frame and so needs its stack pointer in FSR1.
+  bool UsesStackPointer = false;
+
+  /// After a call FSR1 may hold anything: a function with a static frame
+  /// uses it as a register. A function with a stack frame gets its stack
+  /// pointer back from the cell, where it put it before its first call, but
+  /// not until it needs it: calls that follow one another need nothing in
+  /// between.
+  bool StackPointerStale = false;
+  void reloadStackPointer(const MachineInstr &Call) {
+    if (UsesStackPointer)
+      StackPointerStale = true;
+  }
+  /// Put the stack pointer back in FSR1 if a call has been made since it
+  /// last was.
+  void needStackPointer(const MachineFunction &MF) {
+    if (!StackPointerStale)
+      return;
+    StackPointerStale = false;
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MF.getFunction().getParent()), 0);
+    loadDirect(PIC16F1::FSR1L_ADDR, Cell, 0);
+    loadDirect(PIC16F1::FSR1H_ADDR, Cell, 1);
+  }
+
   // --- Pointer access through FSR0 -----------------------------------------
 
   /// The pointer-setup pass put every pointer in FSR0 or FSR1 already;
@@ -926,6 +953,42 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     return true;
   }
 
+  // --- The stack pointer and its cell -------------------------------------
+  case SPLOAD: {
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MI.getMF()->getFunction().getParent()), 0);
+    E.loadDirect(FSR1L_ADDR, Cell, 0);
+    E.loadDirect(FSR1H_ADDR, Cell, 1);
+    return true;
+  }
+  case SPSTORE: {
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MI.getMF()->getFunction().getParent()), 0);
+    E.storeDirect(FSR1L_ADDR, Cell, 0);
+    E.storeDirect(FSR1H_ADDR, Cell, 1);
+    return true;
+  }
+  case SPSWITCH:
+  case SPBACK: {
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MI.getMF()->getFunction().getParent()), 0);
+    const MachineOperand &Save = MI.getOperand(0);
+    const MachineOperand &From = Opc == SPSWITCH ? Cell : Save;
+    const MachineOperand &To = Opc == SPSWITCH ? Save : Cell;
+    for (int B = 0; B != 2; ++B) {
+      MachineOperand F = E.selectBank(From, B);
+      E.build(MOVF).add(F).addImm(0);
+      E.forgetW();
+      MachineOperand T = E.selectBank(To, B);
+      E.build(MOVWF).add(T);
+    }
+    if (Opc == SPSWITCH) {
+      E.storeDirect(FSR1L_ADDR, Cell, 0);
+      E.storeDirect(FSR1H_ADDR, Cell, 1);
+    }
+    return true;
+  }
+
   // --- Calls and returns ---------------------------------------------------
   case CALLsym: {
     MachineOperand Page = MI.getOperand(0);
@@ -939,6 +1002,7 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     for (const MachineOperand &MO : llvm::drop_begin(MI.operands()))
       Call.add(MO);
     E.forgetAll();
+    E.reloadStackPointer(MI);
     return true;
   }
   case CALLreg: {
@@ -949,6 +1013,7 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     for (const MachineOperand &MO : llvm::drop_begin(MI.operands()))
       Call.add(MO);
     E.forgetAll();
+    E.reloadStackPointer(MI);
     return true;
   }
   case RET: {
@@ -966,12 +1031,34 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
   }
 }
 
+/// The pseudos that need the stack pointer in FSR1 first: those that reach
+/// the frame through it, and those that read or replace the cell.
+static bool usesFrame(unsigned Opc) {
+  switch (Opc) {
+  case PIC16F1::LD8fi:
+  case PIC16F1::LD16fi:
+  case PIC16F1::ST8fi:
+  case PIC16F1::ST16fi:
+  case PIC16F1::STI8fi:
+  case PIC16F1::STI16fi:
+  case PIC16F1::LEAfi:
+  case PIC16F1::SPSTORE:
+  case PIC16F1::SPSWITCH:
+  // SPBACK changes the cell that the stack pointer would be reloaded from.
+  case PIC16F1::SPBACK:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getSubtarget<PIC16F1Subtarget>().getInstrInfo();
   TRI = MF.getSubtarget().getRegisterInfo();
   bool Changed = false;
   Emitter E(*TII);
   E.Banks64 = MF.getSubtarget<PIC16F1Subtarget>().hasBanks64();
+  E.UsesStackPointer = pic16f1UsesStackPointer(MF);
 
   // Once the pseudos are gone no instruction names the registers this
   // function changes, and the pass that collects them for callers
@@ -986,6 +1073,45 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
         for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
           Kept[(*AI).id() / 32] &= ~(1u << ((*AI).id() % 32));
     MRI.addPhysRegsUsedFromRegMask(Kept.data());
+
+    // A function compiled both ways: note what this version changes, for
+    // the other to agree with (see getCalleeSavedRegs). If this is the
+    // stack version and the static one came first, callers must expect
+    // what either changes.
+    const Function &F = MF.getFunction();
+    if (F.hasFnAttribute("pic16f1-dual")) {
+      auto &Table = MF.getSubtarget<PIC16F1Subtarget>().dualClobbers();
+      BitVector Mine(TRI->getNumRegs());
+      for (unsigned Reg = 1, E = TRI->getNumRegs(); Reg != E; ++Reg)
+        if (MRI.isPhysRegModified(Reg))
+          Mine.set(Reg);
+      if (!F.hasFnAttribute("pic16f1-dual-of")) {
+        // The stack version leaves FSR1 alone or loads the stack pointer
+        // into it; the static versions use it as a pointer register. To
+        // callers the function changes FSR1 whichever is linked.
+        std::vector<uint32_t> Kept(
+            MachineOperand::getRegMaskSize(TRI->getNumRegs()), ~uint32_t(0));
+        for (unsigned Reg : {PIC16F1::SP, PIC16F1::FSR1L, PIC16F1::FSR1H}) {
+          Kept[Reg / 32] &= ~(1u << (Reg % 32));
+          Mine.set(Reg);
+        }
+        MRI.addPhysRegsUsedFromRegMask(Kept.data());
+      }
+      if (F.hasFnAttribute("pic16f1-dual-sf")) {
+        const Function *Static = F.getParent()->getFunction(
+            F.getFnAttribute("pic16f1-dual-sf").getValueAsString());
+        auto It = Static ? Table.find(Static) : Table.end();
+        if (It != Table.end()) {
+          std::vector<uint32_t> Theirs(
+              MachineOperand::getRegMaskSize(TRI->getNumRegs()), ~uint32_t(0));
+          for (unsigned Reg : It->second.set_bits())
+            Theirs[Reg / 32] &= ~(1u << (Reg % 32));
+          MRI.addPhysRegsUsedFromRegMask(Theirs.data());
+          Mine |= It->second;
+        }
+      }
+      Table[&F] = Mine;
+    }
   }
 
   for (MachineBasicBlock &MBB : MF) {
@@ -994,6 +1120,14 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
       MachineInstr &MI = *I++;
       if (MI.isDebugInstr())
         continue;
+      // The stack pointer must be in FSR1 for whatever reaches the frame
+      // (the instructions of the epilogue among them, which are not
+      // pseudos), and at the end of every block.
+      if (E.StackPointerStale &&
+          (!MI.isPseudo() || MI.isTerminator() || usesFrame(MI.getOpcode()))) {
+        E.setInsertPoint(MBB, MachineBasicBlock::iterator(MI));
+        E.needStackPointer(MF);
+      }
       if (!MI.isPseudo()) {
         // An instruction this pass did not emit, from the prologue or
         // epilogue or inline assembly: assume it changes everything.
@@ -1035,6 +1169,12 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
         continue;
       }
       MI.eraseFromParent();
+      Changed = true;
+    }
+    // A block that runs on into the next.
+    if (E.StackPointerStale) {
+      E.setInsertPoint(MBB, MBB.end());
+      E.needStackPointer(MF);
       Changed = true;
     }
   }

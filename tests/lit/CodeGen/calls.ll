@@ -61,18 +61,41 @@ define ptr @address() {
 
 ; R8 is preserved across calls, so a value kept there is saved first:
 ; pushed on entry and popped, in the opposite order, before the return.
+; This function can be called from another file, so this version of it has
+; its frame on the stack. The stack pointer is in the cell __sp between
+; functions: FSR1 is loaded from it on entry and after the call (a callee
+; with a static frame uses FSR1 for other things), and the cell is kept up
+; to date for callees and callers.
 define i16 @keep(i16 %x) {
 ; CHECK-LABEL: keep:
+; CHECK:      movf __sp, W
+; CHECK-NEXT: movwf 0x06
 ; CHECK:      movf 0x78, W
 ; CHECK-NEXT: movwi --FSR1
 ; CHECK-NEXT: movf 0x79, W
 ; CHECK-NEXT: movwi --FSR1
+; CHECK-NEXT: movf 0x06, W
+; CHECK-NEXT: movwf __sp
 ; CHECK:      call ext
+; CHECK:      movf __sp, W
+; CHECK-NEXT: movwf 0x06
 ; CHECK:      moviw FSR1++
 ; CHECK-NEXT: movwf 0x79
 ; CHECK-NEXT: moviw FSR1++
 ; CHECK-NEXT: movwf 0x78
-; CHECK-NEXT: return
+; CHECK-NEXT: movf 0x06, W
+; CHECK-NEXT: movwf __sp
+; CHECK:      return
+
+; The static-frame version of the same function saves R8 at a fixed address
+; and has nothing to do with the stack.
+; CHECK-LABEL: keep.sf:
+; CHECK-NOT:  FSR1
+; CHECK-NOT:  __sp
+; CHECK:      movwf keep.sf.saved
+; CHECK:      call ext
+; CHECK:      movf keep.sf.saved, W
+; CHECK:      return
   %r = call i16 @ext(i16 %x, i8 0)
   %s = add i16 %r, %x
   ret i16 %s

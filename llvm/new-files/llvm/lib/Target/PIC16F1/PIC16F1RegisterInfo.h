@@ -26,6 +26,11 @@ public:
   /// The registers a runtime library routine preserves, if that is more
   /// than the calling convention promises; else null.
   static const uint32_t *getLibcallPreservedMask(StringRef Name);
+  /// What survives a call to "G$isr" for a G that only its own file calls
+  /// (PIC16F1StaticFrames.cpp): nothing. Such a G may save nothing, its
+  /// callers knowing what it changes; this caller does not, since which
+  /// copy of G the name turns out to be is the linker's choice.
+  static const uint32_t *getInterruptCopyMask();
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   const TargetRegisterClass *

@@ -97,12 +97,24 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
   setOperationAction({ISD::STACKSAVE, ISD::STACKRESTORE}, MVT::Other, Expand);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  // __builtin_return_address(0) is the top of the hardware return stack.
+  // There is no chain of frames to follow further up, or to give a frame
+  // address from: those are 0.
+  setOperationAction(ISD::RETURNADDR, MVT::i16, Custom);
+  setOperationAction(ISD::FRAMEADDR, MVT::i16, Expand);
   setOperationAction({ISD::VAARG, ISD::VAEND, ISD::VACOPY}, MVT::Other, Expand);
 
   // Inline byte loops are shorter than a call only for very small sizes.
   MaxStoresPerMemset = MaxStoresPerMemsetOptSize = 4;
   MaxStoresPerMemcpy = MaxStoresPerMemcpyOptSize = 4;
   MaxStoresPerMemmove = MaxStoresPerMemmoveOptSize = 4;
+}
+
+/// Report something the target cannot compile as an error of the program,
+/// through the diagnostics of whoever is running the code generator.
+static void unsupported(SelectionDAG &DAG, const SDLoc &DL, const char *Msg) {
+  DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+      DAG.getMachineFunction().getFunction(), Msg, DL.getDebugLoc()));
 }
 
 SDValue PIC16F1TargetLowering::LowerOperation(SDValue Op,
@@ -124,11 +136,27 @@ SDValue PIC16F1TargetLowering::LowerOperation(SDValue Op,
     return LowerSELECT_CC(Op, DAG);
   case ISD::VASTART:
     return LowerVASTART(Op, DAG);
+  case ISD::RETURNADDR: {
+    SDLoc dl(Op);
+    if (Op.getConstantOperandVal(0) != 0)
+      return DAG.getConstant(0, dl, MVT::i16);
+    // TOSL and TOSH, in the last bank: the address the function returns
+    // to, as a word address like any pointer to code.
+    const auto &STI = DAG.getMachineFunction().getSubtarget<PIC16F1Subtarget>();
+    uint64_t TOSL = (STI.hasBanks64() ? 0x1F80 : 0x0F80) + 0x6E;
+    return DAG.getLoad(MVT::i16, dl, DAG.getEntryNode(),
+                       DAG.getConstant(TOSL, dl, MVT::i16),
+                       MachinePointerInfo());
+  }
   case ISD::DYNAMIC_STACKALLOC:
     // Stack slots are addressed from the stack pointer, so it cannot move
-    // while a function runs.
-    report_fatal_error(
-        "variable-length arrays and alloca are not supported on PIC16F1");
+    // while a function runs. Say so and carry on with a null pointer, so
+    // that the compiler (or the linker, in a whole-program build) reports
+    // an error instead of stopping dead.
+    unsupported(DAG, SDLoc(Op),
+                "variable-length arrays and alloca are not supported");
+    return DAG.getMergeValues(
+        {DAG.getConstant(0, SDLoc(Op), MVT::i16), Op.getOperand(0)}, SDLoc(Op));
   default:
     llvm_unreachable("unimplemented operand");
   }
@@ -193,7 +221,7 @@ SDValue PIC16F1TargetLowering::LowerFormalArguments(
   auto *FuncInfo = MF.getInfo<PIC16F1MachineFunctionInfo>();
 
   if (MF.getFunction().hasFnAttribute("interrupt") && !Ins.empty())
-    report_fatal_error("an interrupt handler cannot take arguments");
+    unsupported(DAG, dl, "an interrupt handler cannot take arguments");
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
@@ -251,7 +279,7 @@ SDValue PIC16F1TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     const CCValAssign &VA = ArgLocs[I];
     SDValue Arg = OutVals[I];
     if (Outs[I].Flags.isByVal())
-      report_fatal_error("byval arguments are not supported; pass a pointer");
+      unsupported(DAG, dl, "byval arguments are not supported; pass a pointer");
     if (VA.isRegLoc()) {
       RegsToPass.push_back({VA.getLocReg(), Arg});
     } else {
@@ -322,7 +350,7 @@ PIC16F1TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   MachineFunction &MF = DAG.getMachineFunction();
   bool IsInterrupt = MF.getFunction().hasFnAttribute("interrupt");
   if (IsInterrupt && !Outs.empty())
-    report_fatal_error("an interrupt handler cannot return a value");
+    unsupported(DAG, dl, "an interrupt handler cannot return a value");
 
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, isVarArg, MF, RVLocs, *DAG.getContext());

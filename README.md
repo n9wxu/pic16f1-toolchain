@@ -4,7 +4,9 @@ An open compiler, simulator and programming toolchain for the Microchip
 enhanced mid-range core (PIC16F1xxx). The full plan is in
 [docs/plan.md](docs/plan.md). The first target is the PIC16F1937; the
 PIC16F1829, PIC16F1619, PIC16F18877 and PIC16F15276 are also supported in
-the simulator and compiler.
+the simulator and compiler. Two imaginary devices, PIC16F1032 and
+PIC16F1064, are the largest 32- and 64-bank parts there could be, for
+testing without a real part's memory limits.
 
 ## Status
 

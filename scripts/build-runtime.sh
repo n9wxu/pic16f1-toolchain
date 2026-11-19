@@ -32,6 +32,7 @@ build() {  # build <source> : compile one file into the library
 $cc $model -c "$rt/crt0.S" -o "$out/crt0$suffix.o"
 build "$rt/copydata.S"
 build "$rt/clearbss.S"
+build "$rt/stack.S"
 build "$rt/shift.S"
 build "$rt/muldiv.S"
 build "$rt/muldiv64.c"

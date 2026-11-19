@@ -7,8 +7,10 @@
 ;    8 bits:  0x70 op 0x71            -> 0x70
 ;   16 bits:  0x70/71 op 0x72/73      -> 0x70/71
 ;   32 bits:  0x70-73 op 0x74-77      -> 0x70-73
-; R0-R7 (0x70-0x77), TMP0/TMP1 (0x7E/0x7F), FSR0 (0x04/0x05), W and the
-; flags are free for a callee to change; anything else is preserved.
+; R0-R7 (0x70-0x77), TMP0/TMP1 (0x7E/0x7F), both FSRs (0x04-0x07), W and
+; the flags are free for a callee to change; anything else is preserved.
+; None of these routines uses the stack: a program whose functions all have
+; static frames has none.
 ; STATUS is 0x03: bit 0 is carry, bit 2 is zero.
 ;
 ; Multiplication is shift-and-add and stops when no bits of the multiplier
@@ -39,6 +41,8 @@
 #define TMP1 0x7F
 #define FSR0L 0x04
 #define FSR0H 0x05
+#define FSR1L 0x06
+#define FSR1H 0x07
 
 ; Built twice, like crt0.S: with -DONE_PAGE for programs within one page,
 ; where PCLATH is never set.
@@ -223,17 +227,13 @@ __pic_movsi:
 ; The 32-bit divide is the one that lines the divisor up first, so that a
 ; large divisor takes few rounds. It leaves the remainder where the
 ; dividend was (R0-R3), which makes it the remainder routine as it stands,
-; and the quotient in FSR0L, FSR0H, TMP0, TMP1. The round counter is R8,
-; which the caller expects back: it goes on the stack. Dividing by zero
-; gives a quotient of zero and the dividend as the remainder.
+; and the quotient in FSR0L, FSR0H, TMP0, TMP1. The round counter is FSR1L:
+; FSR1 is free here like FSR0. Dividing by zero gives a quotient of zero and
+; the dividend as the remainder.
     .section .text.__umodsi3,"ax",@progbits
     .globl  __umodsi3
 __umodsi3:
-    movf    R8, W
-    movwi   --FSR1
-    pic_udivmod32_norm R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  R8
-    moviw   FSR1++
-    movwf   R8
+    pic_udivmod32_norm R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  FSR1L
     return
 
     .section .text.__udivsi3,"ax",@progbits
@@ -274,20 +274,18 @@ __pic_negsi:
     pic_neg32 R0, R1, R2, R3
     return
 
-; The sign waits on the stack: the unsigned routine uses every free byte.
+; The sign waits in FSR1H: the unsigned routine uses every other free byte.
     .section .text.__divsi3,"ax",@progbits
     .globl  __divsi3
 __divsi3:
     movf    R3, W
     xorwf   R7, W
-    movwi   --FSR1
+    movwf   FSR1H
     PAGESEL(__pic_abssi2)
     call    __pic_abssi2
     PAGESEL(__udivsi3)
     call    __udivsi3
-    moviw   FSR1++
-    andlw   0x80
-    btfsc   PICMATH_STATUS, PICMATH_Z
+    btfss   FSR1H, 7
     return
     PAGESEL(__pic_negsi)
     goto    __pic_negsi
@@ -296,14 +294,18 @@ __divsi3:
     .globl  __modsi3
 __modsi3:
     movf    R3, W
-    movwi   --FSR1
+    movwf   FSR1H
     PAGESEL(__pic_abssi2)
     call    __pic_abssi2
     PAGESEL(__umodsi3)
     call    __umodsi3
-    moviw   FSR1++
-    andlw   0x80
-    btfsc   PICMATH_STATUS, PICMATH_Z
+    btfss   FSR1H, 7
     return
     PAGESEL(__pic_negsi)
     goto    __pic_negsi
+
+; For the linker's choice between stack and static frames (see "Static
+; frames" in docs/toolchain.md): what this file's code calls. An object
+; file without this section is taken to call everything it refers to.
+    .section .pic16f1.frames,"",@progbits
+    .ascii  "F __mulhi3 -\n"

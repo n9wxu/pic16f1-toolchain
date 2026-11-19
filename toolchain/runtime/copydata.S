@@ -28,3 +28,9 @@ __do_copy_data:
     xorlw   hi8(__data_end)
     btfss   0x03, 2
     bra     .Lcopy
+
+; For the linker's choice between stack and static frames (see "Static
+; frames" in docs/toolchain.md): what this file's code calls. An object
+; file without this section is taken to call everything it refers to.
+    .section .pic16f1.frames,"",@progbits
+    .ascii  "F __do_copy_data -\n"

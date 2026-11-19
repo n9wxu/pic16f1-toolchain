@@ -28,6 +28,11 @@ def : Proc<"pic16f1829", []>;
 def : Proc<"pic16f1619", []>;
 def : Proc<"pic16f18877", [FeatureBanks64]>;
 def : Proc<"pic16f15276", [FeatureBanks64]>;
+// Two devices that do not exist: the largest a 32-bank and a 64-bank part
+// could be (devices/pic16f1032.json, pic16f1064.json), for testing without
+// a real part's memory limits.
+def : Proc<"pic16f1032", []>;
+def : Proc<"pic16f1064", [FeatureBanks64]>;
 
 include "PIC16F1RegisterInfo.td"
 include "GISel/PIC16F1RegisterBanks.td"

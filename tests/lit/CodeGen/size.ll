@@ -1,6 +1,6 @@
-; RUN: llc -mcpu=pic16f1937 -O2 < %s | FileCheck %s
-; RUN: llc -mcpu=pic16f1937 -O2 -code-model=small < %s | FileCheck %s --check-prefix=SMALL
-; RUN: llc -mcpu=pic16f1937 -O2 -enable-machine-outliner=never < %s | FileCheck %s --check-prefix=NEVER
+; RUN: llc -mcpu=pic16f1937 -O2 -pic16f1-dual-frames=0 < %s | FileCheck %s
+; RUN: llc -mcpu=pic16f1937 -O2 -pic16f1-dual-frames=0 -code-model=small < %s | FileCheck %s --check-prefix=SMALL
+; RUN: llc -mcpu=pic16f1937 -O2 -pic16f1-dual-frames=0 -enable-machine-outliner=never < %s | FileCheck %s --check-prefix=NEVER
 target triple = "pic16f1"
 
 ; What is done for size beyond the instruction-by-instruction clean-up:

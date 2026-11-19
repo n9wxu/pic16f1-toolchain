@@ -13,6 +13,8 @@
 #include "PIC16F1ISelLowering.h"
 #include "PIC16F1InstrInfo.h"
 #include "PIC16F1RegisterInfo.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/GlobalISel/InlineAsmLowering.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
@@ -30,6 +32,7 @@ class StringRef;
 class PIC16F1Subtarget : public PIC16F1GenSubtargetInfo {
   virtual void anchor();
   bool HasBanks64 = false;
+  mutable DenseMap<const Function *, BitVector> DualClobbers;
   PIC16F1InstrInfo InstrInfo;
   PIC16F1TargetLowering TLInfo;
   std::unique_ptr<const SelectionDAGTargetInfo> TSInfo;
@@ -48,6 +51,13 @@ public:
   ~PIC16F1Subtarget() override;
 
   void ParseSubtargetFeatures(StringRef CPU, StringRef TuneCPU, StringRef FS);
+
+  /// For a function compiled both ways (PIC16F1StaticFrames.cpp): the
+  /// registers the version compiled first changes. The other version is
+  /// made to agree with it.
+  DenseMap<const Function *, BitVector> &dualClobbers() const {
+    return DualClobbers;
+  }
 
   bool hasBanks64() const { return HasBanks64; }
   /// End of the banked (directly addressable) data space.

@@ -32,7 +32,8 @@ SECTIONS
   /* Startup code first, in the order of its pieces (see crt0.S). */
   .text :
   {
-    KEEP(*(.init0)) KEEP(*(.init4)) KEEP(*(.init6)) KEEP(*(.init9))
+    KEEP(*(.init0)) KEEP(*(.init4)) KEEP(*(.init5)) KEEP(*(.init6))
+    KEEP(*(.init9))
     *(.text .text.*)
   } > flash
   __text_end = .;
@@ -43,6 +44,18 @@ SECTIONS
   {
     *(.rodata .rodata.*)
   } > flashdat
+
+  /* Variables that have a fixed address in place of a stack frame, and
+   * the stack pointer cell. Like stack variables they have no initial
+   * value, so startup skips them. They come first in RAM, the runtime
+   * library's before the rest: that library is built once, with the bank
+   * selection of a 32-bank device, and must find its variables in the
+   * first 32 banks of a larger one too. */
+  .noinit (NOLOAD) :
+  {
+    *libpicrt*.a:*(.noinit .noinit.*)
+    *(.noinit .noinit.*)
+  } > ram
 
   .data :
   {
@@ -61,13 +74,6 @@ SECTIONS
     __bss_end = .;
   } > ram
   __bss_size = SIZEOF(.bss);
-
-  /* Variables that have a fixed address in place of a stack frame. Like
-   * stack variables they have no initial value, so startup skips them. */
-  .noinit (NOLOAD) :
-  {
-    *(.noinit .noinit.*)
-  } > ram
 
   .isr_stack (NOLOAD) :
   {

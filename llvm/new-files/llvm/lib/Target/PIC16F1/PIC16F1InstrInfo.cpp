@@ -483,6 +483,14 @@ bool PIC16F1InstrInfo::isFunctionSafeToOutlineFrom(
   const Function &F = MF.getFunction();
   if (!OutlineFromLinkOnceODRs && F.hasLinkOnceODRLinkage())
     return false;
+  // Of a function compiled several ways (PIC16F1StaticFrames.cpp) only the
+  // static version is outlined from. They are all nearly the same code, and
+  // counting both would make sequences look repeated that the program has
+  // once; the static version is the one usually kept.
+  if (F.hasFnAttribute("pic16f1-dual") &&
+      (!F.hasFnAttribute("pic16f1-dual-of") ||
+       F.hasFnAttribute("pic16f1-isr-copy")))
+    return false;
   return true;
 }
 

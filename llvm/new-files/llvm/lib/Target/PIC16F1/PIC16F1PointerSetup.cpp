@@ -26,11 +26,17 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "pic16f1-pointer-setup"
+
+static cl::opt<bool> FSR1Pointer(
+    "pic16f1-fsr1-pointer", cl::Hidden, cl::init(true),
+    cl::desc("Use FSR1 as a second pointer register in functions with a "
+             "static frame"));
 
 namespace {
 
@@ -162,13 +168,11 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
   // only:
   //  - If the loop also has accesses through addresses worked out in it,
   //    those need FSR0; a kept pointer can have FSR1, where FSR1 is a
-  //    register (a function with a static frame). Moving the stack pointer
-  //    out of FSR1 and back costs eight instructions, so when optimizing
-  //    for size only a pointer used at two places or more.
+  //    register (a function with a static frame).
   //  - Otherwise the most used kept pointer has FSR0, and the next FSR1.
-  // Not in a loop with calls: they change FSR0 and need the stack pointer
-  // in FSR1.
-  bool FSR1Free = MF.getInfo<PIC16F1MachineFunctionInfo>()->fsr1IsRegister();
+  // Not in a loop with calls: they change both FSRs.
+  bool FSR1Free = FSR1Pointer &&
+                  MF.getFunction().hasFnAttribute("pic16f1-static-frame");
   SmallSet<Register, 4> InFSR0, InFSR1;
   {
     struct Use {
@@ -199,7 +203,6 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
           ++PerLoop[L].Computed;
       }
     }
-    bool ForSize = MF.getFunction().hasOptSize();
     for (auto &[L, U] : PerLoop) {
       if (HasCall.count(L))
         continue;
@@ -213,8 +216,7 @@ bool PIC16F1PointerSetup::runOnMachineFunction(MachineFunction &MF) {
           InFSR0.insert(Kept[0].first);
         if (Kept.size() >= 2 && FSR1Free)
           InFSR1.insert(Kept[1].first);
-      } else if (FSR1Free && !Kept.empty() &&
-                 (Kept[0].second >= 2 || !ForSize)) {
+      } else if (FSR1Free && !Kept.empty()) {
         InFSR1.insert(Kept[0].first);
       }
     }

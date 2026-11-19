@@ -73,6 +73,8 @@ pub struct Device {
 }
 
 const BUILTIN: &[(&str, &str)] = &[
+    ("16f1032", include_str!("../../devices/pic16f1032.json")),
+    ("16f1064", include_str!("../../devices/pic16f1064.json")),
     ("16f15276", include_str!("../../devices/pic16f15276.json")),
     ("16f1619", include_str!("../../devices/pic16f1619.json")),
     ("16f1829", include_str!("../../devices/pic16f1829.json")),

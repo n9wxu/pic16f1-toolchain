@@ -15,20 +15,13 @@ compiles and links in one step and no model is given, it tries small first
 and falls back to medium if the program turns out too big. With -c or -S
 the default is medium.
 
--flto optimizes the whole program at link time: functions are inlined and
-shared sequences found across source files, and what the program does not
-use is left out before code is generated. Compile and link with it.
-
--mmain-saves-registers makes main save the callee-saved registers. Normally
-it does not, because the startup code keeps nothing in them; a program that
-calls main from another source file needs this option on the file that
-defines main.
-
--O0, and no -O option at all, mean "as written, but not wasteful": every
-function is kept and none is inlined, loops and calls stay as the source has
-them, but variables live in registers and each function is tidied up (this
-is clang's -O1 with -fno-inline). -munoptimized gives clang's own -O0, which
-keeps every variable in memory and is about twice the size.
+A build that compiles and links in one step is compiled as a whole program
+(-flto): the compiler sees every call, so it can inline across files, turn
+calls through constant function pointers into direct calls, give every
+function that is not re-entered a static frame, and leave out what the
+program does not use. -fno-lto compiles each file on its own. With -c or -S
+the default is file by file; give -flto to make objects for a whole-program
+link.
 
 -O3 means "small, and nothing that costs time": clang's -Os without the
 sharing of repeated sequences, which saves words at the price of a call each
@@ -124,6 +117,8 @@ def main():
                 sys.exit("pic16f1-cc: -mcmodel must be small or medium")
         elif a == "-munoptimized":
             unoptimized = True
+        elif a == "-minterrupt-copies":
+            ldflags += ["-z", "pic16f1-interrupt-copies"]
         elif a == "-mmain-saves-registers":
             cflags += ["-mllvm", "-pic16f1-main-saves-registers"]
         elif a == "--libc":
@@ -143,7 +138,7 @@ def main():
         sys.exit("pic16f1-cc: no input files")
 
     clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
-             "-fno-builtin", "-ffunction-sections", "-fdata-sections"]
+             "-ffunction-sections", "-fdata-sections"]
     libs = [os.path.join(lib, "libpicrt.a")]
     if use_libc:
         repo = os.path.normpath(os.path.join(HERE, "..", ".."))
@@ -185,16 +180,31 @@ def main():
     #   - loops are not unrolled (-funroll-loops turns that back on), except
     #     at -Os and -Oz, where LLVM only unrolls a loop that gets smaller;
     #   - a bitwise CRC loop is not replaced by a 256-entry table.
+    #   - a loop that fills or copies memory is not replaced by a call to
+    #     memset or memcpy: the loop, with its pointer in an FSR, is faster
+    #     than the general routine and usually smaller than setting up the
+    #     call.
     tuning = []
     if not any("inline-threshold" in f for f in cflags):
         tuning += ["-mllvm", "-inline-threshold=10", "-mllvm", "-inline-call-penalty=5"]
     tuning += ["-mllvm", "-disable-loop-idiom-hashrecognize"]
+    tuning += ["-mllvm", "-disable-loop-idiom-memset", "-mllvm", "-disable-loop-idiom-memcpy"]
     size_level = any(f in ("-Os", "-Oz") for f in cflags)
     unroll = [] if size_level or "-funroll-loops" in cflags else ["-fno-unroll-loops"]
     clang += unroll
     clang += tuning
-    # With -flto the linker generates the code and needs the same options.
-    lto = any(f == "-flto" or f.startswith("-flto=") for f in cflags)
+    # A build that compiles and links in one step sees the whole program, and
+    # is compiled as one (-flto) unless -fno-lto says otherwise. With -c or
+    # -S only if asked. The linker then generates the code and needs the
+    # same options.
+    asked = any(f == "-flto" or f.startswith("-flto=") for f in cflags)
+    lto = asked or not (compile_only or asm_only or "-fno-lto" in cflags)
+    if lto and not asked:
+        clang += ["-flto"]
+    link_tuning = list(tuning)
+    if unroll:
+        link_tuning += ["-mllvm", "-unroll-threshold=0",
+                        "-mllvm", "-unroll-partial-threshold=0"]
 
     if compile_only or asm_only:
         cmd = clang + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
@@ -228,7 +238,8 @@ def main():
             link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
                     crt0] + objs + objects + rt + ["-o", elf] + ldflags
             if lto:
-                link += ["-mllvm", f"-code-model={model}"] + tuning
+                link += ["-mllvm", f"-code-model={model}",
+                         f"-plugin-opt=mcpu={cpu}"] + link_tuning
             if quiet:
                 return subprocess.run(link, capture_output=True).returncode == 0
             run(link)

@@ -24,6 +24,7 @@
 ; them at the start of the code:
 ;   .init0  _start
 ;   .init4  copy initialised data to RAM      (copydata.S, in libpicrt.a)
+;   .init5  set the stack pointer cell         (stack.S, in libpicrt.a)
 ;   .init6  clear .bss                        (clearbss.S, in libpicrt.a)
 ;   .init9  set the stack pointer, call main, call exit
 ; The compiler refers to __do_copy_data from every module that defines
@@ -36,11 +37,10 @@
 _start:
 
     .section .init9,"ax",@progbits
-    ; The data stack grows down from the end of RAM; FSR1 is its pointer.
-    movlw   lo8(__stack_top)
-    movwf   0x06
-    movlw   hi8(__stack_top)
-    movwf   0x07
+    ; There is no stack pointer to set here. A function with a stack frame
+    ; takes it from the cell __sp, which stack.S (in libpicrt.a) defines and
+    ; sets up in .init5; a program whose functions all have static frames
+    ; refers to neither and has no stack.
 
     ; No bank is selected here: MOVLB is encoded differently on 32- and
     ; 64-bank devices, and this file serves both. Compiled code selects the
@@ -58,3 +58,9 @@ exit:
 .Lstop:
     sleep
     bra     .Lstop
+
+; For the linker's choice between stack and static frames (see "Static
+; frames" in docs/toolchain.md): what this file's code calls. An object
+; file without this section is taken to call everything it refers to.
+    .section .pic16f1.frames,"",@progbits
+    .ascii  "F _start -\nC main\nC exit\n"

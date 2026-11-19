@@ -251,6 +251,18 @@ public:
   bool tryCombineAll(MachineInstr &I) const override {
     if (Budget == 0)
       return false;
+    // A fill or copy of a few bytes becomes the stores themselves (the
+    // limits are MaxStoresPerMemset and its fellows); the rest are calls.
+    switch (I.getOpcode()) {
+    case TargetOpcode::G_MEMCPY:
+    case TargetOpcode::G_MEMMOVE:
+    case TargetOpcode::G_MEMSET:
+      if (Helper.tryCombineMemCpyFamily(I))
+        return true;
+      break;
+    default:
+      break;
+    }
     if (!PIC16F1PreLegalizerCombinerImpl::tryCombineAll(I))
       return false;
     if (--Budget == 0)

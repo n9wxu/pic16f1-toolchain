@@ -93,6 +93,14 @@ void initializePIC16F1StaticFramesPass(PassRegistry &);
 /// The largest frame object that gets a fixed address in a function with a
 /// static frame (-pic16f1-static-slot-limit); 0 if none does.
 unsigned pic16f1StaticSlotLimit();
+class MachineFunction;
+class GlobalVariable;
+class Module;
+/// __sp, the cell that holds the stack pointer between functions (the
+/// runtime library defines it).
+const GlobalVariable *pic16f1StackPointerCell(const Module &M);
+/// The function has a stack frame and needs the stack pointer in FSR1.
+bool pic16f1UsesStackPointer(const MachineFunction &MF);
 /// -pic16f1-main-saves-registers: something outside the module calls main.
 bool pic16f1MainIsCalled();
 /// Copy pointers to FSR0 in front of the loads and stores that use them.

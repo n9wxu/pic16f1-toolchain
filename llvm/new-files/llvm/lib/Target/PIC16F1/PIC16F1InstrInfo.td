@@ -345,7 +345,10 @@ class Pseudo<dag outs, dag ins, list<dag> pattern>
   let Size = 0;
 }
 
-let Defs = [SP], Uses = [SP] in {
+// (Neither these nor the calls name FSR1: in a function with a stack frame
+// it is reserved, and in one with a static frame it has nothing to do with
+// a call, beyond not surviving it.)
+let hasSideEffects = 1 in {
 def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i16imm:$amt1, i16imm:$amt2),
                               [(PICcallseq_start timm:$amt1, timm:$amt2)]>;
 def ADJCALLSTACKUP : Pseudo<(outs), (ins i16imm:$amt1, i16imm:$amt2),
@@ -616,6 +619,19 @@ def SUB16mr : Pseudo<(outs), (ins memabs:$a, GPR16:$s), []>;
 def : Pat<(PICstoresp GPR8:$s, timm:$off), (ST8fi GPR8:$s, timm:$off, 0)>;
 def : Pat<(PICstoresp GPR16:$s, timm:$off), (ST16fi GPR16:$s, timm:$off, 0)>;
 
+// The stack pointer of a function with a stack frame is FSR1, but between
+// functions it is kept in the cell __sp, since functions with static frames
+// use FSR1 for other things. SPLOAD is FSR1 = __sp and SPSTORE the reverse.
+// An interrupt handler that makes calls gives them its own stack: SPSWITCH
+// saves __sp in the given variable and sets it from FSR1; SPBACK restores
+// it.
+let hasSideEffects = 1 in {
+def SPLOAD : Pseudo<(outs), (ins), []>;
+def SPSTORE : Pseudo<(outs), (ins), []>;
+def SPSWITCH : Pseudo<(outs), (ins memabs:$save), []>;
+def SPBACK : Pseudo<(outs), (ins memabs:$save), []>;
+}
+
 // Address of a stack slot.
 let Defs = [CARRY] in
 def LEAfi : Pseudo<(outs GPR16:$d), (ins memfi:$a), []>;
@@ -657,7 +673,7 @@ defm SELECT16c8 : Select<GPR16, GPR8>;
 defm SELECT16c16 : Select<GPR16, GPR16>;
 }
 
-let isCall = 1, Uses = [SP] in {
+let isCall = 1 in {
 def CALLsym : Pseudo<(outs), (ins i16imm:$t), []>;
 def CALLreg : Pseudo<(outs), (ins GPR16:$t), [(PICcall GPR16:$t)]>;
 }

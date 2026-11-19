@@ -66,6 +66,46 @@ void PIC16F1FrameLowering::adjustSP(MachineBasicBlock &MBB,
       .addImm(1);
 }
 
+const GlobalVariable *llvm::pic16f1StackPointerCell(const Module &M) {
+  Module &Mod = const_cast<Module &>(M);
+  Type *Ty = ArrayType::get(Type::getInt8Ty(Mod.getContext()), 2);
+  return cast<GlobalVariable>(Mod.getOrInsertGlobal("__sp", Ty));
+}
+
+static bool hasStaticFrame(const MachineFunction &MF) {
+  return MF.getFunction().hasFnAttribute("pic16f1-static-frame");
+}
+
+bool llvm::pic16f1UsesStackPointer(const MachineFunction &MF) {
+  if (hasStaticFrame(MF))
+    return false;
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  // An interrupt handler runs on a stack of its own, unless it uses none.
+  if (MF.getFunction().hasFnAttribute("interrupt"))
+    return MFI.getStackSize() != 0 || MFI.hasCalls() ||
+           MFI.hasVarSizedObjects() || MFI.getNumObjects() != 0;
+  // Its own frame, or arguments that arrived on the stack.
+  return MFI.getStackSize() != 0 || MFI.getNumFixedObjects() != 0 ||
+         MFI.hasVarSizedObjects();
+}
+
+/// The variable an interrupt handler keeps the interrupted code's stack
+/// pointer in while its own callees use the handler's stack.
+static const GlobalVariable *savedStackPointer(MachineFunction &MF) {
+  const Function &F = MF.getFunction();
+  Module &M = const_cast<Module &>(*F.getParent());
+  std::string Name = (F.getName() + ".sp").str();
+  if (GlobalVariable *GV = M.getNamedGlobal(Name))
+    return GV;
+  Type *Ty = ArrayType::get(Type::getInt8Ty(M.getContext()), 2);
+  auto *GV = new GlobalVariable(M, Ty, /*isConstant=*/false,
+                                GlobalValue::InternalLinkage,
+                                Constant::getNullValue(Ty), Name);
+  GV->setAlignment(Align(1));
+  GV->setSection((".noinit." + Name));
+  return GV;
+}
+
 void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
                                         MachineBasicBlock &MBB) const {
   const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
@@ -73,11 +113,11 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
   MachineBasicBlock::iterator I = MBB.begin();
   DebugLoc DL;
 
-  // An interrupt handler runs on a stack of its own, unless it uses none:
-  // it then leaves FSR1 alone.
-  bool UsesStack = MFI.getStackSize() != 0 || MFI.hasCalls() ||
-                   MFI.hasVarSizedObjects() || MFI.getNumObjects() != 0;
-  if (MF.getFunction().hasFnAttribute("interrupt") && UsesStack) {
+  // A static frame needs nothing set up, and no stack pointer.
+  if (!pic16f1UsesStackPointer(MF))
+    return;
+  bool IsInterrupt = MF.getFunction().hasFnAttribute("interrupt");
+  if (IsInterrupt) {
     const char *Top = "__isr_stack_top";
     BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVLW))
         .addExternalSymbol(Top, PIC16F1II::MO_LO8);
@@ -85,6 +125,9 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
     BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVLW))
         .addExternalSymbol(Top, PIC16F1II::MO_HI8);
     BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVWF)).addImm(PIC16F1::FSR1H_ADDR);
+  } else {
+    // FSR1 may hold anything on entry; the stack pointer is in its cell.
+    BuildMI(MBB, I, DL, TII.get(PIC16F1::SPLOAD));
   }
   // The pushes of the callee-saved registers come next and have moved the
   // stack pointer over their part of the frame already.
@@ -92,24 +135,44 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
     ++I;
   adjustSP(MBB, I, DL,
            -int64_t(MFI.getStackSize() - MFI.getCalleeSavedInfo().size()));
+  // What this function calls starts below its frame.
+  if (MFI.hasCalls()) {
+    if (IsInterrupt)
+      BuildMI(MBB, I, DL, TII.get(PIC16F1::SPSWITCH))
+          .addGlobalAddress(savedStackPointer(MF));
+    else
+      BuildMI(MBB, I, DL, TII.get(PIC16F1::SPSTORE));
+  }
 }
 
 void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
                                         MachineBasicBlock &MBB) const {
+  const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  // RETFIE restores FSR1, so an interrupt handler that pops nothing has
-  // nothing to undo.
-  if (MF.getFunction().hasFnAttribute("interrupt") &&
-      MFI.getCalleeSavedInfo().empty())
+  if (!pic16f1UsesStackPointer(MF))
     return;
-  MachineBasicBlock::iterator I = MBB.getFirstTerminator();
-  DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
+  bool IsInterrupt = MF.getFunction().hasFnAttribute("interrupt");
+  MachineBasicBlock::iterator Term = MBB.getFirstTerminator();
+  DebugLoc DL = Term != MBB.end() ? Term->getDebugLoc() : DebugLoc();
   // Back over the pops of the callee-saved registers: the stack pointer
   // must be at the first of them when they start.
+  MachineBasicBlock::iterator I = Term;
   while (I != MBB.begin() &&
          std::prev(I)->getFlag(MachineInstr::FrameDestroy))
     --I;
+  if (IsInterrupt) {
+    if (MFI.hasCalls())
+      BuildMI(MBB, I, DL, TII.get(PIC16F1::SPBACK))
+          .addGlobalAddress(savedStackPointer(MF));
+    // RETFIE restores FSR1, so a handler that pops nothing has nothing
+    // more to undo.
+    if (MFI.getCalleeSavedInfo().empty())
+      return;
+  }
   adjustSP(MBB, I, DL, MFI.getStackSize() - MFI.getCalleeSavedInfo().size());
+  // After the pops FSR1 is what it was on entry: back in the cell with it.
+  if (MFI.hasCalls() && !IsInterrupt)
+    BuildMI(MBB, Term, DL, TII.get(PIC16F1::SPSTORE));
 }
 
 MachineBasicBlock::iterator PIC16F1FrameLowering::eliminateCallFramePseudoInstr(
@@ -147,11 +210,21 @@ void PIC16F1FrameLowering::determineCalleeSaves(MachineFunction &MF,
 
 static cl::opt<unsigned> StaticSlotLimit(
     "pic16f1-static-slot-limit", cl::Hidden, cl::init(64),
-    cl::desc("In a function with a static frame, the largest frame object, "
-             "in bytes, that gets a fixed address; 0 leaves all of them on "
-             "the stack"));
+    cl::desc("The largest variable, in bytes, a function may have and still "
+             "get a static frame. (Fixed variables of different functions "
+             "do not share memory yet, so large ones stay on the stack.)"));
 
 unsigned llvm::pic16f1StaticSlotLimit() { return StaticSlotLimit; }
+
+StackOffset
+PIC16F1FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
+                                             Register &FrameReg) const {
+  if (MF.getInfo<PIC16F1MachineFunctionInfo>()->getStaticObject(FI)) {
+    FrameReg = PIC16F1::SP;
+    return StackOffset::getFixed(0);
+  }
+  return TargetFrameLowering::getFrameIndexReference(MF, FI, FrameReg);
+}
 
 /// The instructions whose frame-index operand can become a fixed address.
 static bool hasDirectForm(unsigned Opc) {
@@ -169,38 +242,20 @@ static bool hasDirectForm(unsigned Opc) {
   }
 }
 
-/// In a function that cannot be re-entered (PIC16F1StaticFrames.cpp marks
-/// them) and that uses FSR1 as a register, the spill slots and the variables
-/// still in the frame get fixed addresses too: they are packed into blocks of up to 16 bytes, which the
-/// linker keeps within a bank, and leave the stack frame. What stays on the
-/// stack is the saved registers and the outgoing arguments.
+/// In a function with a static frame (PIC16F1StaticFrames.cpp), every frame
+/// object gets a fixed address: the variables still in the frame, the spill
+/// slots and the saved registers. They are packed into blocks of up to 16
+/// bytes, which the linker keeps within a bank. Nothing is left that needs
+/// a stack pointer.
 void PIC16F1FrameLowering::processFunctionBeforeFrameFinalized(
     MachineFunction &MF, RegScavenger *RS) const {
   const Function &F = MF.getFunction();
-  if (!StaticSlotLimit || !F.hasFnAttribute("pic16f1-static-frame"))
+  if (!hasStaticFrame(MF))
     return;
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto *FuncInfo = MF.getInfo<PIC16F1MachineFunctionInfo>();
-  // A slot on the stack is reached without selecting a bank, so the slots
-  // stay there unless FSR1 is busy with something else: that is, unless the
-  // register allocator has put a value other than the stack pointer in it.
-  if (!FuncInfo->fsr1IsRegister())
-    return;
-  const TargetRegisterInfo *TRI = STI.getRegisterInfo();
-  bool FSR1Used = false;
-  for (const MachineBasicBlock &MBB : MF)
-    for (const MachineInstr &MI : MBB)
-      if (!MI.getFlag(MachineInstr::FrameSetup) &&
-          !MI.getFlag(MachineInstr::FrameDestroy) &&
-          MI.modifiesRegister(PIC16F1::SP, TRI))
-        FSR1Used = true;
-  if (!FSR1Used)
-    return;
 
   BitVector Stays(MFI.getObjectIndexEnd());
-  for (const CalleeSavedInfo &I : MFI.getCalleeSavedInfo())
-    if (I.getFrameIdx() >= 0 && I.getFrameIdx() < MFI.getObjectIndexEnd())
-      Stays.set(I.getFrameIdx());
   for (const MachineBasicBlock &MBB : MF)
     for (const MachineInstr &MI : MBB)
       if (!hasDirectForm(MI.getOpcode()) && !MI.isDebugInstr())
@@ -219,7 +274,7 @@ void PIC16F1FrameLowering::processFunctionBeforeFrameFinalized(
         MFI.isVariableSizedObjectIndex(FI))
       continue;
     uint64_t Size = MFI.getObjectSize(FI);
-    if (Size == 0 || Size > StaticSlotLimit)
+    if (Size == 0)
       continue;
     Block *Into = nullptr;
     if (Size <= BlockLimit)
@@ -233,20 +288,12 @@ void PIC16F1FrameLowering::processFunctionBeforeFrameFinalized(
     Into->Members.push_back({FI, Into->Size});
     Into->Size += Size;
   }
-  // With FSR1 in use as a register, nothing can be reached through it.
-  for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI)
-      if (!MFI.isDeadObjectIndex(FI) && !FuncInfo->getStaticObject(FI)) {
-        bool Pending = false;
-        for (Block &B : Blocks)
-          for (auto &[Member, At] : B.Members)
-            Pending |= Member == FI;
-        bool Saved = false;
-        for (const CalleeSavedInfo &I : MFI.getCalleeSavedInfo())
-          Saved |= I.getFrameIdx() == FI;
-        if (!Pending && !Saved)
-          report_fatal_error("PIC16F1: a frame object needs the stack in a "
-                             "function that uses FSR1 as a register");
-      }
+  // Nothing may be left behind: there is no stack pointer to reach it with.
+  if (Stays.any() || MFI.getNumFixedObjects() != 0 ||
+      MFI.hasVarSizedObjects())
+    report_fatal_error("PIC16F1: function '" + MF.getName() +
+                       "' has a static frame but needs the stack; build "
+                       "with -mllvm -pic16f1-static-frames=0");
   if (Blocks.empty())
     return;
 
@@ -271,11 +318,48 @@ void PIC16F1FrameLowering::processFunctionBeforeFrameFinalized(
 // MOVWI --FSR1 and MOVIW FSR1++ (see printIndMode for the encoding).
 static const unsigned PushMode = 5, PopMode = 6;
 
+/// With a static frame the saved registers have fixed addresses too: a
+/// variable of their own, not slots in a frame.
+bool PIC16F1FrameLowering::assignCalleeSavedSpillSlots(
+    MachineFunction &MF, const TargetRegisterInfo *TRI,
+    std::vector<CalleeSavedInfo> &CSI) const {
+  if (!hasStaticFrame(MF))
+    return false;
+  if (CSI.empty())
+    return true;
+  const Function &F = MF.getFunction();
+  Module &M = const_cast<Module &>(*F.getParent());
+  Type *Ty = ArrayType::get(Type::getInt8Ty(M.getContext()), CSI.size());
+  auto *GV = new GlobalVariable(M, Ty, /*isConstant=*/false,
+                                GlobalValue::InternalLinkage,
+                                Constant::getNullValue(Ty),
+                                F.getName() + ".saved");
+  GV->setAlignment(Align(1));
+  GV->setSection((".noinit." + GV->getName()).str());
+  MF.getInfo<PIC16F1MachineFunctionInfo>()->setSavedRegisters(GV);
+  return true;
+}
+
 bool PIC16F1FrameLowering::spillCalleeSavedRegisters(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
     ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
   if (CSI.empty())
     return false;
+  if (hasStaticFrame(*MBB.getParent())) {
+    const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
+    const GlobalVariable *GV = MBB.getParent()
+                                   ->getInfo<PIC16F1MachineFunctionInfo>()
+                                   ->getSavedRegisters();
+    int64_t At = 0;
+    for (const CalleeSavedInfo &I : CSI) {
+      if (!MBB.isLiveIn(I.getReg()))
+        MBB.addLiveIn(I.getReg());
+      BuildMI(MBB, MI, DebugLoc(), TII.get(PIC16F1::ST8abs))
+          .addReg(I.getReg(), RegState::Kill)
+          .addGlobalAddress(GV, At++);
+    }
+    return true;
+  }
   const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
   DebugLoc DL;
   // The first register pushed lands just below the stack pointer at entry,
@@ -301,6 +385,18 @@ bool PIC16F1FrameLowering::restoreCalleeSavedRegisters(
     MutableArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
   if (CSI.empty())
     return false;
+  if (hasStaticFrame(*MBB.getParent())) {
+    const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
+    const GlobalVariable *GV = MBB.getParent()
+                                   ->getInfo<PIC16F1MachineFunctionInfo>()
+                                   ->getSavedRegisters();
+    DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
+    int64_t At = 0;
+    for (const CalleeSavedInfo &I : CSI)
+      BuildMI(MBB, MI, DL, TII.get(PIC16F1::LD8abs), I.getReg())
+          .addGlobalAddress(GV, At++);
+    return true;
+  }
   const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
   DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
   for (const CalleeSavedInfo &I : llvm::reverse(CSI)) {

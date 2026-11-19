@@ -1,0 +1,6 @@
+shared=0001
+plain=0017
+even=0001
+depth=0007
+pointer=0005
+again=0000

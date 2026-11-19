@@ -54,8 +54,8 @@ else needs FSR0 meanwhile, and the copy disappears. A pointer that steps
 through an array in a loop so stays in FSR0, and the access steps it
 (`MOVIW FSR0++`). When no pointer needs it, FSR0 holds ordinary values.
 
-FSR1 is the stack pointer, except in a function with a static frame (see
-"Static frames"), where it is a second pointer register.
+FSR1 is a second pointer register in a function with a static frame, and
+the stack pointer in one with a stack frame; see "Static frames".
 
 Instruction selection and register allocation work on pseudo instructions
 over these registers (`ADD16rr`, `LD8ptr`, `BRCC8ri`, ...). After register
@@ -131,6 +131,20 @@ LLVM's levels were tuned for machines with memory to spend on speed, so
 | `-O3` | Clang's `-Os` without outlining: small, and nothing that costs time. Clang's own `-O3` spends words on speed that this processor does not have |
 | `-Os`, `-Oz` | Clang's level, with less inlining, and shared sequences made into subroutines (outlining) |
 
+**Whole-program compilation is the default.** A build that compiles and
+links in one step (`pic16f1-cc -o prog.hex a.c b.c`) is compiled as one
+unit (`-flto`): the compiler sees every call. It inlines across files,
+leaves out what the program does not use, and gives every function that is
+not re-entered a static frame without needing the linker to choose (see
+"Static frames"). It also turns calls through constant function pointers
+into direct calls: a program put together by dependency injection, with
+an interface that is a constant table of function pointers handed to the
+code that uses it, comes out as if the calls had been written directly.
+`tests/inject` is such a program: 69 words compiled as a whole, with no
+indirect call left, against 157 words and two indirect calls file by
+file. `-fno-lto` compiles each file on its own; with `-c` that is the
+default, and `-flto` makes objects for a whole-program link.
+
 At every level a bitwise CRC loop stays a loop: LLVM would replace it with
 a 256-entry table (`-mllvm -disable-loop-idiom-hashrecognize`), which is
 five times as fast and 450 words larger.
@@ -196,44 +210,125 @@ module and marks them. A function qualifies if
 - it cannot call itself, directly or through others;
 - it cannot run in an interrupt handler of the module.
 
-In an ordinary build that is `main` and the `static` functions that hang
-off it. With `-flto` the whole program is one module and nearly every
-function qualifies. This is sound without knowing the rest of the program,
-which is why it is narrower than XC8's compiled stack: XC8 always sees
-everything.
+Those the compiler can settle from one source file: `main` and the
+`static` functions that hang off it. For every other function the answer
+depends on the rest of the program, so the decision is left to the linker.
 
-What a marked function gets, so far:
+#### Compiled several ways, chosen at link time
 
-- **Small variables at fixed addresses.** A variable of up to 16 bytes that
-  must be in memory (an array, something whose address is passed on) is
-  placed in a block `<function>.frame`, in a section `.noinit`, and is
-  reached with direct addressing like a global. The linker keeps each
-  block within a bank, and startup does not clear it.
-  (`-mllvm -pic16f1-static-local-limit=N` changes the size.)
-- **FSR1 as a second pointer register.** FSR1 holds the stack pointer on
-  entry and must hold it again at every call and at the return, but in
-  between it is free. The stack pointer becomes an ordinary value: it
-  stays in FSR1 if nothing else wants FSR1, and otherwise waits in a
-  register pair. `PIC16F1PointerSetup.cpp` gives FSR1 to a pointer that a
-  loop keeps from round to round while FSR0 is busy with another, in a
-  loop without calls; the loads and stores through it are separate
-  instructions (`LD8ptr1`...) that take their pointer in FSR1 only, which
-  holds the register allocator to the choice. A string comparison so has
-  one pointer in each FSR and a nine-instruction loop.
-  (`-mllvm -pic16f1-fsr1-pointer=0` turns this off.) Not for a function
-  that takes or passes arguments on the stack, or does 64-bit arithmetic.
-- **Spill slots at fixed addresses**, in `<function>.slots`, but only where
-  FSR1 really is in use for something else: a slot on the stack needs no
-  bank selection, so the slots stay there otherwise.
+A function the compiler cannot decide about is compiled three times:
 
-`-mllvm -pic16f1-static-frames=0` turns all of it off.
+| Version | Frame | Used when |
+|---|---|---|
+| `F` | on the stack | it may be re-entered; every ordinary call refers to this name |
+| `F.sf` | static | it cannot be re-entered |
+| `F.isr` | static, with variables of its own | it runs in an interrupt handler |
+
+Each object file also carries a section `.pic16f1.frames` that lists its
+functions and what each calls. The linker (`pic16f1SelectFrames` in lld)
+reads them all, and so knows every call in the program. It points `F` at
+`F.sf` unless
+
+- `F` is on a cycle of calls;
+- code that says nothing about its calls can reach `F`. An object file
+  without the section is taken to call everything it refers to, from
+  anywhere. The startup code and runtime library carry the section;
+  hand-written assembly that calls C functions should too (see the end
+  of `toolchain/runtime/crt0.S` for the form), or those functions keep
+  stack frames;
+- both the main program and an interrupt handler can reach `F` (but see
+  below).
+
+A call through a pointer is taken to reach every function whose address is
+taken. The versions not chosen are unreferenced and `--gc-sections` drops
+them, so they cost compile time and nothing else. `-Wl,--verbose` prints
+each decision and the reason.
+
+Callers are compiled against `F` and may know exactly which registers it
+changes; `F.sf` and `F.isr` are held to changing no others.
+
+**Functions shared with an interrupt handler.** One copy with a stack
+frame, or two copies with static frames: `F.sf` for the main program and
+`F.isr` for the handlers. Code that runs in a handler (a handler itself,
+or the `.isr` version of a function) calls `G$isr` where it means `G`, and
+the linker makes that name the interrupt copy of `G` where it makes one
+and `G` itself otherwise. Two copies cost flash and save time. On a test
+with a function that has a local array and one that walks two arrays, both
+called from the main program and from a handler:
+
+| | Flash words | Cycles |
+|---|---|---|
+| One copy, stack frames (`-Os`) | 378 | 106,149 |
+| Two copies, static frames (`-Os`) | 405 | 52,549 |
+| One copy, stack frames (`-O2`) | 383 | 109,508 |
+| Two copies, static frames (`-O2`) | 428 | 54,908 |
+
+By default the linker makes the copies only where the two static versions
+together are no larger than the stack version; `pic16f1-cc
+-minterrupt-copies` (`-z pic16f1-interrupt-copies` to the linker) makes
+them wherever it can. A function only handlers reach gets its `.isr`
+version.
+
+`scripts/test-frames.sh` checks the decisions on a program with a function
+of each kind. `-mllvm -pic16f1-dual-frames=0` turns the extra versions off;
+in a whole-program build, the default, few are needed: the compiler then
+settles nearly every function itself, and the versions and the linker's
+choice matter for programs built from separately compiled objects and
+libraries.
+
+#### What a static frame is
+
+A function with a static frame never touches the software stack.
+
+- **Its variables have fixed addresses.** What must be in memory (an
+  array, something whose address is passed on, a value the register
+  allocator could not keep in a register) is placed in blocks of up to 16
+  bytes named `<function>.frame` and `<function>.slots`, in sections
+  `.noinit.*`, and reached with direct addressing like a global. The
+  linker keeps each block within a bank, and startup does not clear them.
+- **So do the registers it saves**, in `<function>.saved`.
+- **FSR1 is a second pointer register.** Nothing has to be moved out of
+  it first. `PIC16F1PointerSetup.cpp` gives it to a pointer that a loop
+  keeps from round to round while FSR0 is busy with another; see "Pointers
+  through arrays". A string comparison has one pointer in each FSR and a
+  nine-instruction loop. (`-mllvm -pic16f1-fsr1-pointer=0` turns this off.)
+
+A function cannot have one if it takes or passes arguments on the stack
+(more than eight bytes of arguments, a variadic function or a call to one,
+64-bit arithmetic, whose library routines take stack arguments), or has a
+variable of more than 64 bytes (`-mllvm -pic16f1-static-slot-limit=N`).
+Such a function has a stack frame whatever the linker finds.
+
+#### Where the stack pointer is
+
+A program whose functions all have static frames has no stack: nothing
+sets FSR1 up, and nothing is linked in for it. This is the usual case, and
+it is how XC8 works.
+
+A function with a stack frame still uses FSR1 as its stack pointer while
+it runs, but cannot expect to find it there: the functions it calls and is
+called by may have static frames and use FSR1 for other things. Between
+functions the stack pointer lives in a two-byte cell, `__sp`
+(`toolchain/runtime/stack.S`, linked only into a program that refers to
+it, with eight words of startup code that set it to the end of RAM). A
+function with a stack frame
+
+- loads FSR1 from `__sp` on entry, and again after every call;
+- stores FSR1 to `__sp` once its frame is set up, if it makes calls, so
+  that what it calls starts below its frame, and again before it returns.
+
+That is five instructions a time, which is the price of a stack frame
+over a static one. An interrupt handler that makes calls runs them on its
+own stack: it saves `__sp`, puts its stack pointer there, and puts the old
+value back at the end. No call preserves FSR1.
+
+`-mllvm -pic16f1-static-frames=0` turns static frames off altogether.
 
 Not done yet: the fixed variables of functions that are never active
 together do not share memory, so a deep program can use more RAM than it
-would on the stack (variables over 64 bytes therefore stay on the stack);
-saved registers and outgoing arguments are still on the stack; and
-arguments are still passed in registers and on the stack, not in fixed
-locations.
+would on the stack (which is why a function with a large variable keeps
+its stack frame); and a function that passes arguments on the stack cannot
+have a static frame, though only the call needs the stack.
 
 ### Pointers through arrays
 
@@ -288,9 +383,8 @@ of the 16-level hardware stack** while the sequence runs.
 built without it: a program links only a few of their functions, and a
 sequence shared between functions would then cost more than it saves.
 
-`pic16f1-cc -flto` compiles the whole program as one unit at link time, so
-sequences are shared across source files as well, and functions the
-program does not use are gone before code is generated.
+In a whole-program build (the default) sequences are shared across source
+files as well.
 
 ### Inlining
 
@@ -304,8 +398,9 @@ levels of the hardware stack may need a higher threshold.
 
 ### Fixed costs that were removed
 
-- **Startup code.** `crt0` is twelve words: set the stack pointer, call
-  `main`, call `exit`. The loops that copy initialised data and clear
+- **Startup code.** `crt0` is eight words: call `main`, call `exit`. (The
+  stack pointer is set up only in a program that has a stack; see "Where
+  the stack pointer is".) The loops that copy initialised data and clear
   `.bss` are separate library members (`copydata.S`, `clearbss.S`). The
   compiler refers to `__do_copy_data` from every module that defines
   initialised data and to `__do_clear_bss` from every module that defines
@@ -382,10 +477,10 @@ in. Use it around anything that runs a freshly changed compiler many times.
 | Arguments | Bytes in `R0`-`R7`, 16-bit values in `RP0`-`RP3`, then the stack |
 | Wider values | Split into 16-bit parts, low part first |
 | Results | `R0`-`R7` (up to 8 bytes); larger through a caller-supplied pointer |
-| Preserved | `R8`-`R13`. FSR0 is not |
+| Preserved | `R8`-`R13`. Neither FSR is |
 | Variadic functions | All arguments on the stack |
 | Structs | Passed as a pointer to a copy made by the caller |
-| Data stack | FSR1, grows down, points at the lowest byte in use |
+| Data stack | Only for functions with stack frames. Grows down; the pointer is in the cell `__sp` between functions and in FSR1 inside one, pointing at the lowest byte in use. At a call with stack arguments FSR1 points at them as well |
 | Return addresses | Hardware stack (16 levels); depth is not yet checked. A call that is the last thing a function does is a jump and uses no level; an outlined sequence uses one while it runs |
 | `PCLATH` | Not preserved. Every `CALL` and `GOTO` is preceded by `MOVLP` |
 | `BSR` | Not preserved across calls |
@@ -394,7 +489,29 @@ in. Use it around anything that runs a freshly changed compiler many times.
 vector (word 4), saves the byte registers it uses, and returns with
 `RETFIE`. If it needs a stack (to save registers, for locals or for a
 call) it runs on its own small one (`__isr_stack_size`, default 32 bytes).
-The hardware saves and restores W, STATUS, BSR, the FSRs and PCLATH.
+The hardware saves and restores W, STATUS, BSR, the FSRs and PCLATH. Code
+that runs in a handler calls `G$isr` where it means `G`; see "Static
+frames".
+
+## Devices
+
+Five real devices: PIC16F1937, PIC16F1829, PIC16F1619 (32 banks) and
+PIC16F18877, PIC16F15276 (64 banks). Each has a definition in `devices/`
+made from Microchip's device pack (`tools/devdb/gen_device.py`), from which
+the simulator, the C header and the linker script are all generated.
+
+Two imaginary ones, for testing without a real part's memory limits:
+
+| Device | Banks | RAM | Flash | Made from |
+|---|---|---|---|---|
+| PIC16F1032 | 32 (5-bit `MOVLB`) | 2,480 bytes: general RAM in every bank that can have it | 32K words | PIC16F1937, without its LCD data registers, which lie where that RAM is |
+| PIC16F1064 | 64 (6-bit `MOVLB`) | 4,080 bytes | 32K words | PIC16F18877, which is already as large as a 64-bank part can be; only the name differs |
+
+These are the largest device each bank-select encoding allows. Everything
+else about them (registers, configuration words, the peripherals the
+simulator models) is the real device's. `tools/devdb/gen_imaginary.py`
+makes their definitions. Select one like any other: `-mcpu=pic16f1032`,
+`pic16f1-sim run --device pic16f1032`.
 
 ## Types
 
@@ -440,6 +557,29 @@ FILE *const stdout = &uart;
 
 Build with `pic16f1-cc --libc`. `tests/libc/hello` is a complete example.
 
+## Library functions the compiler knows
+
+What the compiler may assume about a function with a standard name, such as
+replacing `strlen("abc")` by 3 or a call by a different library function:
+
+| Build | Known functions |
+|---|---|
+| `--libc`, or `-fhosted` | All of the standard library, as Clang does on any target |
+| Without the C library (the default; compiled `-ffreestanding`) | `memcpy`, `memmove`, `memset` and `memcmp` only: the runtime library always has them |
+| `-fno-builtin` | None. The runtime library is built this way, since it is what implements the four |
+
+A fill or copy of up to four bytes with a constant size is expanded into
+the stores themselves, whether it was written as a call, a structure
+assignment or an initializer; larger ones are calls.
+
+The other direction is turned off: a loop that fills or copies memory is
+never replaced by a call to `memset` or `memcpy`. The loop, with its pointer
+in an FSR, is faster than the general routine, and with the replacement on
+the `matrix` and `strings` benchmarks came out both larger (by up to 81
+words) and slower, past XC8 at `-O3` and `-Os`.
+
+`scripts/test-builtins.sh` checks all of this on `tests/builtins/main.c`.
+
 ## Assembly syntax
 
 Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
@@ -456,25 +596,36 @@ All run on the simulator; nothing has run on silicon yet.
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
 | Regression tests (`tests/lit`) | 22 of 22 pass |
-| One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
-| GCC C torture, `execute` (1,701 tests) at `-O0` | 1,400 of the 1,438 that build pass (97.4%) |
-| GCC C torture, `execute` at `-O0 -munoptimized` | 1,389 of 1,422 (97.7%) |
-| GCC C torture, `execute` at `-O1` | 1,402 of 1,440 (97.4%) |
-| GCC C torture, `execute` at `-O2` and at `-O3` | 1,404 of 1,440 (97.5%) |
-| GCC C torture, `execute` at `-Os` | 1,407 of 1,447 (97.2%) |
-| picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 104 pass within 2 billion cycles, 3 exceed that, 33 do not build |
+| One program on all seven devices (`scripts/test-devices.sh`) | 14 of 14 builds pass |
+| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,485 of the 1,504 that build pass (98.7%) |
+| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,489 of 1,507 (98.8%) |
+| GCC C torture, `execute` at `-Os` | 1,490 of 1,508 (98.8%) |
+| The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
+| Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
+| Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
+| picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
 | picolibc's tests on the PIC16F1937 | 74 pass, 66 do not build (39 are too big for 8K words) |
 
-About 270 torture tests do not build for this device: they need `malloc`,
-`printf`, a 32-bit `int`, variable-length arrays, nested functions, or more
-flash than 8K words. Eleven crash Clang in builtins that assume a 32-bit
-`int` (`__builtin_return_address`, `__builtin_prefetch`).
+About 195 torture tests do not build even on the large device: they need
+`malloc`, `printf`, a 32-bit `int`, variable-length arrays or `alloca`
+(reported as an error, by the compiler or, in a whole-program build, by the
+linker), or nested functions.
 
-Of the roughly 45 that build and fail, the 20 examined so far all fail for a
-reason outside the compiler: arrays larger than the 512 bytes of RAM,
-recursion deeper than the 16-level return stack, loops too long for the
-simulator's cycle limit, or reliance on GCC-only attributes. The rest have
-not been examined one by one.
+The 20 that build and do not pass at one level or another have each been examined; none is wrong
+code from the compiler:
+
+| Reason | Tests |
+|---|---|
+| The test assumes a 32-bit `int` | `divmod-1`, `20071211-1`, `pr53645` |
+| GCC behaviour Clang has on no target: the storage-order and `optimize` attributes, arithmetic at the width of a bit-field, inlining a function that takes a label's address | `20230630-2`, `20230630-4`, `alias-1`, `pr79043`, `bitfld-3`, `bitfld-5`, `pr32244-1`, `pr34971`, `990208-1` |
+| `-O0` here optimizes without inlining, and the test expects `__builtin_constant_p` to fold after inlining | `bcp-1` (at `-O0` only) |
+| Type-based aliasing across a call in a whole-program build; the test says itself that it may not be conforming, and passes with `-fno-lto` | `20000603-1` (at `-O0` only) |
+| Needs the C library, or more than 200 million cycles; they pass with `--libc` and a 2-billion-cycle limit | `printf-1`, `920501-6`, `arith-rand-ll` |
+| Recursion deeper than the 16-level return stack | `20000412-2`, `pr58209` |
+| `__builtin_frame_address` gives 0: there is no chain of frames | `frame-address` |
+
+`tools/torture.py` gives tests that size themselves to the stack
+(`STACK_SIZE`) a quarter of the device's RAM.
 
 ### picolibc
 
@@ -520,26 +671,26 @@ At `-Os`:
 
 | Program | Hand, words | Hand at run time, words | LLVM, words | XC8, words | Hand, cycles | Hand at run time, cycles | LLVM, cycles | XC8, cycles |
 |---|---|---|---|---|---|---|---|---|
-| arith16 | 99 | 334 | 265 | 763 | 686 | 50,489 | 3,356 | 147,863 |
-| arith32 | 88 | 377 | 374 | 885 | 576 | 25,109 | 57,081 | 97,697 |
-| bitops | 95 | 162 | 318 | 346 | 570 | 29,360 | 75,254 | 120,595 |
-| crc16 | 53 | 131 | 230 | 279 | 226 | 6,684 | 11,261 | 16,918 |
-| crc32 | 48 | 124 | 206 | 274 | 176 | 1,294 | 1,881 | 2,851 |
-| crc8tab | 55 | 381 | 454 | 461 | 246 | 3,829 | 6,922 | 22,451 |
-| fib | 59 | 140 | 155 | 311 | 286 | 1,012 | 676 | 2,952 |
-| fsm | 57 | 310 | 556 | 596 | 266 | 1,997 | 3,058 | 4,585 |
-| hello | 48 | 48 | 75 | 83 | 176 | 176 | 308 | 488 |
-| matrix | 53 | 258 | 577 | 585 | 226 | 17,826 | 31,956 | 44,196 |
-| sieve | 54 | 141 | 281 | 287 | 236 | 16,542 | 32,705 | 33,838 |
-| sort | 75 | 266 | 464 | 529 | 446 | 12,493 | 24,142 | 28,704 |
-| strings | 74 | 238 | 487 | 532 | 436 | 3,661 | 7,837 | 11,015 |
-| structs | 53 | 170 | 341 | 405 | 226 | 914 | 2,968 | 3,292 |
-| timer_isr | 85 | 145 | 252 | 265 | 5,468 | 5,645 | 5,933 | 6,181 |
-| **Total** | 996 | 3,225 | 5,035 | 6,601 | | | | |
+| arith16 | 99 | 334 | 252 | 763 | 686 | 50,489 | 3,276 | 147,863 |
+| arith32 | 88 | 377 | 352 | 885 | 576 | 25,109 | 56,092 | 97,697 |
+| bitops | 95 | 162 | 299 | 346 | 570 | 29,360 | 75,194 | 120,595 |
+| crc16 | 53 | 131 | 216 | 279 | 226 | 6,684 | 11,245 | 16,918 |
+| crc32 | 48 | 124 | 187 | 274 | 176 | 1,294 | 1,838 | 2,851 |
+| crc8tab | 55 | 381 | 431 | 461 | 246 | 3,829 | 4,512 | 22,451 |
+| fib | 59 | 140 | 124 | 311 | 286 | 1,012 | 642 | 2,952 |
+| fsm | 57 | 310 | 547 | 596 | 266 | 1,997 | 3,026 | 4,585 |
+| hello | 48 | 48 | 64 | 83 | 176 | 176 | 219 | 488 |
+| matrix | 53 | 258 | 573 | 585 | 226 | 17,826 | 31,921 | 44,196 |
+| sieve | 54 | 141 | 270 | 287 | 236 | 16,542 | 32,668 | 33,838 |
+| sort | 75 | 266 | 449 | 529 | 446 | 12,493 | 24,213 | 28,704 |
+| strings | 74 | 238 | 506 | 532 | 436 | 3,661 | 8,781 | 11,015 |
+| structs | 53 | 170 | 325 | 405 | 226 | 914 | 3,028 | 3,292 |
+| timer_isr | 85 | 145 | 246 | 265 | 5,468 | 5,645 | 5,910 | 6,181 |
+| **Total** | 996 | 3,225 | 4,841 | 6,601 | | | | |
 
-LLVM's code is 5.1 times the size of the smallest programs and
-1.56 times the size of the ones that compute at run time; in
-cycles, 18.7 and 1.40 times (geometric means).
+LLVM's code is 4.9 times the size of the smallest programs and
+1.50 times the size of the ones that compute at run time; in
+cycles, 17.8 and 1.33 times (geometric means).
 
 LLVM does some of the working out itself: all of `fib`, every loop of
 `arith16` but the `gcd` loops, and part of `arith32` are evaluated while
@@ -580,24 +731,26 @@ has most to find:
 
   | Level | Words, LLVM / XC8 | Closest program in size | Cycles (geometric mean) | Closest program in speed |
   |---|---|---|---|---|
-  | `-O0` | 5,557 / 8,542 (0.65) | `crc8tab` 0.89 | 0.37 | `timer_isr` 0.89 |
-  | `-O1` | 5,330 / 7,818 (0.68) | `fsm` 0.95 | 0.41 | `timer_isr` 0.90 |
-  | `-O2` | 5,243 / 7,697 (0.68) | `crc8tab` 0.94 | 0.40 | `timer_isr` 0.90 |
-  | `-O3` | 5,129 / 6,790 (0.76) | `crc8tab` 0.98 (9 words) | 0.51 | `sieve` 0.98 |
-  | `-Os` | 5,035 / 6,601 (0.76) | `matrix` 0.99 (8 words) | 0.51 | `sieve` 0.97 |
+  | `-O0` | 5,304 / 8,542 (0.62) | `crc8tab` 0.84 | 0.36 | `timer_isr` 0.89 |
+  | `-O1` | 5,052 / 7,818 (0.65) | `crc8tab` 0.86 | 0.39 | `timer_isr` 0.89 |
+  | `-O2` | 5,039 / 7,697 (0.65) | `crc8tab` 0.87 | 0.40 | `timer_isr` 0.90 |
+  | `-O3` | 4,950 / 6,790 (0.73) | `strings` 0.99 (4 words) | 0.48 | `sieve` 0.98 |
+  | `-Os` | 4,841 / 6,601 (0.73) | `matrix` 0.98 (12 words) | 0.48 | `sieve` 0.97 |
 
   That holds because of what `pic16f1-cc` makes of each level; see "What
   the levels mean". `-Oz` has no XC8 counterpart; against XC8 `-Os` it is
   smaller in total (4,999 words) but two programs are larger (`crc8tab`
   by 1 word, `matrix` by 19). `-munoptimized` is about 1.4 times XC8
-  `-O0` in size. With `-flto` the `-Os` set is 4,912 words.
+  `-O0` in size. These are whole-program builds, the default; compiled
+  file by file (`-fno-lto`) the `-Os` set is 4,962 words.
 - Outlining at `-Os` and the lower inlining threshold at every level trade hardware
   stack levels for space; see "Shared sequences" and "Inlining".
-- Outside functions with a static frame, only one pointer at a time can
-  be in an FSR (FSR1 is the stack pointer), so a loop over two arrays
-  copies each pointer to FSR0 in turn. Array indexing computes a 16-bit
-  address for each access. Static frames cover only functions that
-  nothing outside their module can reach, and are a first stage; see
+- In a function with a stack frame, only one pointer at a time can be in
+  an FSR (FSR1 is the stack pointer), so a loop over two arrays copies
+  each pointer to FSR0 in turn, and each call costs five instructions to
+  get the stack pointer back. An array index that is not a loop
+  counter is added to the array's address, 16 bits, for each access.
+  Static frames are a first stage: see what is not done yet under
   "Static frames".
 - Hardware stack depth is not analysed; the simulator stops on overflow.
 - Not yet run on silicon.
