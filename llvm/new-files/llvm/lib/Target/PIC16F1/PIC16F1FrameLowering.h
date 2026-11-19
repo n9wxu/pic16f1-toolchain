@@ -36,9 +36,7 @@ public:
   /// The static version of a function compiled both ways
   /// (PIC16F1StaticFrames.cpp) has no callers of its own and saves what its
   /// stack version's callers expect; see getCalleeSavedRegs.
-  bool isProfitableForNoCSROpt(const Function &F) const override {
-    return !F.hasFnAttribute("pic16f1-dual-of");
-  }
+  bool isProfitableForNoCSROpt(const Function &F) const override;
   /// Where debug information should look for a frame object. One with a
   /// fixed address has no place in the frame.
   StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,

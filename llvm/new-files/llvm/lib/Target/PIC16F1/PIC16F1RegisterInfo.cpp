@@ -109,6 +109,12 @@ BitVector PIC16F1RegisterInfo::getReservedRegs(const MachineFunction &MF) const 
     Reserved.set(PIC16F1::FSR1L);
     Reserved.set(PIC16F1::FSR1H);
   }
+  // The frame base of a function with variable-sized objects.
+  if (pic16f1HasFrameBase(MF)) {
+    Reserved.set(PIC16F1::RP6);
+    Reserved.set(PIC16F1::R12);
+    Reserved.set(PIC16F1::R13);
+  }
   Reserved.set(PIC16F1::W);
   Reserved.set(PIC16F1::TMP0);
   Reserved.set(PIC16F1::TMP1);

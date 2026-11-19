@@ -29,6 +29,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -89,6 +90,11 @@ bool llvm::pic16f1UsesStackPointer(const MachineFunction &MF) {
          MFI.hasVarSizedObjects();
 }
 
+bool llvm::pic16f1HasFrameBase(const MachineFunction &MF) {
+  return !hasStaticFrame(MF) && MF.getFrameInfo().hasVarSizedObjects() &&
+         !MF.getFunction().hasFnAttribute("interrupt");
+}
+
 /// The variable an interrupt handler keeps the interrupted code's stack
 /// pointer in while its own callees use the handler's stack.
 static const GlobalVariable *savedStackPointer(MachineFunction &MF) {
@@ -135,8 +141,20 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
     ++I;
   adjustSP(MBB, I, DL,
            -int64_t(MFI.getStackSize() - MFI.getCalleeSavedInfo().size()));
+  // With variable-sized objects the cell moves down under them while FSR1
+  // stays here; RP6 remembers where that is across calls.
+  bool HasBase = pic16f1HasFrameBase(MF);
+  if (HasBase) {
+    for (unsigned B = 0; B != 2; ++B) {
+      BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVF))
+          .addImm(PIC16F1::FSR1L_ADDR + B)
+          .addImm(0);
+      BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVWF))
+          .addImm(TII.fileAddr(B ? PIC16F1::R13 : PIC16F1::R12));
+    }
+  }
   // What this function calls starts below its frame.
-  if (MFI.hasCalls()) {
+  if (MFI.hasCalls() || HasBase) {
     if (IsInterrupt)
       BuildMI(MBB, I, DL, TII.get(PIC16F1::SPSWITCH))
           .addGlobalAddress(savedStackPointer(MF));
@@ -171,7 +189,8 @@ void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
   }
   adjustSP(MBB, I, DL, MFI.getStackSize() - MFI.getCalleeSavedInfo().size());
   // After the pops FSR1 is what it was on entry: back in the cell with it.
-  if (MFI.hasCalls() && !IsInterrupt)
+  // That also gives back every variable-sized object.
+  if ((MFI.hasCalls() || pic16f1HasFrameBase(MF)) && !IsInterrupt)
     BuildMI(MBB, Term, DL, TII.get(PIC16F1::SPSTORE));
 }
 
@@ -186,6 +205,11 @@ void PIC16F1FrameLowering::determineCalleeSaves(MachineFunction &MF,
                                                 BitVector &SavedRegs,
                                                 RegScavenger *RS) const {
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
+  // The prologue puts the frame base in RP6.
+  if (pic16f1HasFrameBase(MF)) {
+    SavedRegs.set(PIC16F1::R12);
+    SavedRegs.set(PIC16F1::R13);
+  }
   // An interrupt handler saves TMP0 if anything may change it. Every
   // compare-and-branch is declared to, but most do not use it.
   if (!SavedRegs.test(PIC16F1::TMP0))
@@ -407,5 +431,18 @@ bool PIC16F1FrameLowering::restoreCalleeSavedRegisters(
         .addImm(TII.fileAddr(I.getReg()))
         .setMIFlag(MachineInstr::FrameDestroy);
   }
+  return true;
+}
+
+bool PIC16F1FrameLowering::isProfitableForNoCSROpt(const Function &F) const {
+  if (F.hasFnAttribute("pic16f1-dual-of"))
+    return false;
+  // A function with a variable-sized object keeps its frame base in RP6
+  // and must save it for its caller like any callee-saved register.
+  for (const BasicBlock &BB : F)
+    for (const Instruction &I : BB)
+      if (const auto *AI = dyn_cast<AllocaInst>(&I))
+        if (!AI->isStaticAlloca())
+          return false;
   return true;
 }

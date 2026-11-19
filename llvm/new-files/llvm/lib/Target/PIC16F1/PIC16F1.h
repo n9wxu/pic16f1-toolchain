@@ -101,6 +101,9 @@ class Module;
 const GlobalVariable *pic16f1StackPointerCell(const Module &M);
 /// The function has a stack frame and needs the stack pointer in FSR1.
 bool pic16f1UsesStackPointer(const MachineFunction &MF);
+/// The function has variable-sized objects: its stack pointer cell moves
+/// while it runs, and it keeps the base of its frame in RP6.
+bool pic16f1HasFrameBase(const MachineFunction &MF);
 /// -pic16f1-main-saves-registers: something outside the module calls main.
 bool pic16f1MainIsCalled();
 /// Copy pointers to FSR0 in front of the loads and stores that use them.

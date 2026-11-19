@@ -136,6 +136,9 @@ def PIClsrv : SDNode<"PIC16F1ISD::LSRV", SDT_PICShiftV>;
 def PICasrv : SDNode<"PIC16F1ISD::ASRV", SDT_PICShiftV>;
 // Store a call argument at a constant offset from the stack pointer.
 def SDT_PICStoreSP : SDTypeProfile<0, 2, [SDTCisInt<0>, SDTCisVT<1, i16>]>;
+def SDT_PICDynAlloc : SDTypeProfile<1, 1, [SDTCisVT<0, i16>, SDTCisVT<1, i16>]>;
+def PICdynalloc : SDNode<"PIC16F1ISD::DYNALLOC", SDT_PICDynAlloc,
+                         [SDNPHasChain, SDNPSideEffect]>;
 def PICstoresp : SDNode<"PIC16F1ISD::STORE_SP", SDT_PICStoreSP,
                         [SDNPHasChain, SDNPMayStore]>;
 // Build a 16-bit value from a low and a high byte.
@@ -616,8 +619,22 @@ def SUB16mr : Pseudo<(outs), (ins memabs:$a, GPR16:$s), []>;
 
 // Outgoing call arguments, stored at an offset from the stack pointer. The
 // call frame is reserved by the prologue, so these are stack-slot stores.
-def : Pat<(PICstoresp GPR8:$s, timm:$off), (ST8fi GPR8:$s, timm:$off, 0)>;
-def : Pat<(PICstoresp GPR16:$s, timm:$off), (ST16fi GPR16:$s, timm:$off, 0)>;
+// In a function with variable-sized objects they are stored from the cell
+// __sp instead, which is then below those objects (see DYNALLOC).
+def ST8arg : Pseudo<(outs), (ins GPR8:$s, i16imm:$off),
+                    [(PICstoresp GPR8:$s, timm:$off)]>;
+def ST16arg : Pseudo<(outs), (ins GPR16:$s, i16imm:$off),
+                     [(PICstoresp GPR16:$s, timm:$off)]>;
+
+// A variable-length array or alloca: $n bytes taken from the stack by
+// lowering the cell __sp, where the functions called from here start their
+// own frames. FSR1 stays where it is, at the bottom of the fixed part of
+// the frame, and the function keeps a copy of that in RP6 to get it back
+// after a call. The result is the address of the new bytes: the cell plus
+// the room kept below them for arguments passed on the stack.
+let Defs = [CARRY], hasSideEffects = 1 in
+def DYNALLOC : Pseudo<(outs GPR16:$d), (ins GPR16:$n),
+                      [(set GPR16:$d, (PICdynalloc GPR16:$n))]>;
 
 // The stack pointer of a function with a stack frame is FSR1, but between
 // functions it is kept in the cell __sp, since functions with static frames

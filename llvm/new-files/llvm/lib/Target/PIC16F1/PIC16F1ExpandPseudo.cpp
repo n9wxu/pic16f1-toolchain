@@ -254,9 +254,27 @@ public:
   /// not until it needs it: calls that follow one another need nothing in
   /// between.
   bool StackPointerStale = false;
+  /// The function has variable-sized objects. FSR1 is then the base of the
+  /// frame, kept in RP6 across calls, and the cell is somewhere below it.
+  bool HasFrameBase = false;
+  /// In such a function, FSR1 holds the value of the cell at the moment,
+  /// for storing the arguments of a call.
+  bool FSR1AtCell = false;
   void reloadStackPointer(const MachineInstr &Call) {
+    FSR1AtCell = false;
     if (UsesStackPointer)
       StackPointerStale = true;
+  }
+  /// Point FSR1 at the cell's value, where the next callee's frame starts.
+  void needCellPointer(const MachineFunction &MF) {
+    StackPointerStale = true;
+    if (FSR1AtCell)
+      return;
+    FSR1AtCell = true;
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MF.getFunction().getParent()), 0);
+    loadDirect(PIC16F1::FSR1L_ADDR, Cell, 0);
+    loadDirect(PIC16F1::FSR1H_ADDR, Cell, 1);
   }
   /// Put the stack pointer back in FSR1 if a call has been made since it
   /// last was.
@@ -264,6 +282,12 @@ public:
     if (!StackPointerStale)
       return;
     StackPointerStale = false;
+    FSR1AtCell = false;
+    if (HasFrameBase) {
+      copy(PIC16F1::FSR1L_ADDR, TII.fileAddr(PIC16F1::R12));
+      copy(PIC16F1::FSR1H_ADDR, TII.fileAddr(PIC16F1::R13));
+      return;
+    }
     MachineOperand Cell = MachineOperand::CreateGA(
         pic16f1StackPointerCell(*MF.getFunction().getParent()), 0);
     loadDirect(PIC16F1::FSR1L_ADDR, Cell, 0);
@@ -907,6 +931,54 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     });
     return true;
   }
+  case ST8arg:
+  case ST16arg: {
+    int64_t Off = MI.getOperand(1).getImm();
+    bool Wide = Opc == ST16arg;
+    if (E.HasFrameBase)
+      E.needCellPointer(*MI.getMF());
+    E.withStackSlot(Off, Wide ? 2 : 1, [&](int64_t K) {
+      E.loadW(lo(MI.getOperand(0)));
+      E.storeIndirect(1, K);
+      if (Wide) {
+        E.loadW(hi(MI.getOperand(0)));
+        E.storeIndirect(1, K + 1);
+      }
+    });
+    return true;
+  }
+  case DYNALLOC: {
+    const MachineFunction &MF = *MI.getMF();
+    MachineOperand Cell = MachineOperand::CreateGA(
+        pic16f1StackPointerCell(*MF.getFunction().getParent()), 0);
+    unsigned DLo = lo(MI.getOperand(0)), DHi = hi(MI.getOperand(0));
+    E.FSR1AtCell = false;
+    // cell -= n
+    E.loadW(lo(MI.getOperand(1)));
+    MachineOperand F = E.selectBank(Cell, 0);
+    E.build(SUBWF).add(F).addImm(1);
+    E.loadW(hi(MI.getOperand(1)));
+    F = E.selectBank(Cell, 1);
+    E.build(SUBWFB).add(F).addImm(1);
+    // The new bytes start above the room for stack arguments.
+    uint64_t Room = MF.getFrameInfo().getMaxCallFrameSize();
+    if (Room == 0) {
+      E.loadDirect(DLo, Cell, 0);
+      E.loadDirect(DHi, Cell, 1);
+    } else {
+      F = E.selectBank(Cell, 0);
+      E.build(MOVF).add(F).addImm(0);
+      E.forgetW();
+      E.opLit(ADDLW, Room);
+      E.storeW(DLo);
+      E.loadWImm(Room >> 8);
+      F = E.selectBank(Cell, 1);
+      E.build(ADDWFC).add(F).addImm(0);
+      E.forgetW();
+      E.storeW(DHi);
+    }
+    return true;
+  }
   case ST8fi:
   case ST16fi: {
     int64_t Off = MI.getOperand(1).getImm() + MI.getOperand(2).getImm();
@@ -1059,6 +1131,7 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
   Emitter E(*TII);
   E.Banks64 = MF.getSubtarget<PIC16F1Subtarget>().hasBanks64();
   E.UsesStackPointer = pic16f1UsesStackPointer(MF);
+  E.HasFrameBase = pic16f1HasFrameBase(MF);
 
   // Once the pseudos are gone no instruction names the registers this
   // function changes, and the pass that collects them for callers
@@ -1123,8 +1196,13 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
       // The stack pointer must be in FSR1 for whatever reaches the frame
       // (the instructions of the epilogue among them, which are not
       // pseudos), and at the end of every block.
+      // (Arguments for a call are stored from FSR1 too, but in a function
+      // with variable-sized objects from the cell's value instead.)
+      bool IsArg = MI.getOpcode() == PIC16F1::ST8arg ||
+                   MI.getOpcode() == PIC16F1::ST16arg;
       if (E.StackPointerStale &&
-          (!MI.isPseudo() || MI.isTerminator() || usesFrame(MI.getOpcode()))) {
+          (!MI.isPseudo() || MI.isTerminator() || usesFrame(MI.getOpcode()) ||
+           (IsArg && !E.HasFrameBase))) {
         E.setInsertPoint(MBB, MachineBasicBlock::iterator(MI));
         E.needStackPointer(MF);
       }

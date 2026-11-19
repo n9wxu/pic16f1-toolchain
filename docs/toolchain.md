@@ -330,6 +330,33 @@ would on the stack (which is why a function with a large variable keeps
 its stack frame); and a function that passes arguments on the stack cannot
 have a static frame, though only the call needs the stack.
 
+### Variable-length arrays and `alloca`
+
+Both take memory from the stack while the function runs, so a function
+that has one always has a stack frame. Functions without one are not
+affected in any way.
+
+- **Allocating** lowers the cell `__sp` by the size. The functions called
+  from here start their frames from the cell, so they land below the new
+  bytes without knowing of them.
+- **FSR1 does not move.** It stays at the fixed part of the frame, so the
+  ordinary variables keep their constant offsets. The function keeps a copy
+  of it in 0x7C/0x7D, which it saves and reserves, and takes FSR1 back from
+  there after a call (four instructions).
+- **Arguments passed on the stack** are stored from the cell's value, below
+  the arrays, where the callee looks for them. Room for them is kept under
+  every allocation.
+- **Giving back.** The epilogue writes the stack pointer of entry to the
+  cell, which returns everything at once: that is `alloca`'s lifetime. A
+  variable-length array is returned at the end of its block, by saving the
+  cell on the way in and restoring it on the way out.
+
+Not in an interrupt handler, which runs on a stack of its own; the compiler
+says so. Nothing checks at run time that an allocation fits in the RAM
+left. These functions are compiled by the SelectionDAG selector.
+`scripts/test-vla.sh` runs `tests/vla/main.c` on two devices at six levels,
+whole program and file by file.
+
 ### Pointers through arrays
 
 `a[i]` in a loop is the address of `a` plus `i`: a 16-bit addition into an
@@ -595,21 +622,21 @@ All run on the simulator; nothing has run on silicon yet.
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
-| Regression tests (`tests/lit`) | 22 of 22 pass |
+| Regression tests (`tests/lit`) | 23 of 23 pass |
 | One program on all seven devices (`scripts/test-devices.sh`) | 14 of 14 builds pass |
-| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,485 of the 1,504 that build pass (98.7%) |
-| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,489 of 1,507 (98.8%) |
-| GCC C torture, `execute` at `-Os` | 1,490 of 1,508 (98.8%) |
+| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,486 of the 1,505 that build pass (98.7%) |
+| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,490 of 1,508 (98.8%) |
+| GCC C torture, `execute` at `-Os` | 1,491 of 1,509 (98.8%) |
 | The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
+| Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
 | picolibc's tests on the PIC16F1937 | 74 pass, 66 do not build (39 are too big for 8K words) |
 
 About 195 torture tests do not build even on the large device: they need
-`malloc`, `printf`, a 32-bit `int`, variable-length arrays or `alloca`
-(reported as an error, by the compiler or, in a whole-program build, by the
-linker), or nested functions.
+`malloc`, `printf`, a 32-bit `int`, `__builtin_longjmp` or nested
+functions.
 
 The 20 that build and do not pass at one level or another have each been examined; none is wrong
 code from the compiler:
@@ -722,7 +749,8 @@ has most to find:
   matches IEEE results bit for bit in the tests, but uses LLVM's generic
   compiler-rt routines. Each of add, multiply and divide is 1,500 to 2,100
   words, so a program using all three nearly fills an 8K-word part.
-- No variable-length arrays or `alloca`; the compiler says so.
+- No variable-length arrays or `alloca` in an interrupt handler; the compiler
+  says so.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - No debug information.

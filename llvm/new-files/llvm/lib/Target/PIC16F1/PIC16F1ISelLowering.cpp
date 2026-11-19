@@ -95,7 +95,8 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
                      MVT::i16, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Expand);
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
-  setOperationAction({ISD::STACKSAVE, ISD::STACKRESTORE}, MVT::Other, Expand);
+  // The stack pointer that variable-sized objects move is the cell __sp.
+  setOperationAction({ISD::STACKSAVE, ISD::STACKRESTORE}, MVT::Other, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   // __builtin_return_address(0) is the top of the hardware return stack.
   // There is no chain of frames to follow further up, or to give a frame
@@ -153,10 +154,35 @@ SDValue PIC16F1TargetLowering::LowerOperation(SDValue Op,
     // while a function runs. Say so and carry on with a null pointer, so
     // that the compiler (or the linker, in a whole-program build) reports
     // an error instead of stopping dead.
-    unsupported(DAG, SDLoc(Op),
-                "variable-length arrays and alloca are not supported");
-    return DAG.getMergeValues(
-        {DAG.getConstant(0, SDLoc(Op), MVT::i16), Op.getOperand(0)}, SDLoc(Op));
+    // An interrupt handler has a stack of its own and no cell to take
+    // them from.
+    if (DAG.getMachineFunction().getFunction().hasFnAttribute("interrupt")) {
+      unsupported(DAG, SDLoc(Op),
+                  "variable-length arrays and alloca are not supported in "
+                  "an interrupt handler");
+      return DAG.getMergeValues(
+          {DAG.getConstant(0, SDLoc(Op), MVT::i16), Op.getOperand(0)},
+          SDLoc(Op));
+    }
+    return DAG.getNode(PIC16F1ISD::DYNALLOC, SDLoc(Op),
+                       DAG.getVTList(MVT::i16, MVT::Other), Op.getOperand(0),
+                       Op.getOperand(1));
+  case ISD::STACKSAVE: {
+    SDLoc dl(Op);
+    const Module &M = *DAG.getMachineFunction().getFunction().getParent();
+    return DAG.getLoad(
+        MVT::i16, dl, Op.getOperand(0),
+        DAG.getGlobalAddress(pic16f1StackPointerCell(M), dl, MVT::i16),
+        MachinePointerInfo());
+  }
+  case ISD::STACKRESTORE: {
+    SDLoc dl(Op);
+    const Module &M = *DAG.getMachineFunction().getFunction().getParent();
+    return DAG.getStore(
+        Op.getOperand(0), dl, Op.getOperand(1),
+        DAG.getGlobalAddress(pic16f1StackPointerCell(M), dl, MVT::i16),
+        MachinePointerInfo());
+  }
   default:
     llvm_unreachable("unimplemented operand");
   }
