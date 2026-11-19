@@ -18,6 +18,27 @@
 ;
 ; Every routine is in a section of its own, so that a program gets only the
 ; ones it calls.
+;
+; The algorithms themselves are the macros of <picmath.inc>, which work on
+; any registers; this file places them on the registers of the calling
+; convention. An assembly source that wants its operands elsewhere uses the
+; macros directly.
+
+#include <picmath.inc>
+
+#define R0   0x70
+#define R1   0x71
+#define R2   0x72
+#define R3   0x73
+#define R4   0x74
+#define R5   0x75
+#define R6   0x76
+#define R7   0x77
+#define R8   0x78
+#define TMP0 0x7E
+#define TMP1 0x7F
+#define FSR0L 0x04
+#define FSR0H 0x05
 
 ; Built twice, like crt0.S: with -DONE_PAGE for programs within one page,
 ; where PCLATH is never set.
@@ -34,20 +55,9 @@
     .section .text.__mulqi3,"ax",@progbits
     .globl  __mulqi3
 __mulqi3:
-    clrf    0x72            ; product
-.Lmul8_loop:
-    lsrf    0x71, F         ; next multiplier bit into carry
-    btfss   0x03, 0
-    bra     .Lmul8_next
-    movf    0x70, W
-    addwf   0x72, F
-.Lmul8_next:
-    lslf    0x70, F
-    movf    0x71, F         ; any multiplier bits left?
-    btfss   0x03, 2
-    bra     .Lmul8_loop
-    movf    0x72, W
-    movwf   0x70
+    pic_mul8 R0, R1, R2
+    movf    R2, W
+    movwf   R0
     return
 
 ; Quotient in 0x70, remainder in 0x72. The compiler relies on the
@@ -55,25 +65,7 @@ __mulqi3:
     .section .text.__udivqi3,"ax",@progbits
     .globl  __udivqi3
 __udivqi3:
-    clrf    0x72
-    movlw   8
-    movwf   0x7E
-.Ldiv8_loop:
-    lslf    0x70, F         ; remainder:dividend one place left
-    rlf     0x72, F
-    btfsc   0x03, 0         ; a ninth bit: larger than any divisor
-    bra     .Ldiv8_sub
-    movf    0x71, W
-    subwf   0x72, W         ; carry set if remainder >= divisor
-    btfss   0x03, 0
-    bra     .Ldiv8_next
-.Ldiv8_sub:
-    movf    0x71, W
-    subwf   0x72, F
-    bsf     0x70, 0
-.Ldiv8_next:
-    decfsz  0x7E, F
-    bra     .Ldiv8_loop
+    pic_udivmod8 R0, R1, R2, TMP0
     return
 
     .section .text.__umodqi3,"ax",@progbits
@@ -81,22 +73,16 @@ __udivqi3:
 __umodqi3:
     PAGESEL(__udivqi3)
     call    __udivqi3
-    movf    0x72, W
-    movwf   0x70
+    movf    R2, W
+    movwf   R0
     return
 
 ; Both operands to their absolute values.
     .section .text.__pic_absqi2,"ax",@progbits
     .globl  __pic_absqi2
 __pic_absqi2:
-    movf    0x70, W
-    btfsc   0x70, 7
-    sublw   0
-    movwf   0x70
-    movf    0x71, W
-    btfsc   0x71, 7
-    sublw   0
-    movwf   0x71
+    pic_abs8 R0
+    pic_abs8 R1
     return
 
 ; The quotient is negative when the signs differ. TMP1 keeps the sign;
@@ -104,33 +90,33 @@ __pic_absqi2:
     .section .text.__divqi3,"ax",@progbits
     .globl  __divqi3
 __divqi3:
-    movf    0x70, W
-    xorwf   0x71, W
-    movwf   0x7F
+    movf    R0, W
+    xorwf   R1, W
+    movwf   TMP1
     PAGESEL(__pic_absqi2)
     call    __pic_absqi2
     PAGESEL(__udivqi3)
     call    __udivqi3
-    movf    0x70, W
-    btfsc   0x7F, 7
+    movf    R0, W
+    btfsc   TMP1, 7
     sublw   0
-    movwf   0x70
+    movwf   R0
     return
 
 ; The remainder has the sign of the dividend.
     .section .text.__modqi3,"ax",@progbits
     .globl  __modqi3
 __modqi3:
-    movf    0x70, W
-    movwf   0x7F
+    movf    R0, W
+    movwf   TMP1
     PAGESEL(__pic_absqi2)
     call    __pic_absqi2
     PAGESEL(__udivqi3)
     call    __udivqi3
-    movf    0x72, W
-    btfsc   0x7F, 7
+    movf    R2, W
+    btfsc   TMP1, 7
     sublw   0
-    movwf   0x70
+    movwf   R0
     return
 
 ;------------------------------------------------------------------------------
@@ -140,28 +126,11 @@ __modqi3:
     .section .text.__mulhi3,"ax",@progbits
     .globl  __mulhi3
 __mulhi3:
-    clrf    0x74            ; product
-    clrf    0x75
-.Lmul16_loop:
-    lsrf    0x73, F         ; next multiplier bit into carry
-    rrf     0x72, F
-    btfss   0x03, 0
-    bra     .Lmul16_next
-    movf    0x70, W
-    addwf   0x74, F
-    movf    0x71, W
-    addwfc  0x75, F
-.Lmul16_next:
-    lslf    0x70, F
-    rlf     0x71, F
-    movf    0x72, W         ; any multiplier bits left?
-    iorwf   0x73, W
-    btfss   0x03, 2
-    bra     .Lmul16_loop
-    movf    0x74, W
-    movwf   0x70
-    movf    0x75, W
-    movwf   0x71
+    pic_mul16 R0, R1,  R2, R3,  R4, R5
+    movf    R4, W
+    movwf   R0
+    movf    R5, W
+    movwf   R1
     return
 
 ; Quotient in 0x70/71, remainder in 0x74/75. The compiler relies on the
@@ -169,32 +138,7 @@ __mulhi3:
     .section .text.__udivhi3,"ax",@progbits
     .globl  __udivhi3
 __udivhi3:
-    clrf    0x74
-    clrf    0x75
-    movlw   16
-    movwf   0x7E
-.Ldiv16_loop:
-    lslf    0x70, F         ; remainder:dividend one place left
-    rlf     0x71, F
-    rlf     0x74, F
-    rlf     0x75, F
-    btfsc   0x03, 0         ; a seventeenth bit: larger than any divisor
-    bra     .Ldiv16_sub
-    movf    0x72, W
-    subwf   0x74, W
-    movf    0x73, W
-    subwfb  0x75, W         ; carry set if remainder >= divisor
-    btfss   0x03, 0
-    bra     .Ldiv16_next
-.Ldiv16_sub:
-    movf    0x72, W
-    subwf   0x74, F
-    movf    0x73, W
-    subwfb  0x75, F
-    bsf     0x70, 0
-.Ldiv16_next:
-    decfsz  0x7E, F
-    bra     .Ldiv16_loop
+    pic_udivmod16 R0, R1,  R2, R3,  R4, R5,  TMP0
     return
 
     .section .text.__umodhi3,"ax",@progbits
@@ -202,10 +146,10 @@ __udivhi3:
 __umodhi3:
     PAGESEL(__udivhi3)
     call    __udivhi3
-    movf    0x74, W
-    movwf   0x70
-    movf    0x75, W
-    movwf   0x71
+    movf    R4, W
+    movwf   R0
+    movf    R5, W
+    movwf   R1
     return
 
 ; Both operands to their absolute values; __pic_neghi negates the first.
@@ -213,35 +157,24 @@ __umodhi3:
     .globl  __pic_abshi2
     .globl  __pic_neghi
 __pic_abshi2:
-    btfss   0x73, 7
-    bra     .Labs16_first
-    comf    0x72, F
-    comf    0x73, F
-    incf    0x72, F
-    btfsc   0x03, 2
-    incf    0x73, F
-.Labs16_first:
-    btfss   0x71, 7
+    pic_abs16 R2, R3
+    btfss   R1, 7
     return
 __pic_neghi:
-    comf    0x70, F
-    comf    0x71, F
-    incf    0x70, F
-    btfsc   0x03, 2
-    incf    0x71, F
+    pic_neg16 R0, R1
     return
 
     .section .text.__divhi3,"ax",@progbits
     .globl  __divhi3
 __divhi3:
-    movf    0x71, W
-    xorwf   0x73, W
-    movwf   0x7F
+    movf    R1, W
+    xorwf   R3, W
+    movwf   TMP1
     PAGESEL(__pic_abshi2)
     call    __pic_abshi2
     PAGESEL(__udivhi3)
     call    __udivhi3
-    btfss   0x7F, 7
+    btfss   TMP1, 7
     return
     PAGESEL(__pic_neghi)
     goto    __pic_neghi
@@ -249,13 +182,13 @@ __divhi3:
     .section .text.__modhi3,"ax",@progbits
     .globl  __modhi3
 __modhi3:
-    movf    0x71, W
-    movwf   0x7F
+    movf    R1, W
+    movwf   TMP1
     PAGESEL(__pic_abshi2)
     call    __pic_abshi2
     PAGESEL(__umodhi3)
     call    __umodhi3
-    btfss   0x7F, 7
+    btfss   TMP1, 7
     return
     PAGESEL(__pic_neghi)
     goto    __pic_neghi
@@ -267,36 +200,8 @@ __modhi3:
     .section .text.__mulsi3,"ax",@progbits
     .globl  __mulsi3
 __mulsi3:
-    clrf    0x04            ; product in FSR0L, FSR0H, TMP0, TMP1
-    clrf    0x05
-    clrf    0x7E
-    clrf    0x7F
-.Lmul32_loop:
-    lsrf    0x77, F         ; next multiplier bit into carry
-    rrf     0x76, F
-    rrf     0x75, F
-    rrf     0x74, F
-    btfss   0x03, 0
-    bra     .Lmul32_next
-    movf    0x70, W
-    addwf   0x04, F
-    movf    0x71, W
-    addwfc  0x05, F
-    movf    0x72, W
-    addwfc  0x7E, F
-    movf    0x73, W
-    addwfc  0x7F, F
-.Lmul32_next:
-    lslf    0x70, F
-    rlf     0x71, F
-    rlf     0x72, F
-    rlf     0x73, F
-    movf    0x74, W         ; any multiplier bits left?
-    iorwf   0x75, W
-    iorwf   0x76, W
-    iorwf   0x77, W
-    btfss   0x03, 2
-    bra     .Lmul32_loop
+    ; product in FSR0L, FSR0H, TMP0, TMP1
+    pic_mul32 R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1
     PAGESEL(__pic_movsi)
     goto    __pic_movsi
 
@@ -305,14 +210,14 @@ __mulsi3:
     .section .text.__pic_movsi,"ax",@progbits
     .globl  __pic_movsi
 __pic_movsi:
-    movf    0x04, W
-    movwf   0x70
-    movf    0x05, W
-    movwf   0x71
-    movf    0x7E, W
-    movwf   0x72
-    movf    0x7F, W
-    movwf   0x73
+    movf    FSR0L, W
+    movwf   R0
+    movf    FSR0H, W
+    movwf   R1
+    movf    TMP0, W
+    movwf   R2
+    movf    TMP1, W
+    movwf   R3
     return
 
 ; Quotient in 0x70-73, remainder in FSR0L, FSR0H, TMP0, TMP1. The round
@@ -320,50 +225,11 @@ __pic_movsi:
     .section .text.__udivsi3,"ax",@progbits
     .globl  __udivsi3
 __udivsi3:
-    movf    0x78, W
+    movf    R8, W
     movwi   --FSR1
-    clrf    0x04
-    clrf    0x05
-    clrf    0x7E
-    clrf    0x7F
-    movlw   32
-    movwf   0x78
-.Ldiv32_loop:
-    lslf    0x70, F         ; remainder:dividend one place left
-    rlf     0x71, F
-    rlf     0x72, F
-    rlf     0x73, F
-    rlf     0x04, F
-    rlf     0x05, F
-    rlf     0x7E, F
-    rlf     0x7F, F
-    btfsc   0x03, 0         ; a thirty-third bit: larger than any divisor
-    bra     .Ldiv32_sub
-    movf    0x74, W
-    subwf   0x04, W
-    movf    0x75, W
-    subwfb  0x05, W
-    movf    0x76, W
-    subwfb  0x7E, W
-    movf    0x77, W
-    subwfb  0x7F, W         ; carry set if remainder >= divisor
-    btfss   0x03, 0
-    bra     .Ldiv32_next
-.Ldiv32_sub:
-    movf    0x74, W
-    subwf   0x04, F
-    movf    0x75, W
-    subwfb  0x05, F
-    movf    0x76, W
-    subwfb  0x7E, F
-    movf    0x77, W
-    subwfb  0x7F, F
-    bsf     0x70, 0
-.Ldiv32_next:
-    decfsz  0x78, F
-    bra     .Ldiv32_loop
+    pic_udivmod32 R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  R8
     moviw   FSR1++
-    movwf   0x78
+    movwf   R8
     return
 
 ; Quotient in 0x70-73 and remainder in 0x74-77: what the compiler calls
@@ -373,14 +239,14 @@ __udivsi3:
 __udivmodsi4:
     PAGESEL(__udivsi3)
     call    __udivsi3
-    movf    0x04, W
-    movwf   0x74
-    movf    0x05, W
-    movwf   0x75
-    movf    0x7E, W
-    movwf   0x76
-    movf    0x7F, W
-    movwf   0x77
+    movf    FSR0L, W
+    movwf   R4
+    movf    FSR0H, W
+    movwf   R5
+    movf    TMP0, W
+    movwf   R6
+    movf    TMP1, W
+    movwf   R7
     return
 
     .section .text.__umodsi3,"ax",@progbits
@@ -396,40 +262,19 @@ __umodsi3:
     .globl  __pic_abssi2
     .globl  __pic_negsi
 __pic_abssi2:
-    btfss   0x77, 7
-    bra     .Labs32_first
-    comf    0x74, F
-    comf    0x75, F
-    comf    0x76, F
-    comf    0x77, F
-    movlw   1
-    addwf   0x74, F
-    movlw   0
-    addwfc  0x75, F
-    addwfc  0x76, F
-    addwfc  0x77, F
-.Labs32_first:
-    btfss   0x73, 7
+    pic_abs32 R4, R5, R6, R7
+    btfss   R3, 7
     return
 __pic_negsi:
-    comf    0x70, F
-    comf    0x71, F
-    comf    0x72, F
-    comf    0x73, F
-    movlw   1
-    addwf   0x70, F
-    movlw   0
-    addwfc  0x71, F
-    addwfc  0x72, F
-    addwfc  0x73, F
+    pic_neg32 R0, R1, R2, R3
     return
 
 ; The sign waits on the stack: the unsigned routine uses every free byte.
     .section .text.__divsi3,"ax",@progbits
     .globl  __divsi3
 __divsi3:
-    movf    0x73, W
-    xorwf   0x77, W
+    movf    R3, W
+    xorwf   R7, W
     movwi   --FSR1
     PAGESEL(__pic_abssi2)
     call    __pic_abssi2
@@ -437,7 +282,7 @@ __divsi3:
     call    __udivsi3
     moviw   FSR1++
     andlw   0x80
-    btfsc   0x03, 2
+    btfsc   PICMATH_STATUS, PICMATH_Z
     return
     PAGESEL(__pic_negsi)
     goto    __pic_negsi
@@ -445,7 +290,7 @@ __divsi3:
     .section .text.__modsi3,"ax",@progbits
     .globl  __modsi3
 __modsi3:
-    movf    0x73, W
+    movf    R3, W
     movwi   --FSR1
     PAGESEL(__pic_abssi2)
     call    __pic_abssi2
@@ -453,7 +298,7 @@ __modsi3:
     call    __umodsi3
     moviw   FSR1++
     andlw   0x80
-    btfsc   0x03, 2
+    btfsc   PICMATH_STATUS, PICMATH_Z
     return
     PAGESEL(__pic_negsi)
     goto    __pic_negsi

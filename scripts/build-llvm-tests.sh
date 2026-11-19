@@ -19,6 +19,8 @@ status=0
 
 [ $# -gt 0 ] || set -- $(ls "$tests")
 for prog in "$@"; do
+    # Assembly sources beside main.c are part of the program.
+    asm=$(ls "$tests/$prog"/*.S 2>/dev/null || true)
     for level in $LEVELS; do
         # A file named skip-<level> in the test directory excludes that level.
         [ -e "$tests/$prog/skip-$level" ] && continue
@@ -26,7 +28,7 @@ for prog in "$@"; do
         mkdir -p "$dir"
         rm -f "$dir/$prog.hex" "$dir/$prog.elf"
         if ! "$cc" -mcpu=pic16f1937 -"$level" -std=c99 -I"$root/tests/common" \
-                -o "$dir/$prog.hex" "$tests/$prog/main.c" \
+                -o "$dir/$prog.hex" "$tests/$prog/main.c" $asm \
                 "$root/tests/common/bench.c" > "$dir/build.log" 2>&1; then
             echo "BUILD FAILED: $prog $level (see $dir/build.log)" >&2
             status=1

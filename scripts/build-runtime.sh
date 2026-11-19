@@ -14,7 +14,7 @@ mkdir -p "$out"
 # No outlining: a program links only the routines it calls, so a sequence
 # shared between routines would cost more than it saves, and these are the
 # routines whose speed matters.
-cc="$bin/clang --target=pic16f1 -mcpu=pic16f1937 -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Os -mllvm -enable-machine-outliner=never"
+cc="$bin/clang --target=pic16f1 -mcpu=pic16f1937 -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Os -mllvm -enable-machine-outliner=never -I$root/toolchain/include"
 
 # The library is built for each code model: libpicrt.a sets PCLATH before
 # every call; libpicrt-small.a (with crt0-small.o) is for programs that fit

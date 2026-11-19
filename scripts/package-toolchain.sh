@@ -25,7 +25,7 @@ rm -rf "$out/lib/clang"
 mkdir -p "$out/lib/clang"
 cp -R "$bld/lib/clang/." "$out/lib/clang/"
 cp "$root/toolchain/bin/pic16f1-cc" "$out/bin/"
-cp "$root"/toolchain/include/*.h "$out/include/pic16f1/"
+cp "$root"/toolchain/include/*.h "$root"/toolchain/include/*.inc "$out/include/pic16f1/"
 cp "$root"/toolchain/lib/*.ld "$out/lib/pic16f1/"
 rt=$root/build/toolchain/lib/pic16f1
 if [ "$out/lib/pic16f1" != "$rt" ]; then

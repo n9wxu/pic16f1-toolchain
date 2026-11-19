@@ -12,7 +12,7 @@ first, with the simplest design that works.
 | LLVM target `pic16f1` | `llvm/new-files/llvm/lib/Target/PIC16F1` | Assembler, object writer, code generator |
 | Clang target | `llvm/new-files/clang`, `llvm/existing-files.patch` | Type sizes, ABI, `interrupt` attribute |
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
-| Runtime | `toolchain/runtime` | Startup code; multiply, divide and shifts in assembly (64-bit multiply and divide in C); `memcpy` family; soft float from LLVM's compiler-rt |
+| Runtime | `toolchain/runtime` | Startup code; multiply, divide and shifts in assembly, built from the register-independent macros of `toolchain/include/picmath.inc` (64-bit multiply and divide in C); `memcpy` family; soft float from LLVM's compiler-rt |
 | Device files | `toolchain/include`, `toolchain/lib` | Generated from the device database |
 | C library | `toolchain/picolibc` | picolibc at a pinned commit, with a small patch; built for 32- and 64-bank devices |
 | Driver | `toolchain/bin/pic16f1-cc` | Compile, link, convert to HEX |
@@ -235,6 +235,17 @@ levels of the hardware stack may need a higher threshold.
   for the 16-bit divide. The 8- and 16-bit ones use only `R0`-`R5` and the
   scratch bytes, and the compiler knows that `R6`, `R7` and FSR0 survive a
   call to them.
+- **The same routines on any registers.** The algorithms are assembler
+  macros in `toolchain/include/picmath.inc` (`pic_mul8/16/32`,
+  `pic_udivmod8/16/32`, `pic_divmod8/16/32`, `pic_neg…`, `pic_abs…`, and
+  the 32- and 64-bit shifts). Each takes one file-register address per
+  byte, so an assembly source can place one on its own registers:
+  `#include <picmath.inc>`, then `pic_mul16 a0, a1, b0, b1, p0, p1`. The
+  registers must be reachable with the bank selected at that point; the
+  macros never change the bank. The runtime library is these macros placed
+  on the calling convention's registers, which is the only place the
+  register numbers are fixed. `tests/compiler/picmath` runs every macro on
+  banked RAM and checks it against the compiler's arithmetic.
 - **Bank selection.** The linker starts a data section of up to 16 bytes in
   the next bank if it would otherwise cross a bank boundary
   (`pic16f1KeepInBank` in lld), and the compiler always gives each variable
@@ -329,7 +340,7 @@ All run on the simulator; nothing has run on silicon yet.
 |---|---|
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-Os`) | 60 of 60 pass, with either instruction selector |
-| Compiler tests (`tests/compiler`, 17 programs) | 64 of 64 builds pass, with either instruction selector |
+| Compiler tests (`tests/compiler`, 18 programs) | 68 of 68 builds pass, with either instruction selector |
 | Regression tests (`tests/lit`) | 20 of 20 pass |
 | One program on all five devices (`scripts/test-devices.sh`) | 10 of 10 builds pass |
 | GCC C torture, `execute` (1,701 tests) at `-O0` | 1,389 of the 1,422 that build pass (97.7%) |
