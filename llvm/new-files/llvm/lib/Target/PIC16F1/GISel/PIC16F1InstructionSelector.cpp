@@ -442,6 +442,12 @@ Address PIC16F1InstructionSelector::matchAddress(Register Ptr,
     auto K = constantOf(Def->getOperand(2).getReg());
     if (!K)
       break;
+    // A pointer that steps through a loop is wanted in a register after
+    // the step anyway. Addressing from it, and not from the pointer before
+    // the step, lets the step happen in place (in FSR0, when it is free).
+    if (any_of(MRI->use_nodbg_instructions(Def->getOperand(0).getReg()),
+               [](const MachineInstr &U) { return U.isPHI(); }))
+      break;
     Offset += *K;
     Cur = Def->getOperand(1).getReg();
     if (Offset >= -32 && Offset + int64_t(AccessBytes) - 1 <= 31) {
@@ -700,34 +706,44 @@ bool PIC16F1InstructionSelector::selectLoad(MachineInstr &I) const {
 bool PIC16F1InstructionSelector::selectReadModifyWrite(MachineInstr &Store,
                                                        const Address &A) const {
   Register Val = Store.getOperand(0).getReg();
-  if (sizeOf(Val) != 8 || !MRI->hasOneNonDBGUse(Val))
+  unsigned Bits = sizeOf(Val);
+  if ((Bits != 8 && Bits != 16) || !MRI->hasOneNonDBGUse(Val))
     return false;
+  bool Wide = Bits == 16;
   MachineInstr *Op = MRI->getVRegDef(Val);
   if (!Op || Op->getParent() != Store.getParent())
     return false;
+  // MI is 0 where there is no form with a constant.
   unsigned MI, MR;
   switch (Op->getOpcode()) {
   case G_AND:
-    MI = AND8mi;
-    MR = AND8mr;
+    MI = Wide ? AND16mi : AND8mi;
+    MR = Wide ? AND16mr : AND8mr;
     break;
   case G_OR:
-    MI = OR8mi;
-    MR = OR8mr;
+    MI = Wide ? OR16mi : OR8mi;
+    MR = Wide ? OR16mr : OR8mr;
     break;
   case G_XOR:
-    MI = XOR8mi;
-    MR = XOR8mr;
+    MI = Wide ? XOR16mi : XOR8mi;
+    MR = Wide ? XOR16mr : XOR8mr;
     break;
   case G_ADD:
-    MI = ADD8mi;
-    MR = ADD8mr;
+    MI = Wide ? ADD16mi : ADD8mi;
+    MR = Wide ? ADD16mr : ADD8mr;
+    break;
+  case G_SUB:
+    MI = 0;
+    MR = Wide ? SUB16mr : SUB8mr;
     break;
   default:
     return false;
   }
   // One operand must be a load of the same address, used only here.
   for (unsigned LoadIdx : {1u, 2u}) {
+    // Only memory - x, not x - memory.
+    if (LoadIdx == 2 && Op->getOpcode() == G_SUB)
+      break;
     Register LoadReg = Op->getOperand(LoadIdx).getReg();
     Register Other = Op->getOperand(3 - LoadIdx).getReg();
     MachineInstr *Load = MRI->getVRegDef(LoadReg);
@@ -735,7 +751,7 @@ bool PIC16F1InstructionSelector::selectReadModifyWrite(MachineInstr &Store,
         Load->getParent() != Store.getParent() ||
         !MRI->hasOneNonDBGUse(LoadReg))
       continue;
-    Address LA = matchAddress(Load->getOperand(1).getReg(), 1);
+    Address LA = matchAddress(Load->getOperand(1).getReg(), Wide ? 2 : 1);
     if (LA.Kind != A.Kind || LA.GV != A.GV || LA.Offset != A.Offset)
       continue;
     // The read moves down to the store. Nothing in between may write
@@ -750,10 +766,10 @@ bool PIC16F1InstructionSelector::selectReadModifyWrite(MachineInstr &Store,
     if (!Safe)
       continue;
     MachineInstrBuilder MIB;
-    if (auto K = constantOf(Other)) {
+    if (auto K = constantOf(Other); K && MI) {
       MIB = build(Store, MI);
       addAddressOperands(MIB, A);
-      MIB.addImm(*K & 0xFF);
+      MIB.addImm(*K & (Wide ? 0xFFFF : 0xFF));
     } else {
       MIB = build(Store, MR);
       addAddressOperands(MIB, A);
@@ -912,6 +928,21 @@ bool PIC16F1InstructionSelector::selectShift(MachineInstr &I) const {
       From = Next;
     }
   };
+  // An 8-bit shift. Four places at once is an exchange of the halves and
+  // a mask.
+  auto Shift8 = [&](Register From, unsigned Count, Register To) {
+    if (Count >= 4 && Opc != G_ASHR) {
+      Register Swapped = newReg(8);
+      build(I, SWAP8, Swapped).addUse(From);
+      Register Masked = Count == 4 ? To : newReg(8);
+      build(I, AND8ri, Masked)
+          .addUse(Swapped)
+          .addImm(Opc == G_SHL ? 0xF0 : 0x0F);
+      From = Masked;
+      Count -= 4;
+    }
+    Chain(One8, 8, From, Count, To);
+  };
   if (Wide && N >= 8) {
     // A 16-bit shift by eight or more is a byte move and an 8-bit shift.
     Register Byte = newReg(8);
@@ -923,7 +954,7 @@ bool PIC16F1InstructionSelector::selectShift(MachineInstr &I) const {
       if (N == 15 && Opc == G_LSHR)
         TopBit(Byte, Shifted);
       else
-        Chain(One8, 8, Byte, N - 8, Shifted);
+        Shift8(Byte, N - 8, Shifted);
     }
     if (Opc == G_SHL) {
       Register Zero = materialize(I, 0, 8);
@@ -938,7 +969,10 @@ bool PIC16F1InstructionSelector::selectShift(MachineInstr &I) const {
     I.eraseFromParent();
     return true;
   }
-  Chain(Wide ? One16 : One8, Wide ? 16 : 8, Src, N, Dst);
+  if (Wide)
+    Chain(One16, 16, Src, N, Dst);
+  else
+    Shift8(Src, N, Dst);
   I.eraseFromParent();
   return true;
 }
@@ -1102,6 +1136,18 @@ bool PIC16F1InstructionSelector::select(MachineInstr &I) {
       Opc == PIC16F1::G_RRC)
     return selectRightShiftLink(I);
 
+  if (Opc == PIC16F1::G_ADD_IF_NEG) {
+    Register Dst = I.getOperand(0).getReg();
+    Register Src = I.getOperand(1).getReg();
+    if (auto K = constantOf(Src))
+      Src = materialize(I, *K, sizeOf(Dst));
+    if (!constrain(Dst) || !constrain(Src))
+      return false;
+    return done(I, build(I, is16(Dst) ? ADDNEG16 : ADDNEG8, Dst)
+                       .addUse(Src)
+                       .addImm(I.getOperand(2).getImm()));
+  }
+
   if (!isPreISelGenericOpcode(Opc)) {
     if (I.isCopy())
       return selectCopy(I);
@@ -1153,6 +1199,7 @@ bool PIC16F1InstructionSelector::select(MachineInstr &I) {
     return selectBinary(I);
   case G_PTR_ADD:
     return selectPtrAdd(I);
+
   case G_ZEXT:
   case G_SEXT:
   case G_ANYEXT:

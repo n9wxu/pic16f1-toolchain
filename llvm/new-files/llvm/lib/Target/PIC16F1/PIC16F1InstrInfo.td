@@ -420,6 +420,17 @@ def G_RRC : PIC16F1GenericInstruction {
   let InOperandList = (ins type0:$a, type1:$cin);
 }
 
+// Add a constant if the value is negative: the first step of a signed
+// division by a power of two, which must round towards zero.
+def G_ADD_IF_NEG : PIC16F1GenericInstruction {
+  let OutOperandList = (outs type0:$d);
+  let InOperandList = (ins type0:$a, untyped_imm_0:$k);
+}
+let Constraints = "$d = $a", Defs = [CARRY] in {
+def ADDNEG8 : Pseudo<(outs GPR8:$d), (ins GPR8:$a, i8imm:$k), []>;
+def ADDNEG16 : Pseudo<(outs GPR16:$d), (ins GPR16:$a, i16imm:$k), []>;
+}
+
 // Used only while GlobalISel selects a carry chain: it keeps the earlier
 // link from being removed as dead once the later link, which takes the
 // carry from the flag, no longer names the carry register. The earlier
@@ -456,6 +467,10 @@ def ASR16 : Pseudo<(outs GPR16:$d), (ins GPR16:$a),
                    [(set GPR16:$d, (PICasr1 GPR16:$a))]>;
 }
 }
+
+// Exchange the two halves of a byte: with a mask, a shift by four.
+let Constraints = "$d = $a" in
+def SWAP8 : Pseudo<(outs GPR8:$d), (ins GPR8:$a), []>;
 
 // Shifts by a run-time amount become loops in the custom inserter.
 let usesCustomInserter = 1, Defs = [CARRY, TMP0] in {
@@ -509,6 +524,9 @@ def ST16abs : Pseudo<(outs), (ins GPR16:$s, memabs:$a),
 }
 def LD8ptr : Pseudo<(outs GPR8:$d), (ins memptr:$a),
                     [(set GPR8:$d, (load addrptr8:$a))]>;
+// The second byte is read after the first is stored, so the result must
+// not be FSR0 itself, where the pointer is by then.
+let Constraints = "@earlyclobber $d" in
 def LD16ptr : Pseudo<(outs GPR16:$d), (ins memptr:$a),
                      [(set GPR16:$d, (load addrptr16:$a))]>;
 def ST8ptr : Pseudo<(outs), (ins GPR8:$s, memptr:$a),
@@ -545,6 +563,23 @@ defm OR8 : RMW<or>;
 defm XOR8 : RMW<xor>;
 let Defs = [CARRY] in
 defm ADD8 : RMW<add>;
+}
+
+// The same for a directly addressed 16-bit object, a byte at a time, and
+// for subtracting a register. GlobalISel selects these.
+multiclass RMW16 {
+  def mi : Pseudo<(outs), (ins memabs:$a, i16imm:$k), []>;
+  def mr : Pseudo<(outs), (ins memabs:$a, GPR16:$s), []>;
+}
+let mayLoad = 1, mayStore = 1 in {
+defm AND16 : RMW16;
+defm OR16 : RMW16;
+defm XOR16 : RMW16;
+let Defs = [CARRY] in {
+defm ADD16 : RMW16;
+def SUB8mr : Pseudo<(outs), (ins memabs:$a, GPR8:$s), []>;
+def SUB16mr : Pseudo<(outs), (ins memabs:$a, GPR16:$s), []>;
+}
 }
 
 // Outgoing call arguments, stored at an offset from the stack pointer. The

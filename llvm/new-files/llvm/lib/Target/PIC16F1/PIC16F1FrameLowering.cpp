@@ -67,7 +67,11 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
   MachineBasicBlock::iterator I = MBB.begin();
   DebugLoc DL;
 
-  if (MF.getFunction().hasFnAttribute("interrupt")) {
+  // An interrupt handler runs on a stack of its own, unless it uses none:
+  // it then leaves FSR1 alone.
+  bool UsesStack = MFI.getStackSize() != 0 || MFI.hasCalls() ||
+                   MFI.hasVarSizedObjects() || MFI.getNumObjects() != 0;
+  if (MF.getFunction().hasFnAttribute("interrupt") && UsesStack) {
     const char *Top = "__isr_stack_top";
     BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVLW))
         .addExternalSymbol(Top, PIC16F1II::MO_LO8);
@@ -76,17 +80,30 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
         .addExternalSymbol(Top, PIC16F1II::MO_HI8);
     BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVWF)).addImm(PIC16F1::FSR1H_ADDR);
   }
-  adjustSP(MBB, I, DL, -int64_t(MFI.getStackSize()));
+  // The pushes of the callee-saved registers come next and have moved the
+  // stack pointer over their part of the frame already.
+  while (I != MBB.end() && I->getFlag(MachineInstr::FrameSetup))
+    ++I;
+  adjustSP(MBB, I, DL,
+           -int64_t(MFI.getStackSize() - MFI.getCalleeSavedInfo().size()));
 }
 
 void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
                                         MachineBasicBlock &MBB) const {
-  // RETFIE restores FSR1, so an interrupt handler has nothing to undo.
-  if (MF.getFunction().hasFnAttribute("interrupt"))
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  // RETFIE restores FSR1, so an interrupt handler that pops nothing has
+  // nothing to undo.
+  if (MF.getFunction().hasFnAttribute("interrupt") &&
+      MFI.getCalleeSavedInfo().empty())
     return;
   MachineBasicBlock::iterator I = MBB.getFirstTerminator();
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
-  adjustSP(MBB, I, DL, MF.getFrameInfo().getStackSize());
+  // Back over the pops of the callee-saved registers: the stack pointer
+  // must be at the first of them when they start.
+  while (I != MBB.begin() &&
+         std::prev(I)->getFlag(MachineInstr::FrameDestroy))
+    --I;
+  adjustSP(MBB, I, DL, MFI.getStackSize() - MFI.getCalleeSavedInfo().size());
 }
 
 MachineBasicBlock::iterator PIC16F1FrameLowering::eliminateCallFramePseudoInstr(
@@ -94,4 +111,76 @@ MachineBasicBlock::iterator PIC16F1FrameLowering::eliminateCallFramePseudoInstr(
     MachineBasicBlock::iterator I) const {
   // The outgoing-argument area is part of the frame.
   return MBB.erase(I);
+}
+
+void PIC16F1FrameLowering::determineCalleeSaves(MachineFunction &MF,
+                                                BitVector &SavedRegs,
+                                                RegScavenger *RS) const {
+  TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
+  // An interrupt handler saves TMP0 if anything may change it. Every
+  // compare-and-branch is declared to, but most do not use it.
+  if (!SavedRegs.test(PIC16F1::TMP0))
+    return;
+  const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
+  const TargetRegisterInfo *TRI = STI.getRegisterInfo();
+  for (const MachineBasicBlock &MBB : MF) {
+    for (const MachineInstr &MI : MBB) {
+      if (!MI.modifiesRegister(PIC16F1::TMP0, TRI))
+        continue;
+      if (!PIC16F1InstrInfo::isCompareBranch(MI.getOpcode()))
+        return;
+      SmallVector<PIC16F1RawInst, 12> Seq;
+      TII.buildCompareBranch(MI, Seq);
+      for (const PIC16F1RawInst &R : Seq)
+        if (!R.IsBranch && R.Op0 == PIC16F1::TMP0_ADDR)
+          return;
+    }
+  }
+  SavedRegs.reset(PIC16F1::TMP0);
+}
+
+// MOVWI --FSR1 and MOVIW FSR1++ (see printIndMode for the encoding).
+static const unsigned PushMode = 5, PopMode = 6;
+
+bool PIC16F1FrameLowering::spillCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
+  if (CSI.empty())
+    return false;
+  const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
+  DebugLoc DL;
+  // The first register pushed lands just below the stack pointer at entry,
+  // which is where the first spill slot is: the generic code lays the
+  // slots out downwards in this same order.
+  for (const CalleeSavedInfo &I : CSI) {
+    MCRegister Reg = I.getReg();
+    if (!MBB.isLiveIn(Reg))
+      MBB.addLiveIn(Reg);
+    BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVF))
+        .addImm(TII.fileAddr(Reg))
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameSetup);
+    BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVWIm))
+        .addImm(PushMode)
+        .setMIFlag(MachineInstr::FrameSetup);
+  }
+  return true;
+}
+
+bool PIC16F1FrameLowering::restoreCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    MutableArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
+  if (CSI.empty())
+    return false;
+  const PIC16F1InstrInfo &TII = *STI.getInstrInfo();
+  DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
+  for (const CalleeSavedInfo &I : llvm::reverse(CSI)) {
+    BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVIWm))
+        .addImm(PopMode)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVWF))
+        .addImm(TII.fileAddr(I.getReg()))
+        .setMIFlag(MachineInstr::FrameDestroy);
+  }
+  return true;
 }

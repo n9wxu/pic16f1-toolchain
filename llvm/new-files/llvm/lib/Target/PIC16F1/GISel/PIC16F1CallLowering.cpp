@@ -234,11 +234,16 @@ bool PIC16F1CallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
 
   auto CallSeqStart = MIRBuilder.buildInstr(TII.getCallFrameSetupOpcode());
 
+  const uint32_t *Preserved = TRI->getCallPreservedMask(MF, Info.CallConv);
+  if (Info.Callee.isSymbol())
+    if (const uint32_t *More = PIC16F1RegisterInfo::getLibcallPreservedMask(
+            Info.Callee.getSymbolName()))
+      Preserved = More;
   auto MIB = MIRBuilder
                  .buildInstrNoInsert(Info.Callee.isReg() ? PIC16F1::CALLreg
                                                          : PIC16F1::CALLsym)
                  .add(Info.Callee)
-                 .addRegMask(TRI->getCallPreservedMask(MF, Info.CallConv));
+                 .addRegMask(Preserved);
 
   OutgoingValueAssigner Assigner(TLI.getCCAssignFn(Info.IsVarArg));
   OutgoingHandler Handler(MIRBuilder, MRI, MIB);

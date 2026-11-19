@@ -30,6 +30,20 @@ public:
   bool hasReservedCallFrame(const MachineFunction &MF) const override {
     return true;
   }
+  // Callee-saved registers are pushed on entry and popped before the
+  // return, in a fixed order. The instructions are then the same in every
+  // function that saves the same registers, and the outliner shares them.
+  bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MI,
+                                 ArrayRef<CalleeSavedInfo> CSI,
+                                 const TargetRegisterInfo *TRI) const override;
+  bool
+  restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator MI,
+                              MutableArrayRef<CalleeSavedInfo> CSI,
+                              const TargetRegisterInfo *TRI) const override;
+  void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
+                            RegScavenger *RS = nullptr) const override;
 
 private:
   const PIC16F1Subtarget &STI;

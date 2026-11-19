@@ -11,6 +11,8 @@
 #include "PIC16F1Subtarget.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -308,6 +310,11 @@ void PIC16F1InstrInfo::buildCompareBranch(
     } else if (IsImm && K == 0) {
       F(MOVF, A, ToW);
       F(IORWF, A + 1, ToW);
+    } else if (IsImm && (KHi == 0 || KLo == 0)) {
+      // One byte must equal a constant and the other must be zero.
+      F(MOVF, KHi == 0 ? A : A + 1, ToW);
+      L(XORLW, KHi == 0 ? KLo : KHi);
+      F(IORWF, KHi == 0 ? A + 1 : A, ToW);
     } else {
       F(MOVF, A, ToW);
       if (IsImm) {
@@ -332,6 +339,13 @@ void PIC16F1InstrInfo::buildCompareBranch(
   case PIC16F1CC::COND_ULT:
   case PIC16F1CC::COND_UGE: {
     // a - b leaves C set when there was no borrow, that is when a >= b.
+    if (Is16 && IsImm && KLo == 0) {
+      // The low byte cannot borrow: only the high bytes decide.
+      L(MOVLW, KHi);
+      F(SUBWF, A + 1, ToW);
+      BranchIfStatus(STATUS_C, CC == PIC16F1CC::COND_UGE);
+      return;
+    }
     if (IsImm)
       L(MOVLW, KLo);
     else
@@ -358,15 +372,16 @@ void PIC16F1InstrInfo::buildCompareBranch(
       return;
     }
     // Flipping both sign bits turns a signed comparison into an unsigned one.
-    if (!Is16 && IsImm) {
-      unsigned KP = KLo ^ 0x80;
+    // With a constant whose low byte is zero, only the high bytes decide.
+    if (IsImm && (!Is16 || KLo == 0)) {
+      unsigned KP = (Is16 ? KHi : KLo) ^ 0x80;
       if (KP == 0) {
         // Comparing with the most negative value: always greater or equal.
         if (WantGE)
           Branch();
         return;
       }
-      F(MOVF, A, ToW);
+      F(MOVF, Top, ToW);
       L(XORLW, 0x80);
       L(ADDLW, 0x100 - KP); // carry out when (a ^ 0x80) >= (k ^ 0x80)
       BranchIfStatus(STATUS_C, WantGE);
@@ -428,4 +443,262 @@ unsigned PIC16F1InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   default:
     return MI.getDesc().getSize();
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Machine outliner
+//===----------------------------------------------------------------------===//
+
+namespace {
+// Default: the sequence, then a return. TailCall: the sequence ends in a
+// return, and is jumped to. Thunk: the sequence ends in a call, which
+// becomes a jump, so that the callee returns for the outlined function.
+enum MachineOutlinerClass {
+  MachineOutlinerDefault,
+  MachineOutlinerTailCall,
+  MachineOutlinerThunk
+};
+} // namespace
+
+bool PIC16F1InstrInfo::inOneBank(const GlobalValue *GV, int64_t Off) {
+  const auto *Var = dyn_cast<GlobalVariable>(GV);
+  if (!Var || Var->hasSection() || !Var->getValueType()->isSized())
+    return false;
+  uint64_t Size =
+      Var->getParent()->getDataLayout().getTypeAllocSize(Var->getValueType());
+  return Size <= 16 && Off >= 0 && uint64_t(Off) < Size;
+}
+
+bool PIC16F1InstrInfo::isSkip(const MachineInstr &MI) {
+  switch (MI.getOpcode()) {
+  case PIC16F1::BTFSC:
+  case PIC16F1::BTFSS:
+  case PIC16F1::DECFSZ:
+  case PIC16F1::INCFSZ:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool PIC16F1InstrInfo::shouldOutlineFromFunctionByDefault(
+    MachineFunction &MF) const {
+  // Each use of an outlined sequence costs the four cycles of a call and
+  // return, so only where size was asked for.
+  return MF.getFunction().hasOptSize();
+}
+
+bool PIC16F1InstrInfo::isFunctionSafeToOutlineFrom(
+    MachineFunction &MF, bool OutlineFromLinkOnceODRs) const {
+  const Function &F = MF.getFunction();
+  if (!OutlineFromLinkOnceODRs && F.hasLinkOnceODRLinkage())
+    return false;
+  return true;
+}
+
+/// The instruction that runs before \p MI when control arrives from above,
+/// or null at the start of the function.
+static const MachineInstr *instrBefore(const MachineInstr &MI) {
+  const MachineBasicBlock *MBB = MI.getParent();
+  for (auto It = std::next(MI.getReverseIterator()); It != MBB->rend(); ++It)
+    if (!It->isMetaInstruction())
+      return &*It;
+  MachineFunction::const_iterator B = MBB->getIterator();
+  while (B != MBB->getParent()->begin()) {
+    --B;
+    for (const MachineInstr &Prev : llvm::reverse(*B))
+      if (!Prev.isMetaInstruction())
+        return &Prev;
+  }
+  return nullptr;
+}
+
+/// The file address \p MI names (without the bank), or -1 if it names none
+/// or names a symbol.
+static int fileOperand(const MachineInstr &MI) {
+  switch (MI.getOpcode()) {
+  case PIC16F1::ADDWF:
+  case PIC16F1::ADDWFC:
+  case PIC16F1::ANDWF:
+  case PIC16F1::ASRF:
+  case PIC16F1::LSLF:
+  case PIC16F1::LSRF:
+  case PIC16F1::COMF:
+  case PIC16F1::DECF:
+  case PIC16F1::INCF:
+  case PIC16F1::IORWF:
+  case PIC16F1::MOVF:
+  case PIC16F1::RLF:
+  case PIC16F1::RRF:
+  case PIC16F1::SUBWF:
+  case PIC16F1::SUBWFB:
+  case PIC16F1::SWAPF:
+  case PIC16F1::XORWF:
+  case PIC16F1::DECFSZ:
+  case PIC16F1::INCFSZ:
+  case PIC16F1::CLRF:
+  case PIC16F1::MOVWF:
+  case PIC16F1::BCF:
+  case PIC16F1::BSF:
+  case PIC16F1::BTFSC:
+  case PIC16F1::BTFSS:
+    return MI.getOperand(0).isImm() ? int(MI.getOperand(0).getImm() & 0x7F)
+                                    : -1;
+  default:
+    return -1;
+  }
+}
+
+static bool writesFile(const MachineInstr &MI, unsigned File) {
+  if (fileOperand(MI) != int(File))
+    return false;
+  switch (MI.getOpcode()) {
+  case PIC16F1::MOVWF:
+  case PIC16F1::CLRF:
+  case PIC16F1::BCF:
+  case PIC16F1::BSF:
+    return true;
+  case PIC16F1::BTFSC:
+  case PIC16F1::BTFSS:
+    return false;
+  default:
+    // The destination bit is the second operand.
+    return MI.getOperand(1).getImm() == 1;
+  }
+}
+
+std::optional<std::unique_ptr<outliner::OutlinedFunction>>
+PIC16F1InstrInfo::getOutliningCandidateInfo(
+    const MachineModuleInfo &MMI,
+    std::vector<outliner::Candidate> &RepeatedSequenceLocs,
+    unsigned MinRepeats) const {
+  outliner::Candidate &First = RepeatedSequenceLocs[0];
+  bool Small =
+      First.getMF()->getTarget().getCodeModel() == CodeModel::Small;
+
+  unsigned SequenceSize = 0;
+  for (const MachineInstr &MI : First)
+    SequenceSize += getInstSizeInBytes(MI);
+
+  // A sequence that ends in a skip would skip the return that follows it
+  // in the outlined function.
+  const MachineInstr &Last = First.back();
+  if (isSkip(Last))
+    return std::nullopt;
+
+  // The call to the outlined function sets PCLATH, except in the one-page
+  // code model. A call or computed jump in the sequence must then have its
+  // own setting of PCLATH inside the sequence.
+  if (!Small) {
+    bool PageSet = false;
+    for (const MachineInstr &MI : First) {
+      if (MI.getOpcode() == PIC16F1::MOVLP ||
+          writesFile(MI, PIC16F1::PCLATH_ADDR)) {
+        PageSet = true;
+      } else if (MI.isCall() || MI.getOpcode() == PIC16F1::GOTO ||
+                 writesFile(MI, PIC16F1::PCL_ADDR)) {
+        if (!PageSet)
+          return std::nullopt;
+        PageSet = false;
+      }
+    }
+  }
+
+  // A sequence that follows a skip runs only in part when the skip is
+  // taken; a call in its place would be skipped whole.
+  llvm::erase_if(RepeatedSequenceLocs, [](outliner::Candidate &C) {
+    const MachineInstr *Prev = instrBefore(C.front());
+    return Prev && (isSkip(*Prev) || Prev->isInlineAsm());
+  });
+  if (RepeatedSequenceLocs.size() < MinRepeats)
+    return std::nullopt;
+
+  unsigned CallSize = Small ? 2 : 4;
+  if (Last.isReturn()) {
+    for (outliner::Candidate &C : RepeatedSequenceLocs)
+      C.setCallInfo(MachineOutlinerTailCall, CallSize);
+    return std::make_unique<outliner::OutlinedFunction>(
+        RepeatedSequenceLocs, SequenceSize, 0, MachineOutlinerTailCall);
+  }
+  // A call at the end that no skip guards can be a jump.
+  bool EndsInCall = Last.getOpcode() == PIC16F1::CALL;
+  if (EndsInCall) {
+    const MachineInstr *BeforeLast = nullptr;
+    for (const MachineInstr &MI : First) {
+      if (&MI == &Last)
+        break;
+      if (!MI.isMetaInstruction())
+        BeforeLast = &MI;
+    }
+    EndsInCall = !BeforeLast || !isSkip(*BeforeLast);
+  }
+  for (outliner::Candidate &C : RepeatedSequenceLocs)
+    C.setCallInfo(MachineOutlinerDefault, CallSize);
+  return std::make_unique<outliner::OutlinedFunction>(
+      RepeatedSequenceLocs, SequenceSize, EndsInCall ? 0 : 2,
+      EndsInCall ? MachineOutlinerThunk : MachineOutlinerDefault);
+}
+
+outliner::InstrType
+PIC16F1InstrInfo::getOutliningTypeImpl(const MachineModuleInfo &MMI,
+                                       MachineBasicBlock::iterator &MIT,
+                                       unsigned Flags) const {
+  MachineInstr &MI = *MIT;
+  if (MI.isCFIInstruction())
+    return outliner::InstrType::Illegal;
+  switch (MI.getOpcode()) {
+  // The generic code lets through only a terminator that ends the function.
+  // A return from an interrupt would not be reached by a jump from a
+  // sequence that began as ordinary code, but nothing forbids sharing it.
+  case PIC16F1::RETURN:
+  case PIC16F1::RETFIE:
+    return outliner::InstrType::Legal;
+  // Depends on where it is.
+  case PIC16F1::BRW:
+  case PIC16F1::BRA:
+  case PIC16F1::GOTO:
+    return outliner::InstrType::Illegal;
+  default:
+    break;
+  }
+  if (MI.isTerminator() || MI.isPseudo())
+    return outliner::InstrType::Illegal;
+  // Reading PCL gives the address of the instruction; writing it jumps.
+  if (fileOperand(MI) == PIC16F1::PCL_ADDR)
+    return outliner::InstrType::Illegal;
+  return outliner::InstrType::Legal;
+}
+
+void PIC16F1InstrInfo::buildOutlinedFrame(
+    MachineBasicBlock &MBB, MachineFunction &MF,
+    const outliner::OutlinedFunction &OF) const {
+  if (OF.FrameConstructionID == MachineOutlinerTailCall)
+    return;
+  if (OF.FrameConstructionID == MachineOutlinerThunk) {
+    MachineInstr &Call = MBB.back();
+    assert(Call.getOpcode() == PIC16F1::CALL && "thunk must end in a call");
+    MachineInstrBuilder Jump = BuildMI(MF, DebugLoc(), get(PIC16F1::GOTO));
+    for (const MachineOperand &MO : Call.operands())
+      if (!MO.isReg() || MO.isUse())
+        Jump.add(MO);
+    MBB.insert(MBB.end(), Jump);
+    Call.eraseFromParent();
+    return;
+  }
+  MBB.insert(MBB.end(), BuildMI(MF, DebugLoc(), get(PIC16F1::RETURN)));
+}
+
+MachineBasicBlock::iterator PIC16F1InstrInfo::insertOutlinedCall(
+    Module &M, MachineBasicBlock &MBB, MachineBasicBlock::iterator &It,
+    MachineFunction &MF, outliner::Candidate &C) const {
+  const GlobalValue *Callee = M.getNamedValue(MF.getName());
+  bool Small = MF.getTarget().getCodeModel() == CodeModel::Small;
+  unsigned Opc = C.CallConstructionID == MachineOutlinerTailCall
+                     ? PIC16F1::GOTO
+                     : PIC16F1::CALL;
+  It = MBB.insert(It, BuildMI(MF, DebugLoc(), get(Opc)).addGlobalAddress(Callee));
+  if (!Small)
+    MBB.insert(It, BuildMI(MF, DebugLoc(), get(PIC16F1::MOVLP))
+                       .addGlobalAddress(Callee, 0, PIC16F1II::MO_PAGE));
+  return It;
 }

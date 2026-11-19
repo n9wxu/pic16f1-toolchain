@@ -148,8 +148,11 @@ PIC16F1LegalizerInfo::PIC16F1LegalizerInfo(const PIC16F1Subtarget &ST) {
        G_CTTZ_ZERO_POISON, G_ROTL, G_ROTR, G_FSHL, G_FSHR, G_ABS, G_SMIN,
        G_SMAX, G_UMIN, G_UMAX, G_UMULO, G_SMULO, G_SADDO,
        G_SSUBO, G_SADDE, G_SSUBE, G_UADDSAT, G_USUBSAT, G_SADDSAT, G_SSUBSAT,
-       G_SDIVREM, G_UDIVREM})
+       G_SDIVREM})
       .lower();
+  // The unsigned divide routines leave the remainder behind as well, so a
+  // quotient and remainder together are one call (legalizeCustom).
+  getActionDefinitionsBuilder(G_UDIVREM).customFor({s8, s16, s32}).lower();
 
   // The high half of a product comes from a multiply of twice the width,
   // which exists as a library routine up to 64 bits.
@@ -253,6 +256,42 @@ bool PIC16F1LegalizerInfo::legalizeCustom(LegalizerHelper &Helper,
   case G_SREM:
   case G_UREM:
     return legalizeNarrowMulDiv(Helper, MI, LocObserver);
+  case G_UDIVREM: {
+    // __udivqi3 and __udivhi3 return the quotient in the first register
+    // (pair) and leave the remainder in the third: to the compiler, a
+    // function with three results of which the second is not used.
+    // __udivmodsi4 returns the quotient and then the remainder.
+    MachineIRBuilder &B = Helper.MIRBuilder;
+    MachineRegisterInfo &MRI = *B.getMRI();
+    Register Quot = MI.getOperand(0).getReg();
+    Register Rem = MI.getOperand(1).getReg();
+    LLT Ty = MRI.getType(Quot);
+    unsigned Bits = Ty.getSizeInBits();
+    LLVMContext &Ctx = B.getMF().getFunction().getContext();
+    Type *IntTy = IntegerType::get(Ctx, Bits);
+    SmallVector<Register, 3> Results;
+    SmallVector<Type *, 3> Fields;
+    Results.push_back(Quot);
+    Fields.push_back(IntTy);
+    if (Bits != 32) {
+      Results.push_back(MRI.createGenericVirtualRegister(Ty));
+      Fields.push_back(IntTy);
+    }
+    Results.push_back(Rem);
+    Fields.push_back(IntTy);
+    const char *Name = Bits == 8    ? "__udivqi3"
+                       : Bits == 16 ? "__udivhi3"
+                                    : "__udivmodsi4";
+    auto Status = Helper.createLibcall(
+        Name, {Results, StructType::get(Ctx, Fields), 0},
+        {{MI.getOperand(2).getReg(), IntTy, 0},
+         {MI.getOperand(3).getReg(), IntTy, 1}},
+        CallingConv::C, LocObserver, &MI);
+    if (Status != LegalizerHelper::Legalized)
+      return false;
+    MI.eraseFromParent();
+    return true;
+  }
   default:
     return false;
   }
@@ -285,6 +324,18 @@ bool PIC16F1LegalizerInfo::legalizeNarrowMulDiv(
       B.buildLShr(Dst, X, B.buildConstant(s8, Log));
       MI.eraseFromParent();
       return true;
+    case G_SDIV: {
+      // Rounding is towards zero, so a negative value first gets the
+      // divisor less one added. (A negative divisor is not a power of two
+      // here, though its bit pattern may be.)
+      if (Ty.getSizeInBits() > 16 || Log == 0 || !C->Value.isStrictlyPositive())
+        break;
+      auto Biased = B.buildInstr(PIC16F1::G_ADD_IF_NEG, {Ty}, {X})
+                        .addImm((int64_t(1) << Log) - 1);
+      B.buildAShr(Dst, Biased, B.buildConstant(s8, Log));
+      MI.eraseFromParent();
+      return true;
+    }
     case G_UREM:
       B.buildAnd(Dst, X, B.buildConstant(Ty, C->Value - 1));
       MI.eraseFromParent();

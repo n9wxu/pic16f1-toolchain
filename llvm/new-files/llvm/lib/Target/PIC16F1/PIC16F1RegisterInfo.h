@@ -23,6 +23,10 @@ public:
   const MCPhysReg *getCalleeSavedRegs(const MachineFunction *MF) const override;
   const uint32_t *getCallPreservedMask(const MachineFunction &MF,
                                        CallingConv::ID) const override;
+  /// The registers a runtime library routine preserves, if that is more
+  /// than the calling convention promises; else null.
+  static const uint32_t *getLibcallPreservedMask(StringRef Name);
+
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   const TargetRegisterClass *
   getPointerRegClass(unsigned Kind = 0) const override;

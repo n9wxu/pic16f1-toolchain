@@ -20,9 +20,15 @@
 //    whole function, and removes instructions whose results are not.
 //  * It turns "load a byte, store it in a register, test a bit of the
 //    register" into a bit test of the byte.
+//  * It follows which bank is selected, over the whole function, and
+//    removes bank selections that change nothing.
+//  * It turns a call followed by a return into a jump.
+//  * It reads a byte of the stack frame again instead of a register it was
+//    copied to, when that leaves the register unused.
 //
-// Only W, the Z and C flags and the sixteen bytes of common RAM are
-// modelled. Any other file register is memory, possibly a device register:
+// Only W, the Z and C flags, the sixteen bytes of common RAM and the two
+// bytes of FSR0 are modelled; "byte register" below means one of those
+// eighteen. Any other file register is memory, possibly a device register:
 // an instruction that reads or writes one is never removed, and the bit-test
 // change keeps it at exactly one read.
 //
@@ -39,6 +45,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/CommandLine.h"
+#include <climits>
 
 using namespace llvm;
 
@@ -53,19 +60,37 @@ static cl::opt<unsigned> Steps(
     "pic16f1-peephole-steps", cl::Hidden, cl::init(~0u),
     cl::desc("Bit mask of peephole steps: 1 read originals, 2 remove "
              "reloads, 4 reuse Z, 8 operate on originals, 16 remove dead "
-             "instructions, 32 fold bit tests"));
+             "instructions, 32 fold bit tests, 64 remove bank selections, "
+             "128 tail calls, 256 skip on decrement and results in W, 512 "
+             "reread stack bytes, 1024 constants in registers"));
 
 namespace {
 
-// The modelled state, as bits: the sixteen bytes of common RAM, then W and
-// the two flags.
+// The modelled state, as bits: the sixteen bytes of common RAM, FSR0L and
+// FSR0H, then W and the two flags.
 enum : uint32_t {
-  FilesMask = 0xFFFF,
-  WBit = 1u << 16,
-  ZBit = 1u << 17,
-  CBit = 1u << 18,
+  NumFiles = 18,
+  CommonMask = 0xFFFF,
+  FSR0Mask = 3u << 16,
+  FilesMask = CommonMask | FSR0Mask,
+  WBit = 1u << 18,
+  ZBit = 1u << 19,
+  CBit = 1u << 20,
   AllBits = FilesMask | WBit | ZBit | CBit,
 };
+
+/// The position of a modelled file register, or -1.
+int indexOfFile(unsigned F) {
+  F &= 0x7F;
+  if (F >= 0x70)
+    return F - 0x70;
+  if (F == PIC16F1::FSR0L_ADDR || F == PIC16F1::FSR0H_ADDR)
+    return 16 + (F - PIC16F1::FSR0L_ADDR);
+  return -1;
+}
+unsigned fileOfIndex(int Idx) {
+  return Idx < 16 ? 0x70 + Idx : PIC16F1::FSR0L_ADDR + (Idx - 16);
+}
 
 /// What an instruction does to the modelled state.
 struct Effect {
@@ -78,7 +103,7 @@ struct Effect {
   bool Memory = false;
   /// Makes the next instruction conditional.
   bool Skip = false;
-  /// A common-RAM byte the instruction names, or -1.
+  /// The position of the byte register the instruction names, or -1.
   int File = -1;
   /// The result goes to W (and Z, if written, describes W afterwards).
   bool ResultInW = false;
@@ -91,15 +116,17 @@ uint32_t fileBits(const MachineOperand &MO) {
   if (!MO.isImm())
     return 0;
   unsigned F = MO.getImm() & 0x7F;
-  if (F >= 0x70)
-    return 1u << (F - 0x70);
-  // PCL (a write jumps), STATUS, and WREG (W itself).
-  if (F == PIC16F1::PCL_ADDR || F == PIC16F1::STATUS_ADDR || F == 0x09)
+  if (int Idx = indexOfFile(F); Idx >= 0)
+    return 1u << Idx;
+  // INDF0 (the byte FSR0 points at; none of the code generator's own
+  // instructions name it), PCL (a write jumps), STATUS, and WREG (W itself).
+  if (F == 0x00 || F == PIC16F1::PCL_ADDR || F == PIC16F1::STATUS_ADDR ||
+      F == 0x09)
     return ~0u;
   return 0;
 }
 
-/// The common-RAM bytes that make up a register, as bits.
+/// The byte registers that make up a register, as bits.
 uint32_t registerFiles(const MachineInstr &MI, MCRegister Reg) {
   const MachineFunction &MF = *MI.getMF();
   const auto &TII = *MF.getSubtarget<PIC16F1Subtarget>().getInstrInfo();
@@ -109,14 +136,13 @@ uint32_t registerFiles(const MachineInstr &MI, MCRegister Reg) {
     if (!PIC16F1::GPR8RegClass.contains(Sub) && Sub != PIC16F1::TMP0 &&
         Sub != PIC16F1::TMP1)
       continue;
-    unsigned F = TII.fileAddr(Sub);
-    if (F >= 0x70 && F <= 0x7F)
-      Bits |= 1u << (F - 0x70);
+    if (int Idx = indexOfFile(TII.fileAddr(Sub)); Idx >= 0)
+      Bits |= 1u << Idx;
   }
   return Bits;
 }
 
-/// The common-RAM bytes a call may change, by its register mask.
+/// The byte registers a call may change, by its register mask.
 uint32_t clobberedFiles(const MachineInstr &MI, const MachineOperand &Mask) {
   uint32_t Bits = 0;
   for (MCPhysReg Reg : PIC16F1::GPR8RegClass)
@@ -140,7 +166,7 @@ Effect effectOf(const MachineInstr &MI) {
     if (Bits == 0)
       E.Memory = true;
     else if (Bits != ~0u)
-      E.File = MO.getImm() & 0x7F;
+      E.File = indexOfFile(MO.getImm());
     return Bits;
   };
 
@@ -281,27 +307,66 @@ Effect effectOf(const MachineInstr &MI) {
   case MOVLW:
     E.Writes = WBit;
     return E;
-  // Bank, page and pointer registers are outside the model.
+  // The bank and page registers and FSR1 are outside the model.
   case MOVLB:
   case MOVLB6:
   case MOVLP:
+    E.Memory = true;
+    return E;
   case ADDFSR:
     E.Memory = true;
+    if (MI.getOperand(0).getImm() == 0) {
+      E.Reads = FSR0Mask;
+      E.Writes = FSR0Mask;
+    }
     return E;
   case MOVIWm:
-  case MOVIWk:
+  case MOVWIm: {
+    // With pre- or post-increment or -decrement; bit 2 selects FSR1.
     E.Memory = true;
-    E.Writes = WBit | ZBit;
-    E.ResultInW = true;
+    if (!(MI.getOperand(0).getImm() & 4)) {
+      E.Reads = FSR0Mask;
+      E.Writes = FSR0Mask;
+    }
+    if (Opc == MOVIWm) {
+      E.Writes |= WBit | ZBit;
+      E.ResultInW = true;
+    } else {
+      E.Reads |= WBit;
+    }
     return E;
-  case MOVWIm:
+  }
+  case MOVIWk:
   case MOVWIk:
-    E.Memory = true;
-    E.Reads = WBit;
+    // A load from the stack frame (FSR1) has no other effect and may be
+    // removed. One through FSR0 may read a device register.
+    E.Memory = Opc == MOVWIk || MI.getOperand(1).getImm() == 0;
+    if (MI.getOperand(1).getImm() == 0)
+      E.Reads = FSR0Mask;
+    if (Opc == MOVIWk) {
+      E.Writes = WBit | ZBit;
+      E.ResultInW = true;
+    } else {
+      E.Reads |= WBit;
+    }
     return E;
   case BRA:
-  case GOTO:
     return E;
+  case GOTO: {
+    if (MI.getOperand(0).isMBB())
+      return E;
+    // A jump to another function: a call and a return in one.
+    E.Memory = true;
+    const MachineFunction &MF = *MI.getMF();
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isReg() && MO.isUse())
+        E.Reads |= registerFiles(MI, MO.getReg());
+    const MCPhysReg *Saved =
+        MF.getSubtarget().getRegisterInfo()->getCalleeSavedRegs(&MF);
+    for (; Saved && *Saved; ++Saved)
+      E.Reads |= registerFiles(MI, *Saved);
+    return E;
+  }
   case NOP:
   case SLEEP:
   case CLRWDT:
@@ -342,11 +407,22 @@ Effect effectOf(const MachineInstr &MI) {
     return E;
   }
   case RETFIE:
-    // Everything belongs to the interrupted code.
-    E.Reads = FilesMask;
+    // Common RAM belongs to the interrupted code. FSR0, like W and the
+    // flags, comes back from the shadow registers.
+    E.Reads = CommonMask;
     E.Memory = true;
     return E;
   default:
+    // Inline assembly may do anything, except for the single instructions
+    // that device headers wrap in macros and that touch nothing modelled.
+    if (MI.isInlineAsm() && MI.getOperand(0).isSymbol()) {
+      StringRef Asm = StringRef(MI.getOperand(0).getSymbolName()).trim();
+      if (Asm.equals_insensitive("sleep") || Asm.equals_insensitive("nop") ||
+          Asm.equals_insensitive("clrwdt")) {
+        E.Memory = true;
+        return E;
+      }
+    }
     return Barrier();
   }
 }
@@ -373,6 +449,8 @@ private:
   void computeLiveness(MachineFunction &MF);
   bool removeDead(MachineBasicBlock &MBB);
   bool forward(MachineBasicBlock &MBB);
+  bool removeBankSelects(MachineFunction &MF);
+  bool tailCalls(MachineFunction &MF);
 };
 
 } // end anonymous namespace
@@ -475,11 +553,11 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
     // selected already: nothing stands between the three.
     if ((Steps & 32) && (MI.getOpcode() == BTFSC || MI.getOpcode() == BTFSS) &&
         E.File >= 0 &&
-        !(Live & ((1u << (E.File - 0x70)) | WBit | ZBit))) {
+        !(Live & ((1u << E.File) | WBit | ZBit))) {
       MachineInstr *Store = nullptr, *Load = nullptr;
       if (It != MBB.rend() && It->getOpcode() == MOVWF &&
           It->getOperand(0).isImm() &&
-          (It->getOperand(0).getImm() & 0x7F) == E.File)
+          indexOfFile(It->getOperand(0).getImm()) == E.File)
         Store = &*It;
       if (Store && std::next(It) != MBB.rend() &&
           std::next(It)->getOpcode() == MOVF &&
@@ -498,6 +576,100 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
         Load->eraseFromParent();
         Changed = true;
         Live = transfer(MI, Live);
+        continue;
+      }
+    }
+
+    // movf M, W ; movwf T ; movlw K ; OP T, W   =>   movlw K ; OP M, W
+    // (or with a register loaded in place of the constant) when T is not
+    // read afterwards: the memory byte M is the operand, still read exactly
+    // once, and the bank it needs is still selected.
+    if ((Steps & 256) && !Cond && E.File >= 0 && E.ResultInW &&
+        (MI.getOpcode() == ADDWF || MI.getOpcode() == ANDWF ||
+         MI.getOpcode() == IORWF || MI.getOpcode() == XORWF ||
+         MI.getOpcode() == SUBWF) &&
+        !(Live & (1u << E.File))) {
+      auto Other = It;
+      MachineInstr *Load = nullptr, *Store = nullptr;
+      if (Other != MBB.rend() &&
+          (Other->getOpcode() == MOVLW ||
+           (Other->getOpcode() == MOVF && Other->getOperand(0).isImm() &&
+            Other->getOperand(1).getImm() == 0 &&
+            indexOfFile(Other->getOperand(0).getImm()) >= 0 &&
+            indexOfFile(Other->getOperand(0).getImm()) != E.File))) {
+        auto S = std::next(Other);
+        if (S != MBB.rend() && S->getOpcode() == MOVWF &&
+            S->getOperand(0).isImm() &&
+            indexOfFile(S->getOperand(0).getImm()) == E.File) {
+          Store = &*S;
+          auto L = std::next(S);
+          if (L != MBB.rend() && L->getOpcode() == MOVF &&
+              L->getOperand(1).getImm() == 0 &&
+              (L->getOperand(0).isGlobal() ||
+               (L->getOperand(0).isImm() &&
+                fileBits(L->getOperand(0)) == 0)) &&
+              !isConditional(*L))
+            Load = &*L;
+        }
+      }
+      if (Load) {
+        const MachineOperand &Src = Load->getOperand(0);
+        if (Src.isImm())
+          MI.getOperand(0).setImm(Src.getImm());
+        else
+          MI.getOperand(0).ChangeToGA(Src.getGlobal(), Src.getOffset(),
+                                      Src.getTargetFlags());
+        Store->eraseFromParent();
+        Load->eraseFromParent();
+        Changed = true;
+        Live = transfer(MI, Live);
+        continue;
+      }
+    }
+
+    // decf F, F ; btfss STATUS, Z   =>   decfsz F, F
+    // (and the same for INCF) when Z is not read afterwards: DECFSZ leaves
+    // the flags alone.
+    if ((Steps & 256) && MI.getOpcode() == BTFSS && MI.getOperand(0).isImm() &&
+        (MI.getOperand(0).getImm() & 0x7F) == STATUS_ADDR &&
+        MI.getOperand(1).getImm() == STATUS_Z && !(Live & ZBit) &&
+        It != MBB.rend() &&
+        (It->getOpcode() == DECF || It->getOpcode() == INCF) &&
+        It->getOperand(1).getImm() == 1 && !isConditional(*It)) {
+      const PIC16F1InstrInfo &TII =
+          *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+      It->setDesc(TII.get(It->getOpcode() == DECF ? DECFSZ : INCFSZ));
+      MI.eraseFromParent();
+      Changed = true;
+      continue;
+    }
+
+    // OP F, F ; movf F, W   =>   OP F, W
+    // when F is not read afterwards. Z comes out the same, except after
+    // the operations that leave it alone; then it must not be read.
+    if ((Steps & 256) && MI.getOpcode() == MOVF && E.File >= 0 && !Cond &&
+        MI.getOperand(1).getImm() == 0 && !(Live & (1u << E.File)) &&
+        It != MBB.rend() && It->getNumExplicitOperands() == 2 &&
+        It->getOperand(0).isImm() && It->getOperand(1).isImm() &&
+        It->getOperand(1).getImm() == 1 && !isConditional(*It)) {
+      bool SetsZ = false, Fits = false;
+      switch (It->getOpcode()) {
+      case ADDWF: case ADDWFC: case ANDWF: case IORWF: case XORWF: case SUBWF:
+      case SUBWFB: case ASRF: case LSLF: case LSRF: case COMF: case DECF:
+      case INCF:
+        SetsZ = Fits = true;
+        break;
+      case RLF: case RRF: case SWAPF:
+        Fits = true;
+        break;
+      default:
+        break;
+      }
+      if (Fits && indexOfFile(It->getOperand(0).getImm()) == E.File &&
+          fileBits(It->getOperand(0)) != ~0u && (SetsZ || !(Live & ZBit))) {
+        It->getOperand(1).setImm(0);
+        MI.eraseFromParent();
+        Changed = true;
         continue;
       }
     }
@@ -523,30 +695,50 @@ bool PIC16F1Peephole::forward(MachineBasicBlock &MBB) {
   uint32_t WEq = 0;       // W equals each of these byte registers
   bool ZIsW = false;      // Z is set exactly when W is zero
   int ZFile = -1;         // Z is set exactly when this byte register is zero
-  int CopyOf[16];         // the register each byte register is a copy of
-  for (int I = 0; I != 16; ++I)
+  int CopyOf[NumFiles];   // the register each byte register is a copy of
+  for (int I = 0; I != NumFiles; ++I)
     CopyOf[I] = I;
+  int FileConst[NumFiles]; // the byte register holds this constant, or -1
+  for (int I = 0; I != NumFiles; ++I)
+    FileConst[I] = -1;
+  // Bytes of the stack frame, by their offset from FSR1.
+  const int NoSlot = INT_MIN;
+  int WSlot = NoSlot;     // W equals this byte of the frame
+  int SlotOf[NumFiles];   // the byte register equals this byte of the frame
+  for (int I = 0; I != NumFiles; ++I)
+    SlotOf[I] = NoSlot;
+  auto ForgetSlots = [&] {
+    WSlot = NoSlot;
+    for (int I = 0; I != NumFiles; ++I)
+      SlotOf[I] = NoSlot;
+  };
 
   auto ForgetW = [&] {
     WConst = -1;
     WEq = 0;
     ZIsW = false;
+    WSlot = NoSlot;
   };
   auto ForgetFile = [&](int Idx) {
     WEq &= ~(1u << Idx);
     if (ZFile == Idx)
       ZFile = -1;
     // Its copies are still copies of one another, but that is not kept.
-    for (int I = 0; I != 16; ++I)
+    for (int I = 0; I != NumFiles; ++I)
       if (CopyOf[I] == Idx)
         CopyOf[I] = I;
     CopyOf[Idx] = Idx;
+    SlotOf[Idx] = NoSlot;
+    FileConst[Idx] = -1;
   };
   auto ForgetAll = [&] {
     ForgetW();
     ZFile = -1;
-    for (int I = 0; I != 16; ++I)
+    for (int I = 0; I != NumFiles; ++I) {
       CopyOf[I] = I;
+      FileConst[I] = -1;
+    }
+    ForgetSlots();
   };
 
   for (MachineBasicBlock::iterator It = MBB.begin(); It != MBB.end();) {
@@ -560,14 +752,62 @@ bool PIC16F1Peephole::forward(MachineBasicBlock &MBB) {
     }
     bool Cond = isConditional(MI);
     unsigned Opc = MI.getOpcode();
-    int Idx = E.File >= 0 ? E.File - 0x70 : -1;
+    int Idx = E.File;
     uint32_t After = LiveAfter.lookup(&MI);
+
+    // The last read of a register that holds a byte of the stack frame:
+    // read the frame instead, which leaves the register unread. (MOVIW
+    // sets Z as MOVF does.)
+    if ((Steps & 512) && Opc == MOVF && Idx >= 0 &&
+        MI.getOperand(1).getImm() == 0 && SlotOf[Idx] != NoSlot &&
+        !(After & (1u << Idx))) {
+      const PIC16F1InstrInfo &TII =
+          *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+      int Slot = SlotOf[Idx];
+      MI.setDesc(TII.get(MOVIWk));
+      MI.getOperand(0).setImm(Slot);
+      MI.getOperand(1).setImm(1);
+      E = effectOf(MI);
+      Opc = MOVIWk;
+      Idx = -1;
+      Changed = true;
+    }
+
+    // A register that holds a known constant: load the constant. That is
+    // no shorter, but W often holds it already, and the register may then
+    // go unread. MOVLW leaves Z alone, so Z must not be read.
+    if ((Steps & 1024) && !Cond && Opc == MOVF && Idx >= 0 &&
+        MI.getOperand(1).getImm() == 0 && FileConst[Idx] >= 0 &&
+        !(After & ZBit)) {
+      const PIC16F1InstrInfo &TII =
+          *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+      int K = FileConst[Idx];
+      MI.setDesc(TII.get(MOVLW));
+      MI.removeOperand(1);
+      MI.getOperand(0).setImm(K);
+      E = effectOf(MI);
+      Opc = MOVLW;
+      Idx = -1;
+      Changed = true;
+    }
+    // movlw 0 ; movwf F   =>   clrf F   when W and Z are not read after.
+    if ((Steps & 1024) && !Cond && Opc == MOVWF && WConst == 0 &&
+        !(After & (WBit | ZBit)) &&
+        (MI.getOperand(0).isImm() ? fileBits(MI.getOperand(0)) != ~0u
+                                  : MI.getOperand(0).isGlobal())) {
+      const PIC16F1InstrInfo &TII =
+          *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+      MI.setDesc(TII.get(CLRF));
+      E = effectOf(MI);
+      Opc = CLRF;
+      Changed = true;
+    }
 
     // Read the original instead of a copy.
     if ((Steps & 1) && Idx >= 0 && (E.Reads & (1u << Idx)) &&
         !(E.Writes & (1u << Idx)) && CopyOf[Idx] != Idx) {
       Idx = CopyOf[Idx];
-      MI.getOperand(0).setImm(0x70 + Idx);
+      MI.getOperand(0).setImm(fileOfIndex(Idx));
       E = effectOf(MI);
       Changed = true;
     }
@@ -613,15 +853,16 @@ bool PIC16F1Peephole::forward(MachineBasicBlock &MBB) {
         Opc != BSF) {
       const PIC16F1InstrInfo &TII =
           *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
-      MI.getOperand(0).setImm(0x70 + CopyOf[Idx]);
+      MI.getOperand(0).setImm(fileOfIndex(CopyOf[Idx]));
       MI.getOperand(1).setImm(0);
-      MachineInstr *Store =
-          BuildMI(MBB, It, MI.getDebugLoc(), TII.get(MOVWF)).addImm(0x70 + Idx);
+      MachineInstr *Store = BuildMI(MBB, It, MI.getDebugLoc(), TII.get(MOVWF))
+                                .addImm(fileOfIndex(Idx));
       // Until the next round, treat what follows the store as following
       // the operation.
       LiveAfter[Store] = After;
       ForgetFile(Idx);
       WConst = -1;
+      WSlot = NoSlot;
       WEq = 1u << Idx;
       ZIsW = (E.Writes & ZBit) != 0;
       ZFile = ZIsW ? Idx : (E.Writes & ZBit) ? -1 : ZFile;
@@ -630,71 +871,274 @@ bool PIC16F1Peephole::forward(MachineBasicBlock &MBB) {
       continue;
     }
 
-    // Update what is known.
-    if (Cond) {
-      if (E.Writes & WBit)
-        ForgetW();
+    // Update what is known. First what is known of the stack frame. It
+    // survives instructions that only read, and ones that write a register
+    // or a variable; anything else may move FSR1 or store into the frame.
+    bool FrameLoad = Opc == MOVIWk && MI.getOperand(1).getImm() == 1;
+    bool FrameStore = Opc == MOVWIk && MI.getOperand(1).getImm() == 1;
+    bool Keeps = !E.Memory || Opc == MOVIWk || Opc == MOVLB || Opc == MOVLB6 ||
+                 Opc == MOVLP || Opc == BTFSC || Opc == BTFSS ||
+                 (E.ResultInW && Opc != MOVIWm) ||
+                 (MI.getNumExplicitOperands() >= 1 &&
+                  MI.getOperand(0).isGlobal() && Opc != CALL && Opc != GOTO);
+    if (FrameStore) {
+      int Slot = MI.getOperand(0).getImm();
+      for (int I = 0; I != NumFiles; ++I)
+        if (SlotOf[I] == Slot)
+          SlotOf[I] = NoSlot;
+      // W is what the byte now holds, if the store ran.
+      WSlot = Cond ? NoSlot : Slot;
+    } else if (!Keeps) {
+      ForgetSlots();
+    }
+    // A register loaded with W equals the frame byte that W came from.
+    int WroteIdx = Idx >= 0 && (E.Writes & (1u << Idx)) ? Idx : -1;
+    int NewSlot = !Cond && Opc == MOVWF ? WSlot : NoSlot;
+    int NewConst = Cond ? -1 : Opc == CLRF ? 0 : Opc == MOVWF ? WConst : -1;
+    int NewWSlot = WSlot;
+    if (E.Writes & WBit) {
+      NewWSlot = NoSlot;
+      if (!Cond && FrameLoad)
+        NewWSlot = MI.getOperand(0).getImm();
+      else if (!Cond && Opc == MOVF && Idx >= 0)
+        NewWSlot = SlotOf[Idx];
+    }
+
+    auto UpdateRest = [&] {
+      // Then everything else; first the byte registers the instruction
+      // changes without naming them (FSR0, by ADDFSR or an auto-increment).
+      for (uint32_t Rest = E.Writes & FilesMask & ~(Idx >= 0 ? 1u << Idx : 0u);
+           Rest; Rest &= Rest - 1)
+        ForgetFile(llvm::countr_zero(Rest));
+      if (Cond) {
+        if (E.Writes & WBit)
+          ForgetW();
+        if (E.Writes & ZBit) {
+          ZIsW = false;
+          ZFile = -1;
+        }
+        if (Idx >= 0 && (E.Writes & (1u << Idx)))
+          ForgetFile(Idx);
+        return;
+      }
+      if (Opc == CALL) {
+        ForgetAll();
+        return;
+      }
+      if (E.Writes & WBit) {
+        WConst = -1;
+        WEq = 0;
+        if (Opc == MOVLW) {
+          if (MI.getOperand(0).isImm())
+            WConst = MI.getOperand(0).getImm() & 0xFF;
+          ZIsW = false;
+        } else {
+          if (Opc == MOVF && Idx >= 0) {
+            // W equals the register and every register it is a copy of or
+            // that is a copy of the same original.
+            int Root = CopyOf[Idx];
+            for (int I = 0; I != NumFiles; ++I)
+              if (CopyOf[I] == Root)
+                WEq |= 1u << I;
+          }
+          if (Opc == CLRW)
+            WConst = 0;
+          ZIsW = (E.Writes & ZBit) != 0;
+          if (E.Writes & ZBit)
+            ZFile = Opc == MOVF && Idx >= 0 ? Idx : -1;
+        }
+        return;
+      }
       if (E.Writes & ZBit) {
         ZIsW = false;
         ZFile = -1;
       }
-      if (Idx >= 0 && (E.Writes & (1u << Idx)))
-        ForgetFile(Idx);
-      continue;
-    }
-    if (Opc == CALL) {
-      ForgetAll();
-      continue;
-    }
-    if (E.Writes & WBit) {
-      WConst = -1;
-      WEq = 0;
-      if (Opc == MOVLW) {
-        if (MI.getOperand(0).isImm())
-          WConst = MI.getOperand(0).getImm() & 0xFF;
-        ZIsW = false;
-      } else {
-        if (Opc == MOVF && Idx >= 0) {
-          // W equals the register and every register it is a copy of or
-          // that is a copy of the same original.
-          int Root = CopyOf[Idx];
-          for (int I = 0; I != 16; ++I)
-            if (CopyOf[I] == Root)
-              WEq |= 1u << I;
+      if (Idx >= 0 && (E.Writes & (1u << Idx))) {
+        if (Opc == MOVWF) {
+          // The register is now a copy of whatever W was loaded from.
+          int Root = -1;
+          for (int I = 0; I != NumFiles && Root < 0; ++I)
+            if (I != Idx && (WEq & (1u << I)))
+              Root = CopyOf[I];
+          ForgetFile(Idx);
+          if (Root >= 0 && Root != Idx)
+            CopyOf[Idx] = Root;
+          WEq |= 1u << Idx;
+          if (ZIsW)
+            ZFile = Idx;
+        } else {
+          ForgetFile(Idx);
+          // The result is in the register, and Z describes it. (RLF, RRF
+          // and SWAPF leave Z alone; they are not in this group.)
+          if (E.Writes & ZBit)
+            ZFile = Idx;
         }
-        if (Opc == CLRW)
-          WConst = 0;
-        ZIsW = (E.Writes & ZBit) != 0;
-        if (E.Writes & ZBit)
-          ZFile = Opc == MOVF && Idx >= 0 ? Idx : -1;
       }
+    };
+    UpdateRest();
+    WSlot = NewWSlot;
+    if (WroteIdx >= 0) {
+      SlotOf[WroteIdx] = NewSlot;
+      FileConst[WroteIdx] = NewConst;
+    }
+  }
+  return Changed;
+}
+
+namespace {
+/// What is known about BSR at one point.
+struct BankState {
+  enum KindTy { Top, Unknown, Const, Global } Kind = Top;
+  int64_t Value = 0; // bank number, or offset into the global
+  const GlobalValue *GV = nullptr;
+
+  bool operator==(const BankState &O) const {
+    return Kind == O.Kind && Value == O.Value && GV == O.GV;
+  }
+  static BankState unknown() {
+    BankState S;
+    S.Kind = Unknown;
+    return S;
+  }
+  /// What both paths agree on.
+  BankState meet(const BankState &O) const {
+    if (Kind == Top)
+      return O;
+    if (O.Kind == Top || *this == O)
+      return *this;
+    return unknown();
+  }
+};
+
+/// The bank a MOVLB selects.
+BankState bankOf(const MachineInstr &MI) {
+  BankState S;
+  const MachineOperand &MO = MI.getOperand(0);
+  if (MO.isImm()) {
+    S.Kind = BankState::Const;
+    S.Value = MO.getImm();
+  } else if (MO.isGlobal()) {
+    S.Kind = BankState::Global;
+    S.GV = MO.getGlobal();
+    // Every byte of a small variable is in one bank.
+    S.Value = PIC16F1InstrInfo::inOneBank(S.GV, MO.getOffset())
+                  ? 0
+                  : MO.getOffset();
+  } else {
+    S.Kind = BankState::Unknown;
+  }
+  return S;
+}
+
+/// BSR after \p MI, given BSR before it.
+BankState bankAfter(const MachineInstr &MI, BankState S, bool Cond) {
+  using namespace PIC16F1;
+  switch (MI.getOpcode()) {
+  case MOVLB:
+  case MOVLB6: {
+    BankState New = bankOf(MI);
+    // After a skip it may not have run.
+    return Cond ? S.meet(New) : New;
+  }
+  // Instructions that leave BSR alone, unless they name it.
+  case ADDWF: case ADDWFC: case ANDWF: case IORWF: case XORWF: case SUBWF:
+  case SUBWFB: case ASRF: case LSLF: case LSRF: case COMF: case DECF:
+  case INCF: case MOVF: case RLF: case RRF: case SWAPF: case DECFSZ:
+  case INCFSZ: case CLRF: case MOVWF: case BCF: case BSF: case BTFSC:
+  case BTFSS:
+    if (MI.getOperand(0).isImm() && (MI.getOperand(0).getImm() & 0x7F) == 0x08)
+      return BankState::unknown();
+    return S;
+  case CLRW: case ADDLW: case SUBLW: case ANDLW: case IORLW: case XORLW:
+  case MOVLW: case MOVLP: case ADDFSR: case MOVIWm: case MOVIWk: case MOVWIm:
+  case MOVWIk: case BRA: case GOTO: case NOP: case SLEEP: case CLRWDT:
+  case RETURN: case RETFIE:
+    return S;
+  default:
+    // Calls, inline assembly and anything not understood.
+    return BankState::unknown();
+  }
+}
+} // end anonymous namespace
+
+/// Remove MOVLB instructions that select the bank already selected on every
+/// path to them.
+bool PIC16F1Peephole::removeBankSelects(MachineFunction &MF) {
+  DenseMap<const MachineBasicBlock *, BankState> Out;
+  auto InOf = [&](const MachineBasicBlock &MBB) {
+    if (&MBB == &MF.front() || MBB.isEHPad() || MBB.hasAddressTaken())
+      return BankState::unknown();
+    BankState S;
+    for (const MachineBasicBlock *Pred : MBB.predecessors())
+      S = S.meet(Out.lookup(Pred));
+    return S;
+  };
+  bool Changed = true;
+  while (Changed) {
+    Changed = false;
+    for (MachineBasicBlock &MBB : MF) {
+      BankState S = InOf(MBB);
+      for (const MachineInstr &MI : MBB)
+        if (isReal(MI))
+          S = bankAfter(MI, S, isConditional(MI));
+      BankState &O = Out[&MBB];
+      if (!(O == S)) {
+        O = S;
+        Changed = true;
+      }
+    }
+  }
+  bool Removed = false;
+  for (MachineBasicBlock &MBB : MF) {
+    BankState S = InOf(MBB);
+    // A block nothing reaches.
+    if (S.Kind == BankState::Top)
       continue;
-    }
-    if (E.Writes & ZBit) {
-      ZIsW = false;
-      ZFile = -1;
-    }
-    if (Idx >= 0 && (E.Writes & (1u << Idx))) {
-      if (Opc == MOVWF) {
-        // The register is now a copy of whatever W was loaded from.
-        int Root = -1;
-        for (int I = 0; I != 16 && Root < 0; ++I)
-          if (I != Idx && (WEq & (1u << I)))
-            Root = CopyOf[I];
-        ForgetFile(Idx);
-        if (Root >= 0 && Root != Idx)
-          CopyOf[Idx] = Root;
-        WEq |= 1u << Idx;
-        if (ZIsW)
-          ZFile = Idx;
-      } else {
-        ForgetFile(Idx);
-        // The result is in the register, and Z describes it. (RLF, RRF
-        // and SWAPF leave Z alone; they are not in this group.)
-        if (E.Writes & ZBit)
-          ZFile = Idx;
+    for (MachineBasicBlock::iterator It = MBB.begin(); It != MBB.end();) {
+      MachineInstr &MI = *It++;
+      if (!isReal(MI))
+        continue;
+      bool Cond = isConditional(MI);
+      if ((MI.getOpcode() == PIC16F1::MOVLB ||
+           MI.getOpcode() == PIC16F1::MOVLB6) &&
+          !Cond && S.Kind != BankState::Unknown && bankOf(MI) == S) {
+        MI.eraseFromParent();
+        Removed = true;
+        continue;
       }
+      S = bankAfter(MI, S, Cond);
     }
+  }
+  return Removed;
+}
+
+/// call f ; return   =>   goto f
+/// The function this is in has nothing left to do, so f may return straight
+/// to its caller. That saves a level of the hardware stack as well.
+bool PIC16F1Peephole::tailCalls(MachineFunction &MF) {
+  const PIC16F1InstrInfo &TII =
+      *MF.getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+  bool Changed = false;
+  for (MachineBasicBlock &MBB : MF) {
+    MachineBasicBlock::iterator Ret = MBB.getLastNonDebugInstr();
+    if (Ret == MBB.end() || Ret->getOpcode() != PIC16F1::RETURN ||
+        Ret == MBB.begin() || isConditional(*Ret))
+      continue;
+    MachineBasicBlock::iterator Call = std::prev(Ret);
+    while (Call != MBB.begin() && !isReal(*Call))
+      --Call;
+    if (Call->getOpcode() != PIC16F1::CALL || isConditional(*Call))
+      continue;
+    MachineInstrBuilder Jump =
+        BuildMI(MBB, Call, Call->getDebugLoc(), TII.get(PIC16F1::GOTO));
+    // The arguments stay listed as read; the results are no longer this
+    // function's business.
+    for (const MachineOperand &MO : Call->operands())
+      if (!MO.isReg() || MO.isUse())
+        Jump.add(MO);
+    Call->eraseFromParent();
+    Ret->eraseFromParent();
+    Changed = true;
   }
   return Changed;
 }
@@ -718,5 +1162,9 @@ bool PIC16F1Peephole::runOnMachineFunction(MachineFunction &MF) {
       break;
     Changed = true;
   }
+  if (Steps & 64)
+    Changed |= removeBankSelects(MF);
+  if (Steps & 128)
+    Changed |= tailCalls(MF);
   return Changed;
 }

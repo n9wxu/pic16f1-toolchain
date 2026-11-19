@@ -52,10 +52,19 @@ PIC16F1RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   return CSR_Normal_RegMask;
 }
 
+const uint32_t *PIC16F1RegisterInfo::getLibcallPreservedMask(StringRef Name) {
+  static const char *const SmallMath[] = {
+      "__mulqi3",  "__udivqi3", "__umodqi3", "__divqi3",  "__modqi3",
+      "__mulhi3",  "__udivhi3", "__umodhi3", "__divhi3",  "__modhi3"};
+  for (const char *Routine : SmallMath)
+    if (Name == Routine)
+      return CSR_SmallMath_RegMask;
+  return nullptr;
+}
+
 BitVector PIC16F1RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(PIC16F1::SP);
-  Reserved.set(PIC16F1::FSR0);
   Reserved.set(PIC16F1::W);
   Reserved.set(PIC16F1::TMP0);
   Reserved.set(PIC16F1::TMP1);

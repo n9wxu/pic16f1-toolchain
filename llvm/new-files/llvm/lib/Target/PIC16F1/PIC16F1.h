@@ -83,6 +83,8 @@ FunctionPass *createPIC16F1ExpandPseudoPass();
 /// branch relaxation.
 FunctionPass *createPIC16F1ExpandBranchesPass();
 FunctionPass *createPIC16F1PeepholePass();
+/// Copy pointers to FSR0 in front of the loads and stores that use them.
+FunctionPass *createPIC16F1PointerSetupPass();
 
 FunctionPass *createPIC16F1PreLegalizerCombiner();
 FunctionPass *createPIC16F1PostLegalizerCombiner();
@@ -94,6 +96,7 @@ void initializePIC16F1DAGToDAGISelLegacyPass(PassRegistry &);
 void initializePIC16F1ExpandPseudoPass(PassRegistry &);
 void initializePIC16F1ExpandBranchesPass(PassRegistry &);
 void initializePIC16F1PeepholePass(PassRegistry &);
+void initializePIC16F1PointerSetupPass(PassRegistry &);
 
 } // namespace llvm
 

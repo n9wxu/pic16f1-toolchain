@@ -90,10 +90,11 @@ define i8 @neg32(i32 %a) {
   ret i8 %r
 }
 
-; Floating point and narrow division are runtime calls.
+; Floating point and narrow division are runtime calls. (When the call is
+; the last thing a function does, optimized code jumps instead.)
 define float @fadd(float %a, float %b) {
 ; CHECK-LABEL: fadd:
-; CHECK: call __addsf3
+; CHECK: goto __addsf3
 ; O0-LABEL: fadd:
 ; O0: call __addsf3
   %r = fadd float %a, %b
@@ -111,7 +112,7 @@ define i8 @fcmp(float %a, float %b) {
 
 define i8 @udiv8(i8 %a, i8 %b) {
 ; CHECK-LABEL: udiv8:
-; CHECK: call __udivqi3
+; CHECK: goto __udivqi3
 ; O0-LABEL: udiv8:
 ; O0: call __udivqi3
   %r = udiv i8 %a, %b
@@ -121,7 +122,7 @@ define i8 @udiv8(i8 %a, i8 %b) {
 ; Division by a constant stays a division.
 define i16 @div10(i16 %a) {
 ; CHECK-LABEL: div10:
-; CHECK: call __udivhi3
+; CHECK: goto __udivhi3
 ; O0-LABEL: div10:
   %r = udiv i16 %a, 10
   ret i16 %r
@@ -167,7 +168,7 @@ end:
 declare i16 @take(i32)
 define i16 @wide_debug(i32 %v) !dbg !4 {
 ; CHECK-LABEL: wide_debug:
-; CHECK: call take
+; CHECK: goto take
 ; O0-LABEL: wide_debug:
     #dbg_value(i32 %v, !8, !DIExpression(), !10)
   %r = call i16 @take(i32 %v), !dbg !10

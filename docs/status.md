@@ -30,21 +30,24 @@ roles, and the pinned MPLAB X version.
 
 | Exit criterion | State |
 |---|---|
-| At least 95% of the GCC C torture tests | 97.7% of the tests that build at `-O0`, 97.6% at `-Os` |
-| picolibc passes | picolibc compiles in full. Of the 141 of its test programs run, 103 pass on the simulated PIC16F18877 and none gives a wrong result. Its math, POSIX and locale tests were not run |
+| At least 95% of the GCC C torture tests | 97.7% of the tests that build at `-O0`, 97.2% at `-Os` |
+| picolibc passes | picolibc compiles in full. Of the 141 of its test programs run, 104 pass on the simulated PIC16F18877 and none gives a wrong result. Its math, POSIX and locale tests were not run |
 | Blink on three families | One program builds unchanged and passes on five devices in four families, on the simulator; silicon deferred |
 | Simulator matches silicon on core validation | Deferred (hardware) |
 
 ## What G2 unlocks
 
 Optimization I, C++, Rust, and LLDB. Optimization I is under way: at `-Os`
-the benchmark set is 0.96 times the size of XC8 `-Os` and runs in 0.74 times
-the cycles, which meets the G3 size criterion (within 15%) in total, though
-nine of the fifteen programs are individually still larger. Done: a peephole
-pass over the final code, register usage across calls, startup code linked
-by need, a one-page code model, one bank selection per variable. Not
-started: static frames, FSR0 as an allocatable pointer register, the
-verifier, skip predication, stack-depth analysis. C++, Rust and LLDB are
-not started.
+the benchmark set is 0.77 times the size of XC8 `-Os`, every one of the
+fifteen programs is smaller than XC8's, and the set runs in 0.57 times the
+cycles (two programs are slower, by 6% and 17%). That meets the G3 size
+criterion (within 15%) with room to spare. Done: a peephole pass over the
+final code, register usage across calls, startup code linked by need, a
+one-page code model, one bank selection per variable, FSR0 as a register
+the allocator keeps pointers in, shared instruction sequences (outlining),
+tail calls, variables changed in place, assembly multiply and divide
+routines, whole-program builds with `-flto`. Not started: static frames,
+the verifier, skip predication, stack-depth analysis. C++, Rust and LLDB
+are not started.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.

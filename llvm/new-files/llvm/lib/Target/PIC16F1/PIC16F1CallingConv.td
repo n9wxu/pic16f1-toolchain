@@ -34,6 +34,12 @@ def CSR_Normal : CalleeSavedRegs<(sequence "R%u", 8, 13)>;
 // once by the startup code, and functions that do not return.
 def CSR_NoRegs : CalleeSavedRegs<(add)>;
 
+// The 8- and 16-bit multiply and divide routines of the runtime library
+// (muldiv.S) use only R0-R5 and the scratch bytes: R6, R7 and FSR0 survive a
+// call to one of them as well.
+def CSR_SmallMath : CalleeSavedRegs<(add R6, R7, FSR0L, FSR0H,
+                                         (sequence "R%u", 8, 13))>;
+
 // An interrupt handler preserves every register it touches. W, STATUS, BSR,
 // the FSRs and PCLATH are saved and restored by the hardware.
 def CSR_Interrupt : CalleeSavedRegs<(add (sequence "R%u", 0, 13), TMP0, TMP1)>;

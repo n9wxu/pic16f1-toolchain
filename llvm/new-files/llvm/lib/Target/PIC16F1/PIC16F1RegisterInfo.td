@@ -11,9 +11,14 @@
 // is reachable from every bank. Adjacent pairs form 16-bit registers. Each
 // register's encoding is its file address.
 //
+// FSR0 (FSR0L/FSR0H, 0x04/0x05) is a fifteenth pair, and the only one a load
+// or store through a pointer can use: such an instruction takes its address
+// in FSR0, and the register allocator keeps a pointer there when it can.
+// Like common RAM, FSR0 reads the same in every bank.
+//
 // TMP0/TMP1 (0x7E, 0x7F) are scratch bytes used inside instruction
-// expansions. W, FSR0 and BSR are also free inside expansions and are never
-// live from one code-generator instruction to the next.
+// expansions. W and BSR are also free inside expansions and are never live
+// from one code-generator instruction to the next.
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,21 +52,26 @@ def RP4 : PICPair<0x78, "RP4", [R8, R9]>, DwarfRegNum<[20]>;
 def RP5 : PICPair<0x7A, "RP5", [R10, R11]>, DwarfRegNum<[21]>;
 def RP6 : PICPair<0x7C, "RP6", [R12, R13]>, DwarfRegNum<[22]>;
 
-// The software stack pointer is FSR1. FSR0 is the scratch pointer.
+// The software stack pointer is FSR1.
 def SP    : PICReg<0x06, "FSR1">, DwarfRegNum<[23]>;
-def FSR0  : PICReg<0x04, "FSR0">, DwarfRegNum<[24]>;
+def FSR0L : PICReg<0x04, "FSR0L">, DwarfRegNum<[27]>;
+def FSR0H : PICReg<0x05, "FSR0H">, DwarfRegNum<[28]>;
+def FSR0  : PICPair<0x04, "FSR0", [FSR0L, FSR0H]>, DwarfRegNum<[24]>;
 def W     : PICReg<0x09, "W">, DwarfRegNum<[25]>;
 // Only the carry flag is modelled. Z and DC are never live between
 // code-generator instructions, so moves and loads may change them freely.
 def CARRY : PICReg<0x03, "C">, DwarfRegNum<[26]>;
 
-def GPR8 : RegisterClass<"PIC16F1", [i8], 8, (sequence "R%u", 0, 13)>;
-def GPR16 : RegisterClass<"PIC16F1", [i16], 8, (sequence "RP%u", 0, 6)>;
+// FSR0 comes last, so that it is free for pointers.
+def GPR8 : RegisterClass<"PIC16F1", [i8], 8,
+                         (add (sequence "R%u", 0, 13), FSR0L, FSR0H)>;
+def GPR16 : RegisterClass<"PIC16F1", [i16], 8,
+                          (add (sequence "RP%u", 0, 6), FSR0)>;
 
 def SCRATCH8 : RegisterClass<"PIC16F1", [i8], 8, (add TMP0, TMP1, W)> {
   let isAllocatable = 0;
 }
-def PTR16 : RegisterClass<"PIC16F1", [i16], 8, (add SP, FSR0)> {
+def PTR16 : RegisterClass<"PIC16F1", [i16], 8, (add SP)> {
   let isAllocatable = 0;
 }
 def CCR : RegisterClass<"PIC16F1", [i8], 8, (add CARRY)> {

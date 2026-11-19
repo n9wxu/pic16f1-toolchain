@@ -30,6 +30,29 @@ def hoist_logic_op_except_trunc : GICombineRule<
               Helper.matchHoistLogicOpWithSameOpcodeHands(*${root}, ${info}); }]),
   (apply [{ Helper.applyBuildInstructionSteps(*${root}, ${info}); }])>;
 
+// x - (x / y) * y is the remainder, which the divide routine computes
+// anyway (LLVM writes a remainder this way when it sees no instruction that
+// gives both). As a remainder it joins the division into one G_UDIVREM,
+// which is one library call. Up to 32 bits; the 64-bit routines are
+// separate.
+def sub_mul_udiv_to_urem : GICombineRule<
+  (defs root:$root),
+  (match (G_UDIV $q, $x, $y),
+         (G_MUL $m, $q, $y),
+         (G_SUB $root, $x, $m),
+         [{ return MRI.getType(${x}.getReg()).isScalar() &&
+                   MRI.getType(${x}.getReg()).getSizeInBits() <= 32; }]),
+  (apply (G_UREM $root, $x, $y))>;
+
+// A signed division by a power of two of up to 16 bits is left for the
+// legalizer, which has a short form for it; wider ones become shifts here.
+def sdiv_by_pow2_wide : GICombineRule<
+  (defs root:$root),
+  (match (G_SDIV $dst, $x, $y, (MIFlags (not IsExact))):$root,
+   [{ return MRI.getType(${x}.getReg()).getScalarSizeInBits() > 16 &&
+             Helper.matchDivByPow2(*${root}, /*IsSigned=*/true); }]),
+  (apply [{ Helper.applySDivByPow2(*${root}); }])>;
+
 def pic16f1_prelegalizer_combines : GICombineGroup<[
     integer_reassoc_combines, trivial_combines, vector_ops_combines,
     freeze_combines, cast_combines, insert_vec_elt_combines,
@@ -43,12 +66,14 @@ def pic16f1_prelegalizer_combines : GICombineGroup<[
     known_bits_simplifications, trunc_shift, not_cmp_fold,
     opt_brcond_by_inverting_cond, const_combines, xor_of_and_with_same_reg,
     ptr_add_with_zero, shift_immed_chain, shift_of_shifted_logic_chain,
-    load_or_combine, div_rem_to_divrem, funnel_shift_combines,
+    load_or_combine, sub_mul_udiv_to_urem, div_rem_to_divrem,
+    funnel_shift_combines,
     bitreverse_shift, commute_shift, form_bitfield_extract,
     constant_fold_binops, constant_fold_fma, constant_fold_cast_op,
     constant_fold_unary_int_op, fabs_fneg_fold, mulh_combines,
     redundant_neg_operands, and_or_disjoint_mask, fma_combines,
-    fold_binop_into_select, intrem_combines, intdiv_combines,
+    fold_binop_into_select, intrem_combines, udiv_by_pow2,
+    sdiv_by_pow2_wide, udiv_by_const, sdiv_by_const,
     fdiv_repeated_divison, sub_add_reg, select_to_minmax, fsub_to_fneg,
     commute_constant_to_rhs, match_ands, match_ors, or_and_xor_combines,
     simplify_neg_minmax, combine_concat_vector, sext_trunc, zext_trunc,

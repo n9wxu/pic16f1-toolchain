@@ -10,14 +10,16 @@
 // instructions:
 //
 //  * PIC16F1ExpandPseudo handles everything except branches. While it emits
-//    code it remembers, within a basic block, what W, BSR and FSR0 hold, and
-//    leaves out instructions that would reload a value already there.
+//    code it remembers, within a basic block, what W and BSR hold and which
+//    pair FSR0 was last copied from, and leaves out instructions that would
+//    reload a value already there.
 //
 //  * PIC16F1ExpandBranches handles the branch pseudos. It runs after branch
 //    relaxation, which needs each branch to still be one instruction.
 //
-// Inside an expansion W, FSR0, BSR, the Z and DC flags and (where the pseudo
-// says so) TMP0 are scratch. The carry flag is preserved by every expansion
+// Inside an expansion W, BSR, the Z and DC flags and (where the pseudo says
+// so) TMP0 are scratch. FSR0 is not: it is a register like any other, and a
+// load or store through a pointer finds the pointer in it already. The carry flag is preserved by every expansion
 // that does not list it as defined, because wide add and subtract chains keep
 // it live from one pseudo to the next.
 //
@@ -28,6 +30,7 @@
 #include "PIC16F1Subtarget.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
@@ -188,17 +191,8 @@ public:
 
   // --- Banked (direct) data access -----------------------------------------
 
-  /// True if byte \p Off of \p GV is known to be in the same bank as its
-  /// first byte. The linker (pic16f1KeepInBank in lld) keeps a section of
-  /// up to 16 bytes within one bank, and every variable has its own section
-  /// unless the program names one.
   static bool inOneBank(const GlobalValue *GV, int64_t Off) {
-    const auto *Var = dyn_cast<GlobalVariable>(GV);
-    if (!Var || Var->hasSection() || !Var->getValueType()->isSized())
-      return false;
-    uint64_t Size =
-        Var->getParent()->getDataLayout().getTypeAllocSize(Var->getValueType());
-    return Size <= 16 && Off >= 0 && uint64_t(Off) < Size;
+    return PIC16F1InstrInfo::inOneBank(GV, Off);
   }
 
   /// Select the bank of the address in \p Addr plus \p Extra and return the
@@ -248,14 +242,10 @@ public:
 
   // --- Pointer access through FSR0 -----------------------------------------
 
+  /// The pointer-setup pass put every pointer in FSR0 already.
   void pointFSR0At(Register Pair, unsigned PairAddr) {
-    if (TrackValues && FSR0Holds == Pair)
-      return;
-    loadW(PairAddr);
-    storeW(PIC16F1::FSR0L_ADDR);
-    loadW(PairAddr + 1);
-    storeW(PIC16F1::FSR0H_ADDR);
-    FSR0Holds = Pair;
+    if (Pair != PIC16F1::FSR0)
+      report_fatal_error("PIC16F1: pointer operand is not in FSR0");
   }
 
   // --- Stack access through FSR1 -------------------------------------------
@@ -370,6 +360,10 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     E.copy(lo(MI.getOperand(0)), lo(MI.getOperand(1)));
     return true;
   case MOV16rr:
+    // FSR0 is often pointed at the same pair again and again.
+    if (MI.getOperand(0).getReg() == PIC16F1::FSR0 && TrackValues &&
+        E.FSR0Holds == MI.getOperand(1).getReg())
+      return true;
     E.copy(lo(MI.getOperand(0)), lo(MI.getOperand(1)));
     E.copy(hi(MI.getOperand(0)), hi(MI.getOperand(1)));
     return true;
@@ -433,6 +427,32 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
   case NOT8:
     E.opToFile(COMF, lo(MI.getOperand(0)));
     return true;
+  case SWAP8:
+    E.opToFile(SWAPF, lo(MI.getOperand(0)));
+    return true;
+
+  // Add a constant if the value is negative. W gets the constant only if
+  // the sign bit is set, and zero otherwise.
+  case ADDNEG8:
+    E.loadWImm(MI.getOperand(2).getImm());
+    E.bitOp(BTFSC, lo(MI.getOperand(0)), 7);
+    E.opToFile(ADDWF, lo(MI.getOperand(0)));
+    return true;
+  case ADDNEG16: {
+    uint64_t K = MI.getOperand(2).getImm();
+    for (unsigned B = 0; B != 2; ++B) {
+      unsigned Byte = (K >> (8 * B)) & 0xFF;
+      E.loadWImm(0);
+      if (Byte != 0) {
+        E.bitOp(BTFSC, hi(MI.getOperand(0)), 7);
+        E.build(MOVLW).addImm(Byte);
+        E.forgetW();
+      }
+      E.opToFile(B == 0 ? ADDWF : ADDWFC, B == 0 ? lo(MI.getOperand(0))
+                                                 : hi(MI.getOperand(0)));
+    }
+    return true;
+  }
   case NEG8:
     E.opToFile(COMF, lo(MI.getOperand(0)));
     E.opToFile(INCF, lo(MI.getOperand(0)));
@@ -472,6 +492,12 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
       return true;
     }
     uint64_t K = MI.getOperand(2).getImm();
+    if (int64_t S = int16_t(K); CarryDead && S >= -32 && S <= 31 &&
+                                MI.getOperand(0).getReg() == PIC16F1::FSR0) {
+      if (S != 0)
+        E.addFSR(0, S);
+      return true;
+    }
     if (CarryDead && (K & 0xFF) == 0) {
       // Only the high byte changes.
       unsigned KHi = (K >> 8) & 0xFF;
@@ -626,6 +652,118 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     // A constant address may name a core register this pass tracks.
     if (F.isImm() && Emitter::isUnbanked(F.getImm()))
       E.forgetAll();
+    return true;
+  }
+
+  case SUB8mr: {
+    E.loadW(lo(MI.getOperand(1)));
+    MachineOperand F = E.selectBank(MI.getOperand(0), 0);
+    E.build(SUBWF).add(F).addImm(1);
+    if (F.isImm() && Emitter::isUnbanked(F.getImm()))
+      E.forgetAll();
+    return true;
+  }
+
+  // --- Read-modify-write of a directly addressed 16-bit object -------------
+  case AND16mi:
+  case OR16mi:
+  case XOR16mi:
+  case ADD16mi:
+  case AND16mr:
+  case OR16mr:
+  case XOR16mr:
+  case ADD16mr:
+  case SUB16mr: {
+    bool IsImm = Opc == AND16mi || Opc == OR16mi || Opc == XOR16mi ||
+                 Opc == ADD16mi;
+    unsigned Op = (Opc == AND16mi || Opc == AND16mr)   ? ANDWF
+                  : (Opc == OR16mi || Opc == OR16mr)   ? IORWF
+                  : (Opc == XOR16mi || Opc == XOR16mr) ? XORWF
+                  : Opc == SUB16mr                     ? SUBWF
+                                                       : ADDWF;
+    const MachineOperand &Addr = MI.getOperand(0);
+    // The bank is selected before each instruction on the object; MOVLB
+    // changes no flag, so it may stand between the two halves.
+    auto OnByte = [&](unsigned B, unsigned Inst, int Bit = -1) {
+      MachineOperand F = E.selectBank(Addr, B);
+      if (Inst == BCF || Inst == BSF)
+        E.build(Inst).add(F).addImm(Bit);
+      else if (Inst == CLRF)
+        E.build(CLRF).add(F);
+      else
+        E.build(Inst).add(F).addImm(1);
+      if (F.isImm() && Emitter::isUnbanked(F.getImm()))
+        E.forgetAll();
+    };
+    if (!IsImm) {
+      E.loadW(lo(MI.getOperand(1)));
+      OnByte(0, Op);
+      E.loadW(hi(MI.getOperand(1)));
+      OnByte(1, Op == ADDWF ? ADDWFC : Op == SUBWF ? SUBWFB : Op);
+      return true;
+    }
+    uint64_t K = MI.getOperand(1).getImm() & 0xFFFF;
+    if (Op == ADDWF) {
+      unsigned KLo = K & 0xFF, KHi = K >> 8;
+      if (CarryDead && K == 1) {
+        // The high byte follows when the low byte wraps to zero. Its bank
+        // is selected first: the skip must act on the INCF.
+        OnByte(0, INCF);
+        MachineOperand F = E.selectBank(Addr, 1);
+        E.bitOp(BTFSC, STATUS_ADDR, STATUS_Z);
+        E.build(INCF).add(F).addImm(1);
+        if (F.isImm() && Emitter::isUnbanked(F.getImm()))
+          E.forgetAll();
+        return true;
+      }
+      if (CarryDead && KLo == 0) {
+        if (KHi == 1)
+          OnByte(1, INCF);
+        else if (KHi == 0xFF)
+          OnByte(1, DECF);
+        else if (KHi != 0) {
+          E.loadWImm(KHi);
+          OnByte(1, ADDWF);
+        }
+        return true;
+      }
+      E.loadWImm(KLo);
+      OnByte(0, ADDWF);
+      E.loadWImm(KHi);
+      OnByte(1, ADDWFC);
+      return true;
+    }
+    for (unsigned B = 0; B != 2; ++B) {
+      unsigned Byte = (K >> (8 * B)) & 0xFF;
+      if (Op == ANDWF) {
+        if (Byte == 0xFF)
+          continue;
+        if (Byte == 0) {
+          OnByte(B, CLRF);
+          continue;
+        }
+        if (int Bit = singleBit(~Byte); Bit >= 0) {
+          OnByte(B, BCF, Bit);
+          continue;
+        }
+      } else if (Op == IORWF) {
+        if (Byte == 0)
+          continue;
+        if (int Bit = singleBit(Byte); Bit >= 0) {
+          OnByte(B, BSF, Bit);
+          continue;
+        }
+      } else {
+        if (Byte == 0)
+          continue;
+        if (Byte == 0xFF) {
+          OnByte(B, COMF);
+          continue;
+        }
+      }
+      E.loadWImm(Byte);
+      OnByte(B, Op);
+    }
     return true;
   }
 
@@ -811,6 +949,21 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
   Emitter E(*TII);
   E.Banks64 = MF.getSubtarget<PIC16F1Subtarget>().hasBanks64();
 
+  // Once the pseudos are gone no instruction names the registers this
+  // function changes, and the pass that collects them for callers
+  // (interprocedural register allocation) runs later. Record them the way
+  // a call's register mask would.
+  {
+    MachineRegisterInfo &MRI = MF.getRegInfo();
+    std::vector<uint32_t> Kept(MachineOperand::getRegMaskSize(TRI->getNumRegs()),
+                               ~uint32_t(0));
+    for (unsigned Reg = 1, E = TRI->getNumRegs(); Reg != E; ++Reg)
+      if (!MRI.def_empty(Reg))
+        for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+          Kept[(*AI).id() / 32] &= ~(1u << ((*AI).id() % 32));
+    MRI.addPhysRegsUsedFromRegMask(Kept.data());
+  }
+
   for (MachineBasicBlock &MBB : MF) {
     E.forgetAll();
     for (MachineBasicBlock::iterator I = MBB.begin(); I != MBB.end();) {
@@ -832,6 +985,12 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
       // FSR0 no longer matches its register pair if this instruction changed
       // the pair. Check after expanding: the instruction may itself have
       // pointed FSR0 at a pair that it then overwrites with its result.
+      bool PointsFSR0 = MI.getOpcode() == PIC16F1::MOV16rr &&
+                        MI.getOperand(0).getReg() == PIC16F1::FSR0;
+      if (PointsFSR0)
+        E.FSR0Holds = MI.getOperand(1).getReg();
+      else if (MI.modifiesRegister(PIC16F1::FSR0, TRI))
+        E.FSR0Holds = Register();
       if (E.FSR0Holds.isValid() && MI.modifiesRegister(E.FSR0Holds, TRI))
         E.FSR0Holds = Register();
       if (!Expanded) {

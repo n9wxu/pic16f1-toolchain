@@ -29,6 +29,9 @@ if [ ! -x "$root/build/venv/bin/meson" ]; then
     "$root/build/venv/bin/pip" -q install meson
 fi
 
+# No outlining in a library: a program links a few of its functions, so a
+# sequence shared between functions would cost more than it saves.
+#
 # Code that names a global selects its bank with MOVLB, which is encoded
 # differently on 32- and 64-bank devices, so the library is built once for
 # each. The driver picks the one that matches the device.
@@ -40,7 +43,7 @@ build_variant() {  # build_variant <banks> <cpu>
     out=$dest/banks$banks
     cat > "$cross" <<CROSS
 [binaries]
-c = ['$bin/clang', '--target=pic16f1', '-mcpu=$cpu', '-nostdlib', '-ffunction-sections', '-fdata-sections']
+c = ['$bin/clang', '--target=pic16f1', '-mcpu=$cpu', '-nostdlib', '-ffunction-sections', '-fdata-sections', '-mllvm', '-enable-machine-outliner=never']
 ar = '$bin/llvm-ar'
 nm = '$bin/llvm-nm'
 strip = '$bin/llvm-objcopy'

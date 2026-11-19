@@ -1,6 +1,5 @@
-/* Integer multiply and divide routines the compiler calls for operations
- * the core has no instruction for. Plain shift-and-add and restoring
- * division: correct first, small and fast later.
+/* 64-bit integer multiply and divide routines. The 8-, 16- and 32-bit ones
+ * are in assembly, in muldiv.S. Plain shift-and-add and restoring division.
  *
  * Only one-bit constant shifts are used, which the compiler expands inline,
  * so nothing here calls back into this file.
@@ -28,9 +27,6 @@ typedef long long s64;
         return r;                                                              \
     }
 
-MUL(u8, __mulqi3)
-MUL(u16, __mulhi3)
-MUL(u32, __mulsi3)
 MUL(u64, __muldi3)
 
 /* Restoring division. The remainder can need one bit more than T while it
@@ -55,9 +51,6 @@ MUL(u64, __muldi3)
         return q;                                                              \
     }
 
-UDIVMOD(u8, 8, 0x80u, udivmod8)
-UDIVMOD(u16, 16, 0x8000u, udivmod16)
-UDIVMOD(u32, 32, 0x80000000UL, udivmod32)
 UDIVMOD(u64, 64, 0x8000000000000000ULL, udivmod64)
 
 #define DIVMOD(U, S, core, udiv, umod, sdiv, smod)                             \
@@ -101,7 +94,4 @@ UDIVMOD(u64, 64, 0x8000000000000000ULL, udivmod64)
         return (S)(neg ? (U)0 - r : r);                                        \
     }
 
-DIVMOD(u8, s8, udivmod8, __udivqi3, __umodqi3, __divqi3, __modqi3)
-DIVMOD(u16, s16, udivmod16, __udivhi3, __umodhi3, __divhi3, __modhi3)
-DIVMOD(u32, s32, udivmod32, __udivsi3, __umodsi3, __divsi3, __modsi3)
 DIVMOD(u64, s64, udivmod64, __udivdi3, __umoddi3, __divdi3, __moddi3)

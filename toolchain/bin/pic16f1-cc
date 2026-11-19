@@ -15,6 +15,10 @@ compiles and links in one step and no model is given, it tries small first
 and falls back to medium if the program turns out too big. With -c or -S
 the default is medium.
 
+-flto optimizes the whole program at link time: functions are inlined and
+shared sequences found across source files, and what the program does not
+use is left out before code is generated. Compile and link with it.
+
 -mmain-saves-registers makes main save the callee-saved registers. Normally
 it does not, because the startup code keeps nothing in them; a program that
 calls main from another source file needs this option on the file that
@@ -150,6 +154,16 @@ def main():
     else:
         clang += ["-ffreestanding"]
     clang += ["-isystem", inc] + cflags
+    # LLVM's inlining at -Os assumes that a call costs several instructions
+    # and that a function of ten or so is small. Here a call is one or two
+    # words and every instruction of the function several, so less is
+    # inlined. (A function with a single caller is still always inlined.)
+    tuning = []
+    if any(f in ("-Os", "-Oz") for f in cflags) and not any("inline-threshold" in f for f in cflags):
+        tuning = ["-mllvm", "-inline-threshold=10", "-mllvm", "-inline-call-penalty=5"]
+    clang += tuning
+    # With -flto the linker generates the code and needs the same options.
+    lto = any(f == "-flto" or f.startswith("-flto=") for f in cflags)
 
     if compile_only or asm_only:
         cmd = clang + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
@@ -182,6 +196,8 @@ def main():
             crt0 = os.path.join(lib, "crt0-small.o" if small else "crt0.o")
             link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
                     crt0] + objs + objects + rt + ["-o", elf] + ldflags
+            if lto:
+                link += ["-mllvm", f"-code-model={model}"] + tuning
             if quiet:
                 return subprocess.run(link, capture_output=True).returncode == 0
             run(link)

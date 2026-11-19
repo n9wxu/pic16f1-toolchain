@@ -4,15 +4,28 @@ target triple = "pic16f1"
 declare i16 @ext(i16, i8)
 declare void @many(i16, i16, i16, i16, i16)
 
-; Arguments go in R0 up; PCLATH is set before every call.
+; Arguments go in R0 up; PCLATH is set before every call. A call that the
+; function returns straight after is a jump: the callee returns for it.
 define i16 @call(i16 %x) {
 ; CHECK-LABEL: call:
 ; CHECK:      movlw 3
 ; CHECK-NEXT: movwf 0x72
 ; CHECK-NEXT: movlp page(ext)
-; CHECK-NEXT: call ext
+; CHECK-NEXT: goto ext
+; CHECK-NOT:  return
   %r = call i16 @ext(i16 %x, i8 3)
   ret i16 %r
+}
+
+; Not when something is left to do after the call.
+define i16 @call_then_add(i16 %x) {
+; CHECK-LABEL: call_then_add:
+; CHECK:      movlp page(ext)
+; CHECK-NEXT: call ext
+; CHECK:      return
+  %r = call i16 @ext(i16 %x, i8 3)
+  %s = add i16 %r, 1
+  ret i16 %s
 }
 
 ; The fifth 16-bit argument does not fit in R0-R7 and goes on the stack.
@@ -46,16 +59,20 @@ define ptr @address() {
   ret ptr @ext
 }
 
-; R8 is preserved across calls, so a value kept there is saved first.
+; R8 is preserved across calls, so a value kept there is saved first:
+; pushed on entry and popped, in the opposite order, before the return.
 define i16 @keep(i16 %x) {
 ; CHECK-LABEL: keep:
-; CHECK: addfsr FSR1, -2
-; CHECK: movf 0x78, W
-; CHECK: movwi 1[FSR1]
-; CHECK: call ext
-; CHECK: moviw 1[FSR1]
-; CHECK: movwf 0x78
-; CHECK: addfsr FSR1, 2
+; CHECK:      movf 0x78, W
+; CHECK-NEXT: movwi --FSR1
+; CHECK-NEXT: movf 0x79, W
+; CHECK-NEXT: movwi --FSR1
+; CHECK:      call ext
+; CHECK:      moviw FSR1++
+; CHECK-NEXT: movwf 0x79
+; CHECK-NEXT: moviw FSR1++
+; CHECK-NEXT: movwf 0x78
+; CHECK-NEXT: return
   %r = call i16 @ext(i16 %x, i8 0)
   %s = add i16 %r, %x
   ret i16 %s

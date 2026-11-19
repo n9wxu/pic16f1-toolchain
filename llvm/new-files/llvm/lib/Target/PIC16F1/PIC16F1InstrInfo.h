@@ -89,6 +89,36 @@ public:
 
   static bool isCompareBranch(unsigned Opc);
 
+  // Machine outliner: instruction sequences that occur several times in a
+  // module become one subroutine. A call uses only the hardware return
+  // stack, so sequences that use the software stack are as good as any.
+  bool shouldOutlineFromFunctionByDefault(MachineFunction &MF) const override;
+  bool isFunctionSafeToOutlineFrom(MachineFunction &MF,
+                                   bool OutlineFromLinkOnceODRs) const override;
+  std::optional<std::unique_ptr<outliner::OutlinedFunction>>
+  getOutliningCandidateInfo(
+      const MachineModuleInfo &MMI,
+      std::vector<outliner::Candidate> &RepeatedSequenceLocs,
+      unsigned MinRepeats) const override;
+  outliner::InstrType getOutliningTypeImpl(const MachineModuleInfo &MMI,
+                                           MachineBasicBlock::iterator &MIT,
+                                           unsigned Flags) const override;
+  void buildOutlinedFrame(MachineBasicBlock &MBB, MachineFunction &MF,
+                          const outliner::OutlinedFunction &OF) const override;
+  MachineBasicBlock::iterator
+  insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
+                     MachineBasicBlock::iterator &It, MachineFunction &MF,
+                     outliner::Candidate &C) const override;
+
+  /// True if byte \p Off of \p GV is sure to be in the same bank as its
+  /// first byte. The linker (pic16f1KeepInBank in lld) keeps a section of
+  /// up to 16 bytes within one bank, and every variable has its own section
+  /// unless the program names one.
+  static bool inOneBank(const GlobalValue *GV, int64_t Off);
+
+  /// True if \p MI makes the instruction after it conditional.
+  static bool isSkip(const MachineInstr &MI);
+
   /// File address of a byte register, or of the low byte of a pair.
   unsigned fileAddr(Register Reg) const { return RI.getEncodingValue(Reg); }
 };

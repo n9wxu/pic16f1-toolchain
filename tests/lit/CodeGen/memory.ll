@@ -18,15 +18,17 @@ define void @store(i16 %v) {
   ret void
 }
 
-; A constant is in flash and is read through FSR0 (0x04, 0x05).
+; A constant is in flash and is read through FSR0 (0x04, 0x05). The
+; address is worked out in FSR0 itself.
 define i8 @flash(i16 %i) {
 ; CHECK-LABEL: flash:
-; CHECK:     movlw lo8(k)
-; CHECK:     movlw hi8(k)
-; CHECK-NOT: movlb
-; CHECK:     movwf 0x04
-; CHECK:     movwf 0x05
-; CHECK:     moviw 0[FSR0]
+; CHECK:      movlw lo8(k)
+; CHECK-NEXT: addwf 0x70, W
+; CHECK-NEXT: movwf 0x04
+; CHECK-NEXT: movlw hi8(k)
+; CHECK-NEXT: addwfc 0x71, W
+; CHECK-NEXT: movwf 0x05
+; CHECK-NEXT: moviw 0[FSR0]
   %p = getelementptr [4 x i8], ptr @k, i16 0, i16 %i
   %v = load i8, ptr %p
   ret i8 %v

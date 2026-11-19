@@ -39,6 +39,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() 
   initializePIC16F1ExpandPseudoPass(PR);
   initializePIC16F1ExpandBranchesPass(PR);
   initializePIC16F1PeepholePass(PR);
+  initializePIC16F1PointerSetupPass(PR);
 }
 
 namespace {
@@ -81,6 +82,10 @@ PIC16F1TargetMachine::PIC16F1TargetMachine(const Target &T, const Triple &TT,
   // Instruction selection is GlobalISel. A function it cannot handle yet
   // falls back to the SelectionDAG selector; -global-isel-abort=2 reports
   // each such function, and -global-isel=0 selects SelectionDAG throughout.
+  // Repeated instruction sequences become subroutines in functions
+  // optimized for size (PIC16F1InstrInfo.cpp).
+  setMachineOutliner(true);
+  setSupportsDefaultOutlining(true);
   setGlobalISel(true);
   setGlobalISelAbort(GlobalISelAbortMode::Disable);
 }
@@ -106,8 +111,8 @@ public:
   bool addRegBankSelect() override;
   void addPreGlobalInstructionSelect() override;
   bool addGlobalInstructionSelect() override;
+  void addPreRegAlloc() override;
   void addPreEmitPass() override;
-  void addPreEmitPass2() override;
 };
 } // namespace
 
@@ -172,19 +177,22 @@ bool PIC16F1PassConfig::addGlobalInstructionSelect() {
   return false;
 }
 
-void PIC16F1PassConfig::addPreEmitPass() {}
+void PIC16F1PassConfig::addPreRegAlloc() {
+  addPass(createPIC16F1PointerSetupPass());
+}
 
-void PIC16F1PassConfig::addPreEmitPass2() {
-  // Pseudo expansion comes after LLVM's collector of register usage, which
-  // runs between the two pre-emit hooks: the expanded instructions name
-  // file addresses, not registers, and the collector would take a function
-  // to change no register at all.
+void PIC16F1PassConfig::addPreEmitPass() {
+  // The expanded instructions name file addresses, not registers. LLVM's
+  // collector of register usage (for -O1 and up) and its outliner both run
+  // after this hook; the expansion pass records the registers a function
+  // changes for the first, and the second then works on final instructions.
   addPass(createPIC16F1ExpandPseudoPass());
   // Only branch pseudos are left; every other instruction now has its final
   // size, so branch distances can be checked.
   addPass(&BranchRelaxationPassID);
   addPass(createPIC16F1ExpandBranchesPass());
   // Last, on the final instructions; it only removes instructions and
-  // changes operands, so branch distances can only shrink.
+  // changes operands, so branch distances can only shrink. The same holds
+  // for outlining.
   addPass(createPIC16F1PeepholePass());
 }
