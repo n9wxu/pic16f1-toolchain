@@ -40,6 +40,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() 
   initializePIC16F1ExpandBranchesPass(PR);
   initializePIC16F1PeepholePass(PR);
   initializePIC16F1PointerSetupPass(PR);
+  initializePIC16F1StaticFramesPass(PR);
 }
 
 namespace {
@@ -54,6 +55,16 @@ public:
         return getContext().getELFSection(".isr", ELF::SHT_PROGBITS,
                                           ELF::SHF_ALLOC | ELF::SHF_EXECINSTR);
     return TargetLoweringObjectFileELF::SelectSectionForGlobal(GO, Kind, TM);
+  }
+
+  /// The variables that stand in for a stack frame (PIC16F1StaticFrames.cpp)
+  /// take up no room in the file.
+  MCSection *getExplicitSectionGlobal(const GlobalObject *GO, SectionKind Kind,
+                                      const TargetMachine &TM) const override {
+    if (GO->getSection().starts_with(".noinit"))
+      return getContext().getELFSection(GO->getSection(), ELF::SHT_NOBITS,
+                                        ELF::SHF_ALLOC | ELF::SHF_WRITE);
+    return TargetLoweringObjectFileELF::getExplicitSectionGlobal(GO, Kind, TM);
   }
 };
 } // namespace
@@ -130,6 +141,8 @@ MachineFunctionInfo *PIC16F1TargetMachine::createMachineFunctionInfo(
 void PIC16F1PassConfig::addIRPasses() {
   addPass(createAtomicExpandLegacyPass());
   TargetPassConfig::addIRPasses();
+  if (getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPIC16F1StaticFramesPass());
 }
 
 bool PIC16F1PassConfig::addInstSelector() {

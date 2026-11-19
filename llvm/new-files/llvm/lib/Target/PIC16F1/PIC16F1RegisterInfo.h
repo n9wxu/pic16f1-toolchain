@@ -30,6 +30,11 @@ public:
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   const TargetRegisterClass *
   getPointerRegClass(unsigned Kind = 0) const override;
+  /// A value held to FSR1 by a pointer access may be anywhere when it is
+  /// split off from that access.
+  const TargetRegisterClass *
+  getLargestLegalSuperClass(const TargetRegisterClass *RC,
+                            const MachineFunction &MF) const override;
   bool eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
                            unsigned FIOperandNum,
                            RegScavenger *RS = nullptr) const override;

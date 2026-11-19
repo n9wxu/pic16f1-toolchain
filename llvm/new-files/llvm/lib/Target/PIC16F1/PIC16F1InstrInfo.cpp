@@ -33,19 +33,6 @@ void PIC16F1InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    Register SrcReg, bool KillSrc,
                                    bool RenamableDest, bool RenamableSrc) const {
   unsigned Opc;
-  // The stack pointer is FSR1. An interrupt handler has its own stack, so
-  // FSR1 may be read or written a byte at a time.
-  if (DestReg == PIC16F1::SP || SrcReg == PIC16F1::SP) {
-    bool ToSP = DestReg == PIC16F1::SP;
-    unsigned Pair = fileAddr(ToSP ? SrcReg : DestReg);
-    for (unsigned B = 0; B != 2; ++B) {
-      unsigned From = ToSP ? Pair + B : PIC16F1::FSR1L_ADDR + B;
-      unsigned To = ToSP ? PIC16F1::FSR1L_ADDR + B : Pair + B;
-      BuildMI(MBB, I, DL, get(PIC16F1::MOVF)).addImm(From).addImm(0);
-      BuildMI(MBB, I, DL, get(PIC16F1::MOVWF)).addImm(To);
-    }
-    return;
-  }
   if (PIC16F1::GPR16RegClass.contains(DestReg, SrcReg))
     Opc = PIC16F1::MOV16rr;
   else if (PIC16F1::GPR8RegClass.contains(DestReg, SrcReg))
@@ -462,7 +449,10 @@ enum MachineOutlinerClass {
 
 bool PIC16F1InstrInfo::inOneBank(const GlobalValue *GV, int64_t Off) {
   const auto *Var = dyn_cast<GlobalVariable>(GV);
-  if (!Var || Var->hasSection() || !Var->getValueType()->isSized())
+  // A section the program names may hold other variables too; the blocks
+  // PIC16F1StaticFrames makes each have their own.
+  if (!Var || !Var->getValueType()->isSized() ||
+      (Var->hasSection() && !Var->getSection().starts_with(".noinit.")))
     return false;
   uint64_t Size =
       Var->getParent()->getDataLayout().getTypeAllocSize(Var->getValueType());

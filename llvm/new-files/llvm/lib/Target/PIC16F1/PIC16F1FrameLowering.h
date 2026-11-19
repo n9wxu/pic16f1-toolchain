@@ -33,6 +33,8 @@ public:
   // Callee-saved registers are pushed on entry and popped before the
   // return, in a fixed order. The instructions are then the same in every
   // function that saves the same registers, and the outliner shares them.
+  void processFunctionBeforeFrameFinalized(
+      MachineFunction &MF, RegScavenger *RS = nullptr) const override;
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
                                  ArrayRef<CalleeSavedInfo> CSI,

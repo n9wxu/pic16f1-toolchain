@@ -83,6 +83,15 @@ FunctionPass *createPIC16F1ExpandPseudoPass();
 /// branch relaxation.
 FunctionPass *createPIC16F1ExpandBranchesPass();
 FunctionPass *createPIC16F1PeepholePass();
+/// Mark the functions that cannot be re-entered and give their small
+/// variables fixed addresses.
+ModulePass *createPIC16F1StaticFramesPass();
+void initializePIC16F1StaticFramesPass(PassRegistry &);
+/// The largest frame object that gets a fixed address in a function with a
+/// static frame (-pic16f1-static-slot-limit); 0 if none does.
+unsigned pic16f1StaticSlotLimit();
+/// -pic16f1-main-saves-registers: something outside the module calls main.
+bool pic16f1MainIsCalled();
 /// Copy pointers to FSR0 in front of the loads and stores that use them.
 FunctionPass *createPIC16F1PointerSetupPass();
 

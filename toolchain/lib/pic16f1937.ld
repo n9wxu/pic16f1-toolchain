@@ -62,6 +62,13 @@ SECTIONS
   } > ram
   __bss_size = SIZEOF(.bss);
 
+  /* Variables that have a fixed address in place of a stack frame. Like
+   * stack variables they have no initial value, so startup skips them. */
+  .noinit (NOLOAD) :
+  {
+    *(.noinit .noinit.*)
+  } > ram
+
   .isr_stack (NOLOAD) :
   {
     . += (SIZEOF(.isr) > 0) ? __isr_stack_size : 0;

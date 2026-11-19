@@ -62,7 +62,8 @@ static cl::opt<unsigned> Steps(
              "reloads, 4 reuse Z, 8 operate on originals, 16 remove dead "
              "instructions, 32 fold bit tests, 64 remove bank selections, "
              "128 tail calls, 256 skip on decrement and results in W, 512 "
-             "reread stack bytes, 1024 constants in registers"));
+             "reread stack bytes, 1024 constants in registers, 2048 step "
+             "an FSR in the access"));
 
 namespace {
 
@@ -449,6 +450,7 @@ private:
   void computeLiveness(MachineFunction &MF);
   bool removeDead(MachineBasicBlock &MBB);
   bool forward(MachineBasicBlock &MBB);
+  bool stepPointer(MachineBasicBlock &MBB);
   bool removeBankSelects(MachineFunction &MF);
   bool tailCalls(MachineFunction &MF);
 };
@@ -1143,6 +1145,95 @@ bool PIC16F1Peephole::tailCalls(MachineFunction &MF) {
   return Changed;
 }
 
+/// True if \p MI reads or changes FSR \p N, or may: by name, as a file
+/// register, or through INDF.
+static bool touchesFSR(const MachineInstr &MI, unsigned N) {
+  using namespace PIC16F1;
+  switch (MI.getOpcode()) {
+  case ADDFSR:
+    return MI.getOperand(0).getImm() == N;
+  case MOVIWm:
+  case MOVWIm:
+    return ((MI.getOperand(0).getImm() >> 2) & 1) == N;
+  case MOVIWk:
+  case MOVWIk:
+    return MI.getOperand(1).getImm() == N;
+  default:
+    break;
+  }
+  if (MI.isCall() || MI.isReturn() || MI.isBranch() || MI.isInlineAsm())
+    return true;
+  // FSRnL, FSRnH and INDFn as file operands; anything else that is not a
+  // plain number (a symbol) is some other variable.
+  const unsigned Lo = N ? FSR1L_ADDR : FSR0L_ADDR;
+  for (const MachineOperand &MO : MI.explicit_operands())
+    if (MO.isImm()) {
+      unsigned F = MO.getImm() & 0x7F;
+      if (F == Lo || F == Lo + 1 || F == N)
+        return true;
+    }
+  return false;
+}
+
+/// An access through an FSR and a step of that FSR by one, with nothing
+/// between them that uses it, are one instruction: MOVIW FSR0++ and its
+/// relatives. The step moves to the access, which is safe when no branch
+/// lies between the two.
+bool PIC16F1Peephole::stepPointer(MachineBasicBlock &MBB) {
+  using namespace PIC16F1;
+  const PIC16F1InstrInfo &TII =
+      *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+  bool Changed = false;
+  for (unsigned N = 0; N != 2; ++N) {
+    auto IsAccess = [N](const MachineInstr &MI) {
+      return (MI.getOpcode() == MOVIWk || MI.getOpcode() == MOVWIk) &&
+             MI.getOperand(0).getImm() == 0 && MI.getOperand(1).getImm() == N;
+    };
+    auto IsStep = [N](const MachineInstr &MI) {
+      return MI.getOpcode() == ADDFSR && MI.getOperand(0).getImm() == N &&
+             (MI.getOperand(1).getImm() == 1 ||
+              MI.getOperand(1).getImm() == -1) &&
+             !MI.getFlag(MachineInstr::FrameSetup) &&
+             !MI.getFlag(MachineInstr::FrameDestroy);
+    };
+    for (auto I = MBB.begin(); I != MBB.end(); ++I) {
+      if (!isReal(*I) || !(IsAccess(*I) || IsStep(*I)) || isConditional(*I))
+        continue;
+      bool First = IsAccess(*I);
+      for (auto J = std::next(I); J != MBB.end(); ++J) {
+        if (!isReal(*J))
+          continue;
+        if ((First ? IsStep(*J) : IsAccess(*J)) && !isConditional(*J)) {
+          MachineInstr &Access = First ? *I : *J;
+          MachineInstr &Step = First ? *J : *I;
+          bool Up = Step.getOperand(1).getImm() == 1;
+          // Mode: 0 ++FSR, 1 --FSR, 2 FSR++, 3 FSR--; bit 2 is the FSR.
+          unsigned Mode = (First ? 2 : 0) | (Up ? 0 : 1) | (N << 2);
+          Access.setDesc(
+              TII.get(Access.getOpcode() == MOVIWk ? MOVIWm : MOVWIm));
+          Access.removeOperand(1);
+          Access.getOperand(0).setImm(Mode);
+          if (First) {
+            J->eraseFromParent();
+          } else {
+            MBB.erase(I);
+            I = J;
+          }
+          Changed = true;
+          break;
+        }
+        if (touchesFSR(*J, N))
+          break;
+        // The file operands of the model are numbers; an instruction the
+        // model does not understand at all stops the search.
+        if (effectOf(*J).Barrier)
+          break;
+      }
+    }
+  }
+  return Changed;
+}
+
 bool PIC16F1Peephole::runOnMachineFunction(MachineFunction &MF) {
   if (!EnablePeephole || MF.getTarget().getOptLevel() == CodeGenOptLevel::None ||
       skipFunction(MF.getFunction()))
@@ -1162,6 +1253,9 @@ bool PIC16F1Peephole::runOnMachineFunction(MachineFunction &MF) {
       break;
     Changed = true;
   }
+  if (Steps & 2048)
+    for (MachineBasicBlock &MBB : MF)
+      Changed |= stepPointer(MBB);
   if (Steps & 64)
     Changed |= removeBankSelects(MF);
   if (Steps & 128)

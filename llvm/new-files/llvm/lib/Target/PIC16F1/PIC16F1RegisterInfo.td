@@ -52,8 +52,13 @@ def RP4 : PICPair<0x78, "RP4", [R8, R9]>, DwarfRegNum<[20]>;
 def RP5 : PICPair<0x7A, "RP5", [R10, R11]>, DwarfRegNum<[21]>;
 def RP6 : PICPair<0x7C, "RP6", [R12, R13]>, DwarfRegNum<[22]>;
 
-// The software stack pointer is FSR1.
-def SP    : PICReg<0x06, "FSR1">, DwarfRegNum<[23]>;
+// The software stack pointer is FSR1. In a function that keeps nothing on
+// the stack but saved registers (see PIC16F1StaticFrames.cpp) it is a
+// register like FSR0, and the stack pointer a value that must be back in it
+// at every call and return; everywhere else it is reserved.
+def FSR1L : PICReg<0x06, "FSR1L">, DwarfRegNum<[29]>;
+def FSR1H : PICReg<0x07, "FSR1H">, DwarfRegNum<[30]>;
+def SP    : PICPair<0x06, "FSR1", [FSR1L, FSR1H]>, DwarfRegNum<[23]>;
 def FSR0L : PICReg<0x04, "FSR0L">, DwarfRegNum<[27]>;
 def FSR0H : PICReg<0x05, "FSR0H">, DwarfRegNum<[28]>;
 def FSR0  : PICPair<0x04, "FSR0", [FSR0L, FSR0H]>, DwarfRegNum<[24]>;
@@ -62,11 +67,29 @@ def W     : PICReg<0x09, "W">, DwarfRegNum<[25]>;
 // code-generator instructions, so moves and loads may change them freely.
 def CARRY : PICReg<0x03, "C">, DwarfRegNum<[26]>;
 
-// FSR0 comes last, so that it is free for pointers.
+// FSR0 comes last, so that it is free for pointers. FSR1 is in these
+// classes so that a value held in it can be copied and worked on like any
+// other, but it is not handed out for one: only the two classes below do
+// that. (Used for just any value, it would push the stack pointer out, and
+// that costs more than a stack slot.)
 def GPR8 : RegisterClass<"PIC16F1", [i8], 8,
-                         (add (sequence "R%u", 0, 13), FSR0L, FSR0H)>;
+                         (add (sequence "R%u", 0, 13), FSR0L, FSR0H, FSR1L,
+                              FSR1H)> {
+  let AltOrders = [(sub GPR8, FSR1L, FSR1H)];
+  let AltOrderSelect = [{ return 1; }];
+}
 def GPR16 : RegisterClass<"PIC16F1", [i16], 8,
-                          (add (sequence "RP%u", 0, 6), FSR0)>;
+                          (add (sequence "RP%u", 0, 6), FSR0, SP)> {
+  let AltOrders = [(sub GPR16, SP)];
+  let AltOrderSelect = [{ return 1; }];
+}
+// What the stack pointer's value lives in while FSR1 is a register: FSR1
+// itself when nothing else wants it.
+def SPV : RegisterClass<"PIC16F1", [i16], 8,
+                        (add SP, (sequence "RP%u", 0, 6))>;
+// FSR1 alone: what the "ptr1" forms of the loads and stores through a
+// pointer take their address in (see PIC16F1PointerSetup.cpp).
+def FSR1C : RegisterClass<"PIC16F1", [i16], 8, (add SP)>;
 
 def SCRATCH8 : RegisterClass<"PIC16F1", [i8], 8, (add TMP0, TMP1, W)> {
   let isAllocatable = 0;

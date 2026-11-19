@@ -131,6 +131,10 @@ void PIC16F1AsmPrinter::emitEndOfAsmFile(Module &M) {
     if (GV.isDeclaration() || GV.hasAvailableExternallyLinkage() ||
         GV.getName().starts_with("llvm.") || GV.getSection() == "llvm.metadata")
       continue;
+    // Variables with fixed addresses in place of a stack frame have no
+    // initial value.
+    if (GV.getSection().starts_with(".noinit"))
+      continue;
     SectionKind Kind = TargetLoweringObjectFile::getKindForGlobal(&GV, TM);
     if (Kind.isBSS() || Kind.isCommon())
       NeedsClear = true;

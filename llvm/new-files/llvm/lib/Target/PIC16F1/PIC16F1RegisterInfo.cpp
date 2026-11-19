@@ -9,6 +9,7 @@
 #include "PIC16F1RegisterInfo.h"
 #include "PIC16F1.h"
 #include "PIC16F1FrameLowering.h"
+#include "PIC16F1MachineFunctionInfo.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -24,6 +25,8 @@ static cl::opt<bool> MainSavesRegisters(
     "pic16f1-main-saves-registers", cl::Hidden, cl::init(false),
     cl::desc("Make main save the callee-saved registers like any other "
              "function, for programs that call main from another file"));
+
+bool llvm::pic16f1MainIsCalled() { return MainSavesRegisters; }
 
 #define GET_REGINFO_TARGET_DESC
 #include "PIC16F1GenRegisterInfo.inc"
@@ -49,7 +52,7 @@ PIC16F1RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 const uint32_t *
 PIC16F1RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                                           CallingConv::ID) const {
-  return CSR_Normal_RegMask;
+  return CSR_NormalCall_RegMask;
 }
 
 const uint32_t *PIC16F1RegisterInfo::getLibcallPreservedMask(StringRef Name) {
@@ -64,11 +67,22 @@ const uint32_t *PIC16F1RegisterInfo::getLibcallPreservedMask(StringRef Name) {
 
 BitVector PIC16F1RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  Reserved.set(PIC16F1::SP);
+  if (!MF.getInfo<PIC16F1MachineFunctionInfo>()->fsr1IsRegister()) {
+    Reserved.set(PIC16F1::SP);
+    Reserved.set(PIC16F1::FSR1L);
+    Reserved.set(PIC16F1::FSR1H);
+  }
   Reserved.set(PIC16F1::W);
   Reserved.set(PIC16F1::TMP0);
   Reserved.set(PIC16F1::TMP1);
   return Reserved;
+}
+
+const TargetRegisterClass *PIC16F1RegisterInfo::getLargestLegalSuperClass(
+    const TargetRegisterClass *RC, const MachineFunction &MF) const {
+  if (RC == &PIC16F1::FSR1CRegClass)
+    return &PIC16F1::GPR16RegClass;
+  return RC;
 }
 
 const TargetRegisterClass *
@@ -83,6 +97,33 @@ bool PIC16F1RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MachineFunction &MF = *MI.getParent()->getParent();
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
+  // An object with a fixed address: the instruction becomes its directly
+  // addressed form.
+  if (const auto *Static =
+          MF.getInfo<PIC16F1MachineFunctionInfo>()->getStaticObject(FrameIndex)) {
+    if (MI.isDebugInstr()) {
+      MI.getOperand(FIOperandNum).ChangeToImmediate(0);
+      return false;
+    }
+    unsigned Direct;
+    switch (MI.getOpcode()) {
+    case PIC16F1::LD8fi:   Direct = PIC16F1::LD8abs; break;
+    case PIC16F1::LD16fi:  Direct = PIC16F1::LD16abs; break;
+    case PIC16F1::ST8fi:   Direct = PIC16F1::ST8abs; break;
+    case PIC16F1::ST16fi:  Direct = PIC16F1::ST16abs; break;
+    case PIC16F1::STI8fi:  Direct = PIC16F1::STI8abs; break;
+    case PIC16F1::STI16fi: Direct = PIC16F1::STI16abs; break;
+    case PIC16F1::LEAfi:   Direct = PIC16F1::LDI16; break;
+    default:
+      llvm_unreachable("frame object with a fixed address in an instruction "
+                       "without a direct form");
+    }
+    int64_t Offset = Static->second + MI.getOperand(FIOperandNum + 1).getImm();
+    MI.setDesc(MF.getSubtarget().getInstrInfo()->get(Direct));
+    MI.removeOperand(FIOperandNum + 1);
+    MI.getOperand(FIOperandNum).ChangeToGA(Static->first, Offset);
+    return false;
+  }
   // The stack grows down and FSR1 points at the lowest byte in use, so every
   // object sits at a non-negative offset from it. Nothing else (such as a
   // return address) is on this stack.

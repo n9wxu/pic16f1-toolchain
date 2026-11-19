@@ -10,8 +10,8 @@ target triple = "pic16f1"
 declare void @put(i8)
 declare void @use(i16)
 
-; A pointer that steps through a string lives in FSR0: ADDFSR moves it, and
-; nothing copies it there for each access.
+; A pointer that steps through a string lives in FSR0: the access steps it,
+; and nothing copies it there for each access.
 define i8 @sum(ptr %s) {
 ; CHECK-LABEL: sum:
 ; CHECK:      movf 0x70, W
@@ -19,7 +19,7 @@ define i8 @sum(ptr %s) {
 ; CHECK-NEXT: movf 0x71, W
 ; CHECK-NEXT: movwf 0x05
 ; CHECK:      moviw 0[FSR0]
-; CHECK:      addfsr FSR0, 1
+; CHECK:      moviw ++FSR0
 ; CHECK-NOT:  movwf 0x04
 ; CHECK:      return
 entry:

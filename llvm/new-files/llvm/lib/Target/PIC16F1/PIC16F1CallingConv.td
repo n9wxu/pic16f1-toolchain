@@ -30,6 +30,10 @@ def CC_PIC16F1 : CallingConv<[
 ]>;
 
 def CSR_Normal : CalleeSavedRegs<(sequence "R%u", 8, 13)>;
+// What a call leaves unchanged: those, and FSR1. No function saves FSR1,
+// but each one returns with the stack pointer back in it, which is the
+// value it had at the call.
+def CSR_NormalCall : CalleeSavedRegs<(add CSR_Normal, SP)>;
 // For a function whose caller reads no register afterwards: main, called
 // once by the startup code, and functions that do not return.
 def CSR_NoRegs : CalleeSavedRegs<(add)>;
@@ -37,7 +41,7 @@ def CSR_NoRegs : CalleeSavedRegs<(add)>;
 // The 8- and 16-bit multiply and divide routines of the runtime library
 // (muldiv.S) use only R0-R5 and the scratch bytes: R6, R7 and FSR0 survive a
 // call to one of them as well.
-def CSR_SmallMath : CalleeSavedRegs<(add R6, R7, FSR0L, FSR0H,
+def CSR_SmallMath : CalleeSavedRegs<(add R6, R7, FSR0L, FSR0H, SP,
                                          (sequence "R%u", 8, 13))>;
 
 // An interrupt handler preserves every register it touches. W, STATUS, BSR,

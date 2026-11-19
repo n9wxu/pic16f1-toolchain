@@ -38,6 +38,7 @@ add_llvm_target(PIC16F1CodeGen
   PIC16F1MachineFunctionInfo.cpp
   PIC16F1RegisterInfo.cpp
   PIC16F1SelectionDAGInfo.cpp
+  PIC16F1StaticFrames.cpp
   PIC16F1Subtarget.cpp
   PIC16F1TargetMachine.cpp
 

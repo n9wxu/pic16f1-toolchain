@@ -24,7 +24,13 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "PIC16F1MachineFunctionInfo.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
@@ -137,6 +143,129 @@ void PIC16F1FrameLowering::determineCalleeSaves(MachineFunction &MF,
     }
   }
   SavedRegs.reset(PIC16F1::TMP0);
+}
+
+static cl::opt<unsigned> StaticSlotLimit(
+    "pic16f1-static-slot-limit", cl::Hidden, cl::init(64),
+    cl::desc("In a function with a static frame, the largest frame object, "
+             "in bytes, that gets a fixed address; 0 leaves all of them on "
+             "the stack"));
+
+unsigned llvm::pic16f1StaticSlotLimit() { return StaticSlotLimit; }
+
+/// The instructions whose frame-index operand can become a fixed address.
+static bool hasDirectForm(unsigned Opc) {
+  switch (Opc) {
+  case PIC16F1::LD8fi:
+  case PIC16F1::LD16fi:
+  case PIC16F1::ST8fi:
+  case PIC16F1::ST16fi:
+  case PIC16F1::STI8fi:
+  case PIC16F1::STI16fi:
+  case PIC16F1::LEAfi:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// In a function that cannot be re-entered (PIC16F1StaticFrames.cpp marks
+/// them) and that uses FSR1 as a register, the spill slots and the variables
+/// still in the frame get fixed addresses too: they are packed into blocks of up to 16 bytes, which the
+/// linker keeps within a bank, and leave the stack frame. What stays on the
+/// stack is the saved registers and the outgoing arguments.
+void PIC16F1FrameLowering::processFunctionBeforeFrameFinalized(
+    MachineFunction &MF, RegScavenger *RS) const {
+  const Function &F = MF.getFunction();
+  if (!StaticSlotLimit || !F.hasFnAttribute("pic16f1-static-frame"))
+    return;
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  auto *FuncInfo = MF.getInfo<PIC16F1MachineFunctionInfo>();
+  // A slot on the stack is reached without selecting a bank, so the slots
+  // stay there unless FSR1 is busy with something else: that is, unless the
+  // register allocator has put a value other than the stack pointer in it.
+  if (!FuncInfo->fsr1IsRegister())
+    return;
+  const TargetRegisterInfo *TRI = STI.getRegisterInfo();
+  bool FSR1Used = false;
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB)
+      if (!MI.getFlag(MachineInstr::FrameSetup) &&
+          !MI.getFlag(MachineInstr::FrameDestroy) &&
+          MI.modifiesRegister(PIC16F1::SP, TRI))
+        FSR1Used = true;
+  if (!FSR1Used)
+    return;
+
+  BitVector Stays(MFI.getObjectIndexEnd());
+  for (const CalleeSavedInfo &I : MFI.getCalleeSavedInfo())
+    if (I.getFrameIdx() >= 0 && I.getFrameIdx() < MFI.getObjectIndexEnd())
+      Stays.set(I.getFrameIdx());
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB)
+      if (!hasDirectForm(MI.getOpcode()) && !MI.isDebugInstr())
+        for (const MachineOperand &MO : MI.operands())
+          if (MO.isFI() && MO.getIndex() >= 0)
+            Stays.set(MO.getIndex());
+
+  struct Block {
+    uint64_t Size = 0;
+    SmallVector<std::pair<int, uint64_t>, 8> Members;
+  };
+  SmallVector<Block, 4> Blocks;
+  const uint64_t BlockLimit = 16;
+  for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI) {
+    if (Stays.test(FI) || MFI.isDeadObjectIndex(FI) ||
+        MFI.isVariableSizedObjectIndex(FI))
+      continue;
+    uint64_t Size = MFI.getObjectSize(FI);
+    if (Size == 0 || Size > StaticSlotLimit)
+      continue;
+    Block *Into = nullptr;
+    if (Size <= BlockLimit)
+      for (Block &B : Blocks)
+        if (B.Size + Size <= BlockLimit) {
+          Into = &B;
+          break;
+        }
+    if (!Into)
+      Into = &Blocks.emplace_back();
+    Into->Members.push_back({FI, Into->Size});
+    Into->Size += Size;
+  }
+  // With FSR1 in use as a register, nothing can be reached through it.
+  for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI)
+      if (!MFI.isDeadObjectIndex(FI) && !FuncInfo->getStaticObject(FI)) {
+        bool Pending = false;
+        for (Block &B : Blocks)
+          for (auto &[Member, At] : B.Members)
+            Pending |= Member == FI;
+        bool Saved = false;
+        for (const CalleeSavedInfo &I : MFI.getCalleeSavedInfo())
+          Saved |= I.getFrameIdx() == FI;
+        if (!Pending && !Saved)
+          report_fatal_error("PIC16F1: a frame object needs the stack in a "
+                             "function that uses FSR1 as a register");
+      }
+  if (Blocks.empty())
+    return;
+
+  // The variables belong to the module, like the ones the IR pass makes.
+  Module &M = const_cast<Module &>(*F.getParent());
+  Type *I8 = Type::getInt8Ty(M.getContext());
+  for (Block &B : Blocks) {
+    Type *Ty = ArrayType::get(I8, B.Size);
+    auto *GV = new GlobalVariable(M, Ty, /*isConstant=*/false,
+                                  GlobalValue::InternalLinkage,
+                                  Constant::getNullValue(Ty),
+                                  F.getName() + ".slots");
+    GV->setAlignment(Align(1));
+    GV->setSection((".noinit." + GV->getName()).str());
+    for (auto &[FI, At] : B.Members) {
+      FuncInfo->setStaticObject(FI, GV, At);
+      MFI.RemoveStackObject(FI);
+    }
+  }
 }
 
 // MOVWI --FSR1 and MOVIW FSR1++ (see printIndMode for the encoding).

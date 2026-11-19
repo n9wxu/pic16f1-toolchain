@@ -40,14 +40,16 @@ roles, and the pinned MPLAB X version.
 Optimization I, C++, Rust, and LLDB. Optimization I is under way: every
 one of the fifteen benchmark programs is no larger and no slower than
 XC8's at each of XC8's five levels (`-O0` to `-O3` and `-Os`). At `-Os`
-the set is 0.77 times XC8's size and runs in 0.52 times the cycles. That
+the set is 0.76 times XC8's size and runs in 0.52 times the cycles. That
 meets the G3 size criterion (within 15%) with room to spare. Done: a peephole pass over the
 final code, register usage across calls, startup code linked by need, a
 one-page code model, one bank selection per variable, FSR0 as a register
 the allocator keeps pointers in, shared instruction sequences (outlining),
 tail calls, variables changed in place, assembly multiply and divide
 routines, short multiplies by constants in line, optimization levels
-retuned for a small machine, whole-program builds with `-flto`. Not started: static frames,
+retuned for a small machine, whole-program builds with `-flto`. Started:
+static frames (fixed addresses for the variables of functions that cannot
+be re-entered, and FSR1 as a second pointer register in them). Not started:
 the verifier, skip predication, stack-depth analysis. C++, Rust and LLDB
 are not started.
 

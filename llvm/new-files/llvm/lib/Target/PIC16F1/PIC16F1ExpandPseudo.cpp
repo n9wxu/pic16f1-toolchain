@@ -64,8 +64,10 @@ class Emitter {
   int64_t BSROffset = 0;
 
 public:
-  // FSR0 equals this register pair, or no register.
+  // FSR0 equals this register pair, or no register; and the same for FSR1
+  // in a function where it is a register.
   Register FSR0Holds;
+  Register FSR1Holds;
 
   // The device has 64 banks.
   bool Banks64 = false;
@@ -89,6 +91,7 @@ public:
     forgetW();
     forgetBSR();
     FSR0Holds = Register();
+    FSR1Holds = Register();
   }
 
   /// Core registers and common RAM are the same byte in every bank.
@@ -242,10 +245,14 @@ public:
 
   // --- Pointer access through FSR0 -----------------------------------------
 
-  /// The pointer-setup pass put every pointer in FSR0 already.
-  void pointFSR0At(Register Pair, unsigned PairAddr) {
-    if (Pair != PIC16F1::FSR0)
-      report_fatal_error("PIC16F1: pointer operand is not in FSR0");
+  /// The pointer-setup pass put every pointer in FSR0 or FSR1 already;
+  /// this gives the number of the one \p Pair is.
+  unsigned pointFSR0At(Register Pair, unsigned PairAddr) {
+    if (Pair == PIC16F1::FSR0)
+      return 0;
+    if (Pair == PIC16F1::SP)
+      return 1;
+    report_fatal_error("PIC16F1: pointer operand is not in FSR0 or FSR1");
   }
 
   // --- Stack access through FSR1 -------------------------------------------
@@ -363,6 +370,9 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
     // FSR0 is often pointed at the same pair again and again.
     if (MI.getOperand(0).getReg() == PIC16F1::FSR0 && TrackValues &&
         E.FSR0Holds == MI.getOperand(1).getReg())
+      return true;
+    if (MI.getOperand(0).getReg() == PIC16F1::SP && TrackValues &&
+        E.FSR1Holds == MI.getOperand(1).getReg())
       return true;
     E.copy(lo(MI.getOperand(0)), lo(MI.getOperand(1)));
     E.copy(hi(MI.getOperand(0)), hi(MI.getOperand(1)));
@@ -492,10 +502,12 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
       return true;
     }
     uint64_t K = MI.getOperand(2).getImm();
-    if (int64_t S = int16_t(K); CarryDead && S >= -32 && S <= 31 &&
-                                MI.getOperand(0).getReg() == PIC16F1::FSR0) {
+    if (int64_t S = int16_t(K);
+        CarryDead && S >= -32 && S <= 31 &&
+        (MI.getOperand(0).getReg() == PIC16F1::FSR0 ||
+         MI.getOperand(0).getReg() == PIC16F1::SP)) {
       if (S != 0)
-        E.addFSR(0, S);
+        E.addFSR(MI.getOperand(0).getReg() == PIC16F1::SP, S);
       return true;
     }
     if (CarryDead && (K & 0xFF) == 0) {
@@ -804,39 +816,45 @@ bool PIC16F1ExpandPseudo::expand(MachineInstr &MI, Emitter &E) {
 
   // --- Loads and stores through a pointer ----------------------------------
   case STI8ptr:
-  case STI16ptr: {
+  case STI16ptr:
+  case STI8ptr1:
+  case STI16ptr1: {
     uint64_t K = MI.getOperand(0).getImm();
     int64_t Off = MI.getOperand(2).getImm();
-    E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
+    unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
     E.loadWImm(K);
-    E.storeIndirect(0, Off);
-    if (Opc == STI16ptr) {
+    E.storeIndirect(N, Off);
+    if (Opc == STI16ptr || Opc == STI16ptr1) {
       E.loadWImm(K >> 8);
-      E.storeIndirect(0, Off + 1);
+      E.storeIndirect(N, Off + 1);
     }
     return true;
   }
   case LD8ptr:
-  case LD16ptr: {
+  case LD16ptr:
+  case LD8ptr1:
+  case LD16ptr1: {
     int64_t Off = MI.getOperand(2).getImm();
-    E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
-    E.loadIndirect(0, Off);
+    unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
+    E.loadIndirect(N, Off);
     E.storeW(lo(MI.getOperand(0)));
-    if (Opc == LD16ptr) {
-      E.loadIndirect(0, Off + 1);
+    if (Opc == LD16ptr || Opc == LD16ptr1) {
+      E.loadIndirect(N, Off + 1);
       E.storeW(hi(MI.getOperand(0)));
     }
     return true;
   }
   case ST8ptr:
-  case ST16ptr: {
+  case ST16ptr:
+  case ST8ptr1:
+  case ST16ptr1: {
     int64_t Off = MI.getOperand(2).getImm();
-    E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
+    unsigned N = E.pointFSR0At(MI.getOperand(1).getReg(), lo(MI.getOperand(1)));
     E.loadW(lo(MI.getOperand(0)));
-    E.storeIndirect(0, Off);
-    if (Opc == ST16ptr) {
+    E.storeIndirect(N, Off);
+    if (Opc == ST16ptr || Opc == ST16ptr1) {
       E.loadW(hi(MI.getOperand(0)));
-      E.storeIndirect(0, Off + 1);
+      E.storeIndirect(N, Off + 1);
     }
     return true;
   }
@@ -993,6 +1011,16 @@ bool PIC16F1ExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
         E.FSR0Holds = Register();
       if (E.FSR0Holds.isValid() && MI.modifiesRegister(E.FSR0Holds, TRI))
         E.FSR0Holds = Register();
+      // The same for FSR1 where it is a register. A call leaves it alone,
+      // but the stack pointer was put in it for the call.
+      bool PointsFSR1 = MI.getOpcode() == PIC16F1::MOV16rr &&
+                        MI.getOperand(0).getReg() == PIC16F1::SP;
+      if (PointsFSR1)
+        E.FSR1Holds = MI.getOperand(1).getReg();
+      else if (MI.modifiesRegister(PIC16F1::SP, TRI))
+        E.FSR1Holds = Register();
+      if (E.FSR1Holds.isValid() && MI.modifiesRegister(E.FSR1Holds, TRI))
+        E.FSR1Holds = Register();
       if (!Expanded) {
         // KILL, IMPLICIT_DEF and other target-independent leftovers.
         if (MI.getOpcode() == TargetOpcode::INLINEASM ||
