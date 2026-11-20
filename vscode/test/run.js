@@ -3,6 +3,10 @@
 //
 //   node vscode/test/run.js --toolchain <bin directory> [--extension <dir>] [--language c|c++|zig|rust]
 //
+// PIC16F1_TEST_TARGET=probe debugs on the part instead of the simulator: it
+// drives the probe and programs the board (a PIC16F1937 on the probe that
+// pic16f1-new-project found the OpenOCD of).
+//
 // The toolchain is one to test with (a packaged tree's bin, or
 // toolchain/bin of a checkout). The extension is this directory unless
 // another is named (an unpacked VSIX, to test what will be installed; with

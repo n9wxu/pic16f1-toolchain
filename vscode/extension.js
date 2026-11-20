@@ -571,6 +571,10 @@ async function activate(extensionContext) {
     return { toolchainBin, build, projectInfo, servers };
 }
 
+// (If the window goes without deactivating: a simulator left behind is a
+// stray process, an OpenOCD left behind holds the probe.)
+process.on('exit', () => deactivate());
+
 function deactivate() {
     for (const child of servers.values()) {
         try { child.kill(); } catch (e) { /* gone already */ }

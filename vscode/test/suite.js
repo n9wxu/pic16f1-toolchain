@@ -40,7 +40,8 @@ async function suite() {
     // The project is known for what it is.
     const info = await api.projectInfo(folder);
     assert.strictEqual(info.device, 'pic16f1937');
-    assert.strictEqual(info.language, process.env.PIC16F1_TEST_LANGUAGE || 'c');
+    // (C and C++ are one kind of project: the compiler goes by each file's name.)
+    assert.strictEqual(info.language, (process.env.PIC16F1_TEST_LANGUAGE || 'c').replace('c++', 'c'));
 
     // Build.
     assert.strictEqual(await vscode.commands.executeCommand('pic16f1.build'), true, 'the build failed');
@@ -86,14 +87,29 @@ async function suite() {
         },
     });
     const started = await vscode.debug.startDebugging(folder,
-        { type: 'pic16f1', request: 'launch', name: 'test', target: 'simulator' });
+        { type: 'pic16f1', request: 'launch', name: 'test', target: process.env.PIC16F1_TEST_TARGET || 'simulator' });
     assert.strictEqual(started, true, 'the debug session did not start');
-    let stop = await within(next, 60, 'the stop in main');
-    const session = vscode.debug.activeDebugSession;
-    assert.ok(session, 'no active debug session');
+    // (On the part the debugger first reports the stop it attached at and
+    // then runs to main: the stop wanted is the one with a stack to show.)
+    let stop;
+    let frames;
+    let session;
+    for (let i = 0; i < 4 && !frames; i++) {
+        stop = await within(next, 120, 'the stop in main');
+        next = stopped();
+        session = vscode.debug.activeDebugSession;
+        assert.ok(session, 'no active debug session');
+        try {
+            const got = (await session.customRequest('stackTrace', { threadId: stop.threadId })).stackFrames;
+            if (got.some(f => /main|__pic16f1_entry/.test(f.name))) frames = got;
+        } catch (e) { /* running again already */ }
+    }
+    assert.ok(frames, 'no stop in main');
     assert.strictEqual(api.servers.size, 1, 'no simulator for the session');
-    let frames = (await session.customRequest('stackTrace', { threadId: stop.threadId })).stackFrames;
-    assert.ok(/main/.test(frames[0].name), `stopped in ${frames[0].name}, not main`);
+    // (In main, or in something inlined into it: a library's function in
+    // Zig, the entry macro's in Rust.)
+    // (Rust's main is known to the debugger as the entry macro's function.)
+    assert.ok(frames.some(f => /main|__pic16f1_entry/.test(f.name)), `stopped in ${frames.map(f => f.name).join(' < ')}, not main`);
     assert.ok(frames[0].source && frames[0].line > 0, 'no source line for main');
     log(`ok   debug: stopped in ${frames[0].name} at ${path.basename(frames[0].source.path)}:${frames[0].line}`);
 
@@ -104,9 +120,11 @@ async function suite() {
     const pc = await session.customRequest('evaluate', { expression: '`register read pc', frameId: frames[0].id, context: 'repl' });
     assert.ok(/PC = 0x/i.test(pc.result), `register read pc: ${pc.result}`);
 
-    // A step ends in a stop on another line (or the same function).
+    // A step ends in a stop. (Into, by one instruction: stepping over can
+    // be over a call that does not return, as the first in a Rust
+    // program's main is.)
     next = stopped();
-    await session.customRequest('next', { threadId: stop.threadId });
+    await session.customRequest('stepIn', { threadId: stop.threadId, granularity: 'instruction' });
     stop = await within(next, 30, 'the stop after a step');
     frames = (await session.customRequest('stackTrace', { threadId: stop.threadId })).stackFrames;
     log(`ok   step: now at line ${frames[0].line}`);
@@ -116,7 +134,7 @@ async function suite() {
     await vscode.debug.stopDebugging(session);
     await within(ended, 30, 'the end of the session');
     await sleep(1500);
-    assert.strictEqual(api.servers.size, 0, 'the simulator is still there');
+    assert.strictEqual(api.servers.size, 0, 'the simulator (or OpenOCD) is still there');
     tracker.dispose();
     log('ok   session ended, simulator gone');
 }
