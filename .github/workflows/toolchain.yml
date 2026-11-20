@@ -156,6 +156,11 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
+      # Git's shell has a program named link (it makes hard links) ahead
+      # of Microsoft's linker on the PATH; rustc and CMake would run it.
+      - name: Let link.exe be the linker
+        run: mv /usr/bin/link.exe /usr/bin/link-coreutils.exe
+
       - name: Install build tools
         run: choco install ninja ccache -y --no-progress
 

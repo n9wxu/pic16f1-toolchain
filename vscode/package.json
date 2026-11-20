@@ -1,0 +1,155 @@
+{
+  "name": "pic16f1-toolchain",
+  "displayName": "PIC16F1 Toolchain",
+  "description": "C, C++, Rust, Zig and Forth for PIC16F1 microcontrollers: compiler, simulator and debugger in one install.",
+  "version": "0.2.0",
+  "publisher": "pic16f1",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": [ "Programming Languages", "Debuggers" ],
+  "keywords": [ "pic", "pic16", "pic16f1", "microcontroller", "embedded" ],
+  "main": "./extension.js",
+  "activationEvents": [ "onStartupFinished", "onDebugResolve:pic16f1" ],
+  "contributes": {
+    "commands": [
+      { "command": "pic16f1.newProject", "title": "New Project...", "category": "PIC16F1" },
+      { "command": "pic16f1.build", "title": "Build", "category": "PIC16F1", "icon": "$(tools)" },
+      { "command": "pic16f1.clean", "title": "Clean", "category": "PIC16F1" },
+      { "command": "pic16f1.debugSimulator", "title": "Debug on the Simulator", "category": "PIC16F1", "icon": "$(debug-alt)" },
+      { "command": "pic16f1.debugProbe", "title": "Debug on the Part (Probe)", "category": "PIC16F1" },
+      { "command": "pic16f1.selectDevice", "title": "Select Device...", "category": "PIC16F1" },
+      { "command": "pic16f1.selectOptimization", "title": "Select Optimization...", "category": "PIC16F1" },
+      { "command": "pic16f1.showDisassembly", "title": "Show Disassembly", "category": "PIC16F1" },
+      { "command": "pic16f1.about", "title": "About the Toolchain", "category": "PIC16F1" }
+    ],
+    "keybindings": [
+      { "command": "pic16f1.build", "key": "f7", "when": "pic16f1.project && !inDebugMode" }
+    ],
+    "configuration": {
+      "title": "PIC16F1",
+      "properties": {
+        "pic16f1.toolchain": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `bin` directory of the toolchain to use. Empty: the one this extension installed (in `.pic16f1/toolchain` of your home directory)."
+        },
+        "pic16f1.device": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "The device the project is for, as `pic16f1937`. Empty: what the project's Makefile says. **PIC16F1: Select Device...** sets this."
+        },
+        "pic16f1.optimization": {
+          "type": "string",
+          "default": "",
+          "enum": [ "", "-munoptimized", "-O1", "-O2", "-O3", "-Os" ],
+          "enumDescriptions": [
+            "What the project's Makefile says (-O1 in a new C project)",
+            "As written: nothing kept in registers between statements; for stepping through every line",
+            "Small and fast, and still easy to follow in the debugger",
+            "Faster where that costs words",
+            "Small, and nothing that costs time",
+            "Smallest"
+          ],
+          "scope": "resource",
+          "description": "How the program is optimized."
+        },
+        "pic16f1.openocd": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "For debugging on the part: the directory of an OpenOCD that drives your probe (the one with `src/openocd` and `tcl`, or with `bin/openocd`)."
+        },
+        "pic16f1.openocdInterface": {
+          "type": "string",
+          "default": "interface/pk2icsp.cfg",
+          "scope": "machine-overridable",
+          "description": "The OpenOCD interface file of the probe."
+        },
+        "pic16f1.openocdTarget": {
+          "type": "string",
+          "default": "target/pic16f193x.cfg",
+          "scope": "resource",
+          "description": "The OpenOCD target file of the device."
+        },
+        "pic16f1.vdd": {
+          "type": "string",
+          "default": "3300",
+          "scope": "resource",
+          "description": "The target's supply in millivolts, if the probe provides it."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "pic16f1",
+        "required": [ "command" ],
+        "properties": {
+          "command": { "type": "string", "enum": [ "build", "clean" ], "description": "What to do with the project" },
+          "debugger": { "type": "boolean", "description": "Build for an in-circuit debugger on the part (-mdebugger)" }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "pic16f1",
+        "owner": "pic16f1",
+        "source": "pic16f1",
+        "fileLocation": [ "autoDetect", "${workspaceFolder}" ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(warning|error|note):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        }
+      }
+    ],
+    "breakpoints": [
+      { "language": "c" }, { "language": "cpp" }, { "language": "rust" }, { "language": "zig" },
+      { "language": "asm" }, { "language": "arm" }, { "language": "forth" }
+    ],
+    "debuggers": [
+      {
+        "type": "pic16f1",
+        "label": "PIC16F1",
+        "languages": [ "c", "cpp", "rust", "zig" ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "target": {
+                "type": "string",
+                "enum": [ "simulator", "probe" ],
+                "enumDescriptions": [
+                  "The toolchain's simulator: nothing else is needed",
+                  "The part itself, through OpenOCD and a probe (see the pic16f1.openocd setting)"
+                ],
+                "default": "simulator",
+                "description": "Where the program runs."
+              },
+              "stopAtMain": { "type": "boolean", "default": true, "description": "Stop at the start of main." },
+              "build": { "type": "boolean", "default": true, "description": "Build the project first." },
+              "program": { "type": "string", "description": "The ELF file to debug, if not the project's own (then nothing is built)." },
+              "device": { "type": "string", "description": "The device, if not the project's." },
+              "svdPath": { "type": "string", "description": "The description of the device's registers for the Peripheral Viewer extension, if not the toolchain's." },
+              "initCommands": { "type": "array", "items": { "type": "string" }, "description": "LLDB commands to run first." },
+              "postRunCommands": { "type": "array", "items": { "type": "string" }, "description": "LLDB commands to run once the debugger has the program." }
+            }
+          }
+        },
+        "initialConfigurations": [
+          { "type": "pic16f1", "request": "launch", "name": "Debug on the simulator", "target": "simulator" },
+          { "type": "pic16f1", "request": "launch", "name": "Debug on the part (probe)", "target": "probe" }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "PIC16F1: Debug on the simulator",
+            "body": { "type": "pic16f1", "request": "launch", "name": "Debug on the simulator", "target": "simulator" }
+          },
+          {
+            "label": "PIC16F1: Debug on the part (probe)",
+            "body": { "type": "pic16f1", "request": "launch", "name": "Debug on the part (probe)", "target": "probe" }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -9,7 +9,7 @@ exec python3 "$0" "$@"
 '''
 __doc__ = """Build a PIC16F1 project: what `make` does in one, without make.
 
-    pic16f1-build [build|clean|size|list|sim|debug] [options] [directory]
+    pic16f1-build [build|clean|size|list|sim|debug|info] [options] [directory]
 
 The directory (the current one if none is named) is a project as
 pic16f1-new-project makes them, in C, C++, Rust, Zig or Forth; which it is
@@ -23,6 +23,8 @@ debug information.
     list    its disassembly
     sim     build, then start the simulator waiting for a debugger
     debug   build, then debug on the simulator with LLDB in this terminal
+    info    what would be built, as JSON (for editors): the language, the
+            device, the name, and where the program will be
 
     --device NAME   the device (pic16f1937)
     --opt LEVEL     -munoptimized, -O1, -O2, -O3 or -Os
@@ -198,7 +200,7 @@ def main():
                 setattr(o, a[2:], value)
         elif a == "--debugger":
             o.debugger = True
-        elif a in ("build", "clean", "size", "list", "sim", "debug") and command is None and directory is None:
+        elif a in ("build", "clean", "size", "list", "sim", "debug", "info") and command is None and directory is None:
             command = a
         elif a.startswith("-") or directory is not None:
             fail(f"unexpected argument {a}; see --help")
@@ -221,6 +223,12 @@ def main():
     o.hex = os.path.join("build", o.name + ".hex")
     o.elf = os.path.join("build", o.name + ".elf")
 
+    if command == "info":
+        import json
+        print(json.dumps({"directory": directory, "language": o.language, "device": o.device, "name": o.name,
+                          "optimization": o.opt or ("-Os" if o.language == "rust" else "" if o.language == "zig" else "-O1"),
+                          "hex": os.path.join(directory, o.hex), "elf": os.path.join(directory, o.elf)}))
+        return 0
     if command == "clean":
         for d in ("build", "target") if o.language == "rust" else ("build",):
             shutil.rmtree(d, ignore_errors=True)
