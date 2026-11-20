@@ -94,7 +94,7 @@ SECTIONS
 
   /* The main stack grows down from the end of RAM. */
   __stack_top = ORIGIN(ram) + LENGTH(ram) - __debugger_ram;
-  ASSERT(__isr_stack_top <= __stack_top, "the program's variables reach into the RAM kept for the debugger")
+  ASSERT(__debugger_ram == 0 || __isr_stack_top <= __stack_top, "the program's variables reach into the RAM kept for the debugger")
 
   /* malloc, if the program uses it, takes the RAM between the data and the
    * space set aside for the stack. Nothing enforces the boundary. */

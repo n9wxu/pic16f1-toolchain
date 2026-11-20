@@ -867,6 +867,8 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,490 of the 1,511 that build pass (98.6%) |
 | GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,494 of 1,514 (98.7%) |
 | GCC C torture, `execute` at `-Os` | 1,495 of 1,515 (98.7%) |
+| The same on the imaginary PIC16F1032 (32 banks) | the same results, test for test |
+| The same on the PIC16F1937 (496 bytes of RAM, 8K words) | 1,458 to 1,465 of the 1,489 to 1,497 that build (98%); the 34 tests that differ from the large device need its RAM or flash |
 | The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
 | Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | `setjmp` and `longjmp` (`scripts/test-setjmp.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
