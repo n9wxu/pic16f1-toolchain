@@ -9,7 +9,7 @@ first, with the simplest design that works.
 
 | Component | Where | Notes |
 |---|---|---|
-| Languages other than C | [languages.md](languages.md) | C++, Rust and Zig |
+| Languages other than C | [languages.md](languages.md), [language-catalog.md](language-catalog.md) | C++, Rust, Zig and Forth; a catalog of what else would suit the processor |
 | LLVM target `pic16f1` | `llvm/new-files/llvm/lib/Target/PIC16F1` | Assembler, object writer, code generator |
 | Clang target | `llvm/new-files/clang`, `llvm/existing-files.patch` | Type sizes, ABI, `interrupt` attribute |
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
@@ -964,6 +964,7 @@ All run on the simulator, except the one row that says otherwise.
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
 | Regression tests (`tests/lit`) | 24 of 24 pass |
+| Forth (`scripts/test-forth.sh`; see [languages.md](languages.md)) | 10 of 10 builds pass: every word on 2 devices in both code models, mistakes refused, Forth with C |
 | Zig (`scripts/test-zig.sh`; see [languages.md](languages.md)) | 10 of 10 builds pass: the language in Zig's four modes, `pic.zig`, Zig with C |
 | Rust (`scripts/test-rust.sh`; see [languages.md](languages.md)) | 7 of 7 builds by cargo pass: the language with `core`, the `pic16f1` crate |
 | C++ (`scripts/test-cxx.sh`; see [languages.md](languages.md)) | 47 of 47 builds pass: the language, the standard library's headers, dynamic memory, the device library |

@@ -68,6 +68,6 @@ information, the header part of the standard library, and a device library,
 tested on the simulator and on the part ([languages.md](languages.md)).
 **Rust** and **Zig** work by way of their stock compilers and a stand-in
 target, each with a register and hardware library, tested the same two
-ways.
+ways. **Forth** has a cross-compiler of its own, written for this target.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.

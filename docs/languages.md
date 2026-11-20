@@ -9,14 +9,15 @@ and why, and what is left out. C itself is described in
 | [C++](#c) | Clang's own C++ front end, the same compiler as C | The language except exceptions and run-time type information; the standard library's headers; tested on the simulator and on a PIC16LF1937 |
 | [Rust](#rust) | Stock `rustc` for a stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language with `core`; a register and hardware crate; `cargo build`; tested on the simulator and on a PIC16LF1937 |
 | [Zig](#zig) | The stock Zig compiler for the same stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language in all four build modes; a register and hardware library; tested on the simulator and on a PIC16LF1937 |
+| [Forth](#forth) | A cross-compiler written for this target, from Forth straight to assembly | A large part of the standard words, the device's registers and bits by name, interrupts, C functions as words; tested on the simulator and on a PIC16LF1937 |
 
 `pic16f1-new-project --language c++|rust|zig DIR` starts a project in any
 of them, with a Makefile and the VS Code setup for building and for
 debugging on the simulator and on the part; the same LED counter is 66
 words in C, 77 in C++, 70 in Rust and 76 in Zig.
 
-All of them end in the same code generator, linker, runtime library and
-debugger as C, so what [toolchain.md](toolchain.md) says about optimization
+All of them end in the same linker, runtime library and debugger as C, and
+all but Forth in the same code generator, so what [toolchain.md](toolchain.md) says about optimization
 levels, static frames, the hardware stack count, `-mdebugger` and LLDB
 holds for them too.
 
@@ -477,6 +478,129 @@ through a volatile pointer, `@as(*volatile u8, &ticks).*`, as the tests do.
 |---|---|
 | `scripts/test-zig.sh` | 10 builds, run on the simulator: the two programs in four modes; the configuration words the linker made; Zig calling C; a build for the debugger with debug information |
 | `tests/zig/hardware.zig`, run by `tools/hwtest.py` on a PIC16LF1937 | Pass: a call through a function pointer; `wait.ms(100)` measured as 48 counts of timer 0 where 49 are expected; four EEPROM bytes written and read back; the 1.024 V reference read as 327 of 1023. LLDB printed the Zig variables |
+
+## Forth
+
+```sh
+pic16f1-forth -mcpu=pic16f1937 -o blink.hex blink.fth
+```
+
+Forth is in this toolchain because it fits the processor better than any
+other language in [the catalog](language-catalog.md): it was made for
+machines of this size, it needs no heap and no stack frames, and its two
+stacks map onto what the enhanced mid-range core has. It was built from
+nothing for this target (`toolchain/bin/pic16f1-forth`, one file); nothing
+was ported.
+
+```forth
+\ Count on the four LEDs of the F1 Evaluation Platform.
+CONFIG" FOSC=INTOSC, WDTE=OFF, MCLRE=ON, LVP=ON"
+500000 CLOCK-HZ
+CVARIABLE count
+: show ( n -- )  DUP 7 AND LATE C!  8 AND IF LATD 1 BIT-SET ELSE LATD 1 BIT-CLR THEN ;
+: MAIN
+   0 ANSELD C!  0 ANSELE C!  TRISD 1 BIT-CLR  $F8 TRISE C!
+   BEGIN  count C@ show  1 count C@ + count C!  500 MS  AGAIN ;
+```
+
+### How it works
+
+- **It is a cross-compiler.** The whole program is compiled on the host
+  into assembly (left beside the output as `NAME.S`), which `pic16f1-cc`
+  assembles and links with the same startup code, runtime library and
+  linker scripts as C. There is no interpreter and no dictionary on the
+  part: a word nothing uses takes no flash, and neither does a kernel
+  routine.
+- **A word is a subroutine and using it is a `CALL`** (subroutine
+  threading). A call that is the last thing a word does is a jump, and a
+  word marked `INLINE` is compiled into its users.
+- **Cells are 16 bits.** The top of the data stack is in the byte registers
+  `R0` and `R1`; the rest is in RAM through FSR1, growing down from the end
+  of RAM, where `MOVIW FSR1++` and `MOVWI --FSR1` are pop and push.
+- **Return addresses are on the hardware stack**, 16 levels, and the linker
+  counts the levels a program needs exactly as it does for C
+  (`-mstack-report`; a warning past 16). `>R`, `R>`, `R@` and the limits of
+  `DO` loops are on a small stack of their own in RAM (32 bytes;
+  `n LOOP-STACK` changes it), with the innermost loop's index and limit in
+  registers.
+- **What is known when the program is compiled never reaches the stack.**
+  Numbers and addresses are held back until something needs them there, so
+  `LATE 0 BIT-SET` is one `BSF`, `3 LATE C!` is two instructions,
+  `counter @` reads the variable directly, `5 +` adds a constant in place,
+  and `2 3 +` is the number 5.
+- **Multiplication and division** are the runtime library's routines, with
+  the operands already in the registers they take.
+
+### The words
+
+| | |
+|---|---|
+| Stack | `DUP DROP SWAP OVER ROT -ROT NIP TUCK ?DUP 2DUP 2DROP >R R> R@` |
+| Arithmetic | `+ - * / MOD /MOD U/ UMOD NEGATE ABS MIN MAX 1+ 1- 2* 2/` |
+| Bits | `AND OR XOR INVERT LSHIFT RSHIFT` |
+| Comparison | `= <> < > U< U> 0= 0< 0<> NOT WITHIN` |
+| Memory | `@ ! C@ C! +! FILL ERASE CMOVE COUNT` |
+| Defining | `: ;` `CONSTANT` `VARIABLE` `CVARIABLE` (a byte) `n BUFFER: name` `CREATE` with `,` `C,` `ALLOT` (a table in RAM) `ROM-CREATE` (a table in flash) `INLINE` `EXPORT` `INCLUDE file` |
+| Control | `IF ELSE THEN` `BEGIN UNTIL` `BEGIN WHILE REPEAT` `BEGIN AGAIN` `DO LOOP` `+LOOP` `I J LEAVE UNLOOP` `EXIT` `RECURSE` `' name` and `EXECUTE` |
+| Text | `." text"` `S" text"` `TYPE` `EMIT` `KEY` `KEY?` `CR` `SPACE` `SPACES` `.` `U.` `H.` (two hexadecimal digits) `CHAR` `[CHAR]` |
+| The device | Every register by its data sheet name (`LATE`, `INTCON`: its address) and every field by its (`GIE`, `TMR0IF`: its bit number). `reg bit BIT-SET` `BIT-CLR` `BIT-TOGGLE` `BIT?`, each one or two instructions. `EI` `DI` `SLEEP` `NOP` `CLRWDT` |
+| Time and the serial port | `hz CLOCK-HZ` says what the oscillator runs at; `n MS` waits; `SERIAL-INIT` sets the EUSART to 9600 baud, 8N1, for `EMIT` and `KEY` |
+| Configuration | `CONFIG" FOSC=INTOSC, WDTE=OFF"`: settings by the data sheet's names, as `#pragma config`; the linker makes the words |
+| Interrupts | `INTERRUPT: name ... ;` is the handler. It may use any word |
+| C | `C-FUNCTION: name symbol arguments results` makes a C function (up to two 16-bit arguments, one result or none) a word. `EXPORT` after a definition gives it its own name as a symbol |
+
+Numbers are decimal, `$1F` or `0x1F` hexadecimal, `%1010` binary, `'A'` a
+character. Names are not case sensitive. The program starts at the word
+`MAIN`.
+
+Outside a definition, numbers and constants can be combined
+(`answer 2 * 1+ CONSTANT limit`); that arithmetic is done by the compiler.
+
+### What is different from a Forth on a larger machine
+
+| | Why |
+|---|---|
+| No interpreter, no `HERE`, `ALLOT` only after `CREATE`, no `DOES>`, `IMMEDIATE`, `POSTPONE` or `EVALUATE` | Nothing is compiled on the part. Defining words that build words need a compiler at run time |
+| `>R` and `R>` do not touch return addresses | Those are on the hardware stack. Tricks that manipulate the return address do not work |
+| Nesting is limited to the hardware stack's 16 levels | The linker counts them and warns. `INLINE`, and the jump a final call becomes, save levels; `RECURSE` has no bound the linker can find |
+| `BIT-SET` and its kind need the register and the bit known at compile time | They become single bit instructions. With an address on the stack, use `C@`, `OR` and `C!` |
+| The interrupt handler saves sixteen bytes on entry | The top of the stack and everything the kernel works in are in common RAM, which the processor does not save. 64 words of the handler, and about 70 cycles a time |
+| No double-cell numbers, no floating point | Not written. 16-bit cells only |
+
+### Sizes
+
+On the PIC16F1937:
+
+| Program | Words |
+|---|---|
+| Toggle a pin for ever | 18 |
+| The LED counter above (66 in C) | 120 |
+| `tests/forth/hardware.fth`: delay, EEPROM, A/D converter | 569 |
+| `tests/forth/features.fth`: every word, serial output, an interrupt handler | 3,407 |
+
+Forth code here is larger than C for the same work, by about two times
+(the LED counter: 120 words against 66), and slower, though by how much
+was not measured: every operation on the stack is four instructions for
+the two bytes of a cell, where the C compiler keeps a byte in a register.
+What it gives in return is a language whose whole implementation is one file, and
+programs that say what they do to the hardware in the hardware's own words.
+
+### Debugging
+
+With `-g`, LLDB debugs the program at the level of the assembly the
+compiler wrote, where every Forth line stands as a comment above the
+instructions it became. Words are symbols (`w_name`; `name` itself after
+`EXPORT`), a breakpoint by name works, and the top of the stack is the
+registers `r0` and `r1`. (Stepping by Forth source line would need the
+assembler to record lines of a second file, which it does not do for
+generated assembly.)
+
+### Tests
+
+| | |
+|---|---|
+| `scripts/test-forth.sh` | 10 builds on the simulator: every word on two devices in both code models, serial output compared; a wrong result is noticed; mistakes in the source are refused with file and line; the smallest program is 18 words; Forth calling C; the stack count |
+| `tests/forth/hardware.fth`, run by `tools/hwtest.py` on a PIC16LF1937 | Pass: `100 MS` measured as 48 counts of timer 0 where 49 are expected; four EEPROM bytes written and read back; the 1.024 V reference read as 327 of 1023 |
 
 ## The three device libraries side by side
 

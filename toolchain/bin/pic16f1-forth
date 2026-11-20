@@ -1,0 +1,1867 @@
+#!/usr/bin/env python3
+"""Compile a Forth program for the PIC16F1.
+
+    pic16f1-forth -mcpu=pic16f1937 -o blink.hex blink.fth [more.c ...]
+
+A cross-compiler: the whole program is compiled on this computer into
+assembly for the part (subroutine-threaded code: a word is a subroutine and
+a use of it is a CALL), which pic16f1-cc then assembles and links with the
+startup code and runtime library, and with any C, C++ or assembly sources
+also named. There is no interpreter on the part. The assembly is left
+beside the output as NAME.S.
+
+Cells are 16 bits. The top of the data stack is in the byte registers R0
+and R1 (0x70, 0x71), the rest in RAM through FSR1, growing down from the
+end of RAM. Return addresses are on the hardware stack, whose 16 levels the
+linker counts as it does for C (-mstack-report). >R, R> and the limits of
+DO loops are on a small stack of their own.
+
+With -g the program can be debugged in LLDB at the level of the assembly
+this writes, in which every Forth line stands as a comment above the
+instructions it became; words are symbols (w_NAME, or NAME itself after
+EXPORT), and the top of the stack is the registers r0 and r1.
+
+What makes the code compact is done at compile time: numbers and addresses
+not yet needed on the stack are kept back, so that `LATE 0 BIT-SET` is one
+BSF, `3 LATE C!` is two instructions and `counter @` reads the variable
+directly. Only the kernel routines a program uses are put in it.
+
+The device's registers are constants by their data sheet names (LATE,
+INTCON), and the fields of the registers by theirs (GIE, TMR0IF: the bit
+number), taken from the toolchain's header for the device. See
+docs/languages.md for the words.
+
+-S stops after writing the assembly. Other options are pic16f1-cc's.
+"""
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+# ---------------------------------------------------------------------------
+# The kernel: what the compiled code calls. Only routines a program uses
+# (and those they use) are emitted. "CALL x" and "JUMP x" stand for a call
+# and a jump with the page selection a large program needs; {NAME} is the
+# file address of a device register and {NAME@} its bank.
+# ---------------------------------------------------------------------------
+KERNEL = r"""
+;;; f_dup
+    movf    R1, W
+    movwi   --FSR1
+    movf    R0, W
+    movwi   --FSR1
+    return
+;;; f_drop
+    moviw   FSR1++
+    movwf   R0
+    moviw   FSR1++
+    movwf   R1
+    return
+;;; f_swap
+    moviw   0[FSR1]
+    movwf   R2
+    movf    R0, W
+    movwi   0[FSR1]
+    movf    R2, W
+    movwf   R0
+    moviw   1[FSR1]
+    movwf   R2
+    movf    R1, W
+    movwi   1[FSR1]
+    movf    R2, W
+    movwf   R1
+    return
+;;; f_over
+    movf    R1, W
+    movwi   --FSR1
+    movf    R0, W
+    movwi   --FSR1
+    moviw   2[FSR1]
+    movwf   R0
+    moviw   3[FSR1]
+    movwf   R1
+    return
+;;; f_nip
+    addfsr  FSR1, 2
+    return
+;;; f_rot
+    moviw   2[FSR1]
+    movwf   R2
+    moviw   3[FSR1]
+    movwf   R3
+    moviw   0[FSR1]
+    movwi   2[FSR1]
+    moviw   1[FSR1]
+    movwi   3[FSR1]
+    movf    R0, W
+    movwi   0[FSR1]
+    movf    R1, W
+    movwi   1[FSR1]
+    movf    R2, W
+    movwf   R0
+    movf    R3, W
+    movwf   R1
+    return
+;;; f_qdup
+    movf    R0, W
+    iorwf   R1, W
+    btfsc   STATUS, 2
+    return
+    JUMP    f_dup
+;;; f_add
+    moviw   FSR1++
+    addwf   R0, F
+    moviw   FSR1++
+    addwfc  R1, F
+    return
+;;; f_sub
+    moviw   FSR1++
+    movwf   R2
+    moviw   FSR1++
+    movwf   R3
+    movf    R0, W
+    subwf   R2, W
+    movwf   R0
+    movf    R1, W
+    subwfb  R3, W
+    movwf   R1
+    return
+;;; f_and
+    moviw   FSR1++
+    andwf   R0, F
+    moviw   FSR1++
+    andwf   R1, F
+    return
+;;; f_or
+    moviw   FSR1++
+    iorwf   R0, F
+    moviw   FSR1++
+    iorwf   R1, F
+    return
+;;; f_xor
+    moviw   FSR1++
+    xorwf   R0, F
+    moviw   FSR1++
+    xorwf   R1, F
+    return
+;;; f_invert
+    comf    R0, F
+    comf    R1, F
+    return
+;;; f_negate
+    comf    R0, F
+    comf    R1, F
+    incf    R0, F
+    btfsc   STATUS, 2
+    incf    R1, F
+    return
+;;; f_abs
+    btfss   R1, 7
+    return
+    JUMP    f_negate
+;;; f_nos
+; The second item into R2:R3, off the stack: for the routines that work on
+; two operands.
+    moviw   FSR1++
+    movwf   R2
+    moviw   FSR1++
+    movwf   R3
+    return
+;;; f_args
+; ( a b -- ) as the runtime library takes two operands: a in R0:R1, b in
+; R2:R3.
+    movf    R0, W
+    movwf   R2
+    movf    R1, W
+    movwf   R3
+    JUMP    f_drop
+;;; f_mul
+    CALL    f_nos
+    JUMP    __mulhi3
+;;; f_div
+    CALL    f_args
+    JUMP    __divhi3
+;;; f_mod
+    CALL    f_args
+    JUMP    __modhi3
+;;; f_udiv
+    CALL    f_args
+    JUMP    __udivhi3
+;;; f_umod
+    CALL    f_args
+    JUMP    __umodhi3
+;;; f_lshift
+; ( x n -- x<<n )
+    movf    R0, W
+    movwf   R4
+    CALL    f_drop
+    movf    R4, W
+    btfsc   STATUS, 2
+    return
+.Lf_lshift_1:
+    lslf    R0, F
+    rlf     R1, F
+    decfsz  R4, F
+    bra     .Lf_lshift_1
+    return
+;;; f_rshift
+    movf    R0, W
+    movwf   R4
+    CALL    f_drop
+    movf    R4, W
+    btfsc   STATUS, 2
+    return
+.Lf_rshift_1:
+    lsrf    R1, F
+    rrf     R0, F
+    decfsz  R4, F
+    bra     .Lf_rshift_1
+    return
+;;; f_flagz
+; A flag from Z: true (-1) if it is set.
+    movlw   0
+    btfsc   STATUS, 2
+    movlw   0xFF
+    movwf   R0
+    movwf   R1
+    return
+;;; f_flagnc
+; A flag from the carry: true if there was a borrow (carry clear).
+    movlw   0xFF
+    btfsc   STATUS, 0
+    movlw   0
+    movwf   R0
+    movwf   R1
+    return
+;;; f_eq
+    moviw   FSR1++
+    xorwf   R0, F
+    moviw   FSR1++
+    xorwf   R1, W
+    iorwf   R0, W
+    JUMP    f_flagz
+;;; f_ne
+    moviw   FSR1++
+    xorwf   R0, F
+    moviw   FSR1++
+    xorwf   R1, W
+    iorwf   R0, W
+    btfsc   STATUS, 2
+    bra     .Lf_ne_1
+    movlw   0xFF
+    movwf   R0
+    movwf   R1
+    return
+.Lf_ne_1:
+    clrf    R0
+    clrf    R1
+    return
+;;; f_zeq
+    movf    R0, W
+    iorwf   R1, W
+    JUMP    f_flagz
+;;; f_zlt
+    movlw   0
+    btfsc   R1, 7
+    movlw   0xFF
+    movwf   R0
+    movwf   R1
+    return
+;;; f_ult
+; ( a b -- a<b ), unsigned: a - b borrows.
+    CALL    f_nos
+    movf    R0, W
+    subwf   R2, W
+    movf    R1, W
+    subwfb  R3, W
+    JUMP    f_flagnc
+;;; f_ugt
+    CALL    f_nos
+    movf    R2, W
+    subwf   R0, W
+    movf    R3, W
+    subwfb  R1, W
+    JUMP    f_flagnc
+;;; f_lt
+; Signed: the same with both sign bits turned over.
+    CALL    f_nos
+    movlw   0x80
+    xorwf   R1, F
+    xorwf   R3, F
+    movf    R0, W
+    subwf   R2, W
+    movf    R1, W
+    subwfb  R3, W
+    JUMP    f_flagnc
+;;; f_gt
+    CALL    f_nos
+    movlw   0x80
+    xorwf   R1, F
+    xorwf   R3, F
+    movf    R2, W
+    subwf   R0, W
+    movf    R3, W
+    subwfb  R1, W
+    JUMP    f_flagnc
+;;; f_popflag
+; ( flag -- ), leaving Z set if the flag was false: what IF, WHILE and
+; UNTIL test.
+    movf    R0, W
+    iorwf   R1, W
+    movwf   TMP0
+    moviw   FSR1++
+    movwf   R0
+    moviw   FSR1++
+    movwf   R1
+    movf    TMP0, F
+    return
+;;; f_fetch
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    moviw   0[FSR0]
+    movwf   R0
+    moviw   1[FSR0]
+    movwf   R1
+    return
+;;; f_cfetch
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    moviw   0[FSR0]
+    movwf   R0
+    clrf    R1
+    return
+;;; f_store
+; ( x addr -- )
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    moviw   FSR1++
+    movwi   0[FSR0]
+    moviw   FSR1++
+    movwi   1[FSR0]
+    JUMP    f_drop
+;;; f_cstore
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    moviw   FSR1++
+    movwi   0[FSR0]
+    addfsr  FSR1, 1
+    JUMP    f_drop
+;;; f_plusstore
+; ( n addr -- )
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    moviw   FSR1++
+    addwf   INDF0, F
+    addfsr  FSR0, 1
+    moviw   FSR1++
+    addwfc  INDF0, F
+    JUMP    f_drop
+;;; f_execute
+; ( xt -- ): a word's address is its code address in words.
+    movf    R1, W
+    movwf   R3
+    movf    R0, W
+    movwf   R2
+    CALL    f_drop
+    movf    R3, W
+    movwf   PCLATH
+    movf    R2, W
+    callw
+    return
+;;; f_lsp
+; FSR0 to the next free byte of the loop stack.
+    movlw   lo8(forth_lstack)
+    addwf   R12, W
+    movwf   FSR0L
+    movlw   hi8(forth_lstack)
+    btfsc   STATUS, 0
+    addlw   1
+    movwf   FSR0H
+    return
+;;; f_tor
+; ( x -- ) ( R: -- x )
+    CALL    f_lsp
+    movf    R0, W
+    movwi   FSR0++
+    movf    R1, W
+    movwi   FSR0++
+    movlw   2
+    addwf   R12, F
+    JUMP    f_drop
+;;; f_rfrom
+    CALL    f_dup
+    movlw   2
+    subwf   R12, F
+    CALL    f_lsp
+    moviw   0[FSR0]
+    movwf   R0
+    moviw   1[FSR0]
+    movwf   R1
+    return
+;;; f_rfetch
+    CALL    f_dup
+    CALL    f_lsp
+    moviw   -2[FSR0]
+    movwf   R0
+    moviw   -1[FSR0]
+    movwf   R1
+    return
+;;; f_do
+; ( limit start -- ): the loop outside this one goes to the loop stack;
+; this one's index is in R8:R9 and its limit in R10:R11.
+    CALL    f_lsp
+    movf    R8, W
+    movwi   FSR0++
+    movf    R9, W
+    movwi   FSR0++
+    movf    R10, W
+    movwi   FSR0++
+    movf    R11, W
+    movwi   FSR0++
+    movlw   4
+    addwf   R12, F
+    movf    R0, W
+    movwf   R8
+    movf    R1, W
+    movwf   R9
+    moviw   FSR1++
+    movwf   R10
+    moviw   FSR1++
+    movwf   R11
+    JUMP    f_drop
+;;; f_loop
+; Counts, and leaves Z set when the index has reached the limit.
+    incf    R8, F
+    btfsc   STATUS, 2
+    incf    R9, F
+    movf    R8, W
+    xorwf   R10, W
+    btfss   STATUS, 2
+    return
+    movf    R9, W
+    xorwf   R11, W
+    return
+;;; f_plusloop
+; ( n -- ): adds n, and leaves Z set when the index has crossed the
+; boundary between limit - 1 and limit, in either direction: that is when
+; (index - limit) and it plus n differ in sign and n has the sign that
+; could take it across (an overflow of their sum with the sign turned
+; over).
+    movf    R10, W
+    subwf   R8, W
+    movwf   R4
+    movf    R11, W
+    subwfb  R9, W
+    xorlw   0x80
+    movwf   R5              ; a = index - limit, sign turned over (high byte)
+    movf    R0, W
+    addwf   R8, F
+    movf    R1, W
+    addwfc  R9, F           ; index += n
+    movf    R0, W
+    addwf   R4, W
+    movf    R1, W
+    addwfc  R5, W
+    movwf   R4              ; r = a + n (high byte)
+    xorwf   R5, F           ; a ^ r
+    movf    R1, W
+    xorwf   R4, W           ; n ^ r
+    andwf   R5, F           ; overflow in bit 7
+    CALL    f_drop
+    movlw   0x80
+    andwf   R5, W
+    xorlw   0x80            ; Z set if there was an overflow
+    return
+;;; f_unloop
+    movlw   4
+    subwf   R12, F
+    CALL    f_lsp
+    moviw   FSR0++
+    movwf   R8
+    moviw   FSR0++
+    movwf   R9
+    moviw   FSR0++
+    movwf   R10
+    moviw   FSR0++
+    movwf   R11
+    return
+;;; f_i
+    CALL    f_dup
+    movf    R8, W
+    movwf   R0
+    movf    R9, W
+    movwf   R1
+    return
+;;; f_j
+    CALL    f_dup
+    CALL    f_lsp
+    moviw   -4[FSR0]
+    movwf   R0
+    moviw   -3[FSR0]
+    movwf   R1
+    return
+;;; f_emit_w
+; The character in W to the serial port.
+    movwf   R5
+    movlb   {PIR1@}
+.Lf_emit_w_1:
+    btfss   {PIR1}, {TXIF}
+    bra     .Lf_emit_w_1
+    movf    R5, W
+    movlb   {TXREG@}
+    movwf   {TXREG}
+    return
+;;; f_emit
+    movf    R0, W
+    CALL    f_emit_w
+    JUMP    f_drop
+;;; f_key
+    CALL    f_dup
+    movlb   {RCSTA@}
+    btfss   {RCSTA}, {OERR}
+    bra     .Lf_key_1
+    bcf     {RCSTA}, {CREN}
+    bsf     {RCSTA}, {CREN}
+.Lf_key_1:
+    movlb   {PIR1@}
+.Lf_key_2:
+    btfss   {PIR1}, {RCIF}
+    bra     .Lf_key_2
+    movlb   {RCREG@}
+    movf    {RCREG}, W
+    movwf   R0
+    clrf    R1
+    return
+;;; f_keyq
+    CALL    f_dup
+    clrf    R0
+    movlb   {PIR1@}
+    btfsc   {PIR1}, {RCIF}
+    comf    R0, F
+    movf    R0, W
+    movwf   R1
+    return
+;;; f_typez
+; The string FSR0 points at, up to its zero byte.
+    moviw   FSR0++
+    btfsc   STATUS, 2
+    return
+    CALL    f_emit_w
+    bra     f_typez
+;;; f_type
+; ( addr len -- )
+    movf    R0, W
+    movwf   R4
+    CALL    f_drop
+    movf    R0, W
+    movwf   FSR0L
+    movf    R1, W
+    movwf   FSR0H
+    movf    R4, W
+    btfsc   STATUS, 2
+    bra     .Lf_type_2
+.Lf_type_1:
+    moviw   FSR0++
+    CALL    f_emit_w
+    decfsz  R4, F
+    bra     .Lf_type_1
+.Lf_type_2:
+    JUMP    f_drop
+;;; f_udot_digits
+; R0:R1 in decimal, without leading zeros. R6 says whether a digit has
+; been printed.
+    clrf    R6
+    movlw   0x10
+    movwf   R2
+    movlw   0x27
+    movwf   R3
+    CALL    f_udot_digit
+    movlw   0xE8
+    movwf   R2
+    movlw   0x03
+    movwf   R3
+    CALL    f_udot_digit
+    movlw   100
+    movwf   R2
+    clrf    R3
+    CALL    f_udot_digit
+    movlw   10
+    movwf   R2
+    CALL    f_udot_digit
+    movf    R0, W
+    addlw   48
+    JUMP    f_emit_w
+;;; f_udot_digit
+; How many times R2:R3 goes into R0:R1, printed unless it is a leading zero.
+    clrf    R4
+.Lf_udot_digit_1:
+    movf    R2, W
+    subwf   R0, W
+    movwf   R7
+    movf    R3, W
+    subwfb  R1, W
+    btfss   STATUS, 0
+    bra     .Lf_udot_digit_2
+    movwf   R1
+    movf    R7, W
+    movwf   R0
+    incf    R4, F
+    bra     .Lf_udot_digit_1
+.Lf_udot_digit_2:
+    movf    R4, W
+    iorwf   R6, W
+    btfsc   STATUS, 2
+    return
+    bsf     R6, 0
+    movf    R4, W
+    addlw   48
+    JUMP    f_emit_w
+;;; f_udot
+; ( u -- ): unsigned, then a space.
+    CALL    f_udot_digits
+    movlw   32
+    CALL    f_emit_w
+    JUMP    f_drop
+;;; f_dot
+; ( n -- ): signed, then a space.
+    btfss   R1, 7
+    bra     .Lf_dot_1
+    movlw   45
+    CALL    f_emit_w
+    CALL    f_negate
+.Lf_dot_1:
+    JUMP    f_udot
+;;; f_hexdot
+; ( x -- ): the low byte as two hexadecimal digits.
+    swapf   R0, W
+    CALL    f_hexdigit
+    movf    R0, W
+    CALL    f_hexdigit
+    JUMP    f_drop
+;;; f_hexdigit
+    andlw   0x0F
+    addlw   -10
+    btfsc   STATUS, 0
+    addlw   7
+    addlw   58
+    JUMP    f_emit_w
+;;; f_ms
+; ( n -- ): n milliseconds.
+    movf    R0, W
+    movwf   R6
+    movf    R1, W
+    movwf   R7
+    CALL    f_drop
+.Lf_ms_1:
+    movf    R6, W
+    iorwf   R7, W
+    btfsc   STATUS, 2
+    return
+    CALL    f_ms1
+    movlw   1
+    subwf   R6, F
+    movlw   0
+    subwfb  R7, F
+    bra     .Lf_ms_1
+;;; f_ms1
+; One millisecond, keeping the top of the stack (the delay routine takes
+; its count in the same registers).
+    CALL    f_dup
+    movlw   FORTH_MS_LO
+    movwf   R0
+    movlw   FORTH_MS_HI
+    movwf   R1
+    clrf    R2
+    clrf    R3
+    CALL    __delay_loops
+    JUMP    f_drop
+;;; f_delay
+; R0-R3 hold a count for the delay routine and the top of the stack is
+; saved below it: wait, and take the top back.
+    CALL    __delay_loops
+    JUMP    f_drop
+;;; f_isr_save
+; On entry to an interrupt handler: the sixteen bytes of common RAM, which
+; hold the top of the stack and everything the kernel works in, go on the
+; data stack. (W, STATUS, BSR, PCLATH and the FSRs are saved by the
+; processor, and it restores them.)
+    movlw   0x70
+    movwf   FSR0L
+    clrf    FSR0H
+    .rept 16
+    moviw   FSR0++
+    movwi   --FSR1
+    .endr
+    return
+;;; f_isr_restore
+    movlw   0x7F
+    movwf   FSR0L
+    clrf    FSR0H
+    .rept 16
+    moviw   FSR1++
+    movwi   FSR0--
+    .endr
+    return
+"""
+
+# Words that are one kernel routine, and what each does to the depth of the
+# data stack is of no concern here: the stack is real.
+PRIMS = {
+    "DUP": "f_dup", "DROP": "f_drop", "SWAP": "f_swap", "OVER": "f_over", "NIP": "f_nip",
+    "ROT": "f_rot", "?DUP": "f_qdup",
+    "+": "f_add", "-": "f_sub", "AND": "f_and", "OR": "f_or", "XOR": "f_xor",
+    "INVERT": "f_invert", "NEGATE": "f_negate", "ABS": "f_abs",
+    "*": "f_mul", "/": "f_div", "MOD": "f_mod", "U/": "f_udiv", "UMOD": "f_umod",
+    "LSHIFT": "f_lshift", "RSHIFT": "f_rshift",
+    "=": "f_eq", "<>": "f_ne", "0=": "f_zeq", "0<": "f_zlt", "<": "f_lt", ">": "f_gt",
+    "U<": "f_ult", "U>": "f_ugt",
+    "@": "f_fetch", "!": "f_store", "C@": "f_cfetch", "C!": "f_cstore", "+!": "f_plusstore",
+    "EXECUTE": "f_execute",
+    ">R": "f_tor", "R>": "f_rfrom", "R@": "f_rfetch", "I": "f_i", "J": "f_j",
+    "EMIT": "f_emit", "KEY": "f_key", "KEY?": "f_keyq", "TYPE": "f_type",
+    ".": "f_dot", "U.": "f_udot", "H.": "f_hexdot", "MS": "f_ms",
+}
+
+# Words written in Forth, compiled into a program that uses them.
+PRELUDE = r"""
+: 2DUP    OVER OVER ; INLINE
+: 2DROP   DROP DROP ; INLINE
+: TUCK    SWAP OVER ; INLINE
+: -ROT    ROT ROT ; INLINE
+: NOT     0= ; INLINE
+: 0<>     0= 0= ; INLINE
+: /MOD    2DUP MOD -ROT / ;
+: MIN     2DUP > IF SWAP THEN DROP ;
+: MAX     2DUP < IF SWAP THEN DROP ;
+: WITHIN  OVER - >R - R> U< ;
+: CR      10 EMIT ; INLINE
+: SPACE   32 EMIT ; INLINE
+: SPACES  BEGIN DUP 0 > WHILE SPACE 1- REPEAT DROP ;
+: COUNT   DUP 1+ SWAP C@ ;
+: FILL    -ROT BEGIN DUP 0 > WHILE >R 2DUP C! 1+ R> 1- REPEAT 2DROP DROP ;
+: ERASE   0 FILL ;
+: CMOVE   BEGIN DUP 0 > WHILE >R OVER C@ OVER C! 1+ SWAP 1+ SWAP R> 1- REPEAT 2DROP DROP ;
+"""
+
+
+class Error(Exception):
+    pass
+
+
+def mangle(name):
+    out = []
+    for c in name.lower():
+        out.append(c if c.isalnum() else "_%02x" % ord(c))
+    return "w_" + "".join(out)
+
+
+class Sym:
+    """An address the assembler knows: a symbol and an offset."""
+
+    def __init__(self, name, offset=0):
+        self.name, self.offset = name, offset
+
+    def expr(self, plus=0):
+        off = self.offset + plus
+        return self.name if off == 0 else f"{self.name}+{off}"
+
+
+class Word:
+    def __init__(self, name, kind, **fields):
+        self.name, self.kind = name, kind
+        self.ops, self.inline, self.used = [], False, False
+        self.__dict__.update(fields)
+
+
+class Compiler:
+    def __init__(self, device, include_dir):
+        self.device = device
+        self.words = {}
+        self.host = []          # the stack while not compiling a definition
+        self.current = None     # the definition being compiled
+        self.control = []       # its open control structures
+        self.labels = 0
+        self.data = []          # assembly for variables and tables
+        self.strings = []
+        self.config = []
+        self.clock = 500000
+        self.loop_stack = 32
+        self.interrupt = None
+        self.here = None        # the table being filled by , and C,
+        self.registers = {}
+        self.source_files = []
+        self.source_text = {}
+        self.read_header(include_dir)
+        for name, routine in PRIMS.items():
+            self.words[name] = Word(name, "prim", routine=routine)
+        self.load(PRELUDE, "<prelude>")
+        for w in self.words.values():
+            w.prelude = True
+
+    # -- the device ---------------------------------------------------------
+    def read_header(self, include_dir):
+        path = os.path.join(include_dir, self.device + ".h")
+        if not os.path.exists(path):
+            raise Error(f"no header for {self.device} ({path})")
+        text = open(path).read()
+        bits = {}
+        # Fields: the position of each in its register, from the bit-field
+        # views. A name with different positions in different registers is
+        # left out.
+        for body, reg in re.findall(r"typedef union \{\s*unsigned char byte;\s*struct \{(.*?)\};\s*\} (\w+)bits_t;",
+                                    text, re.S):
+            bit = 0
+            for name, width in re.findall(r"unsigned char (\w*) ?: (\d+);", body):
+                if name:
+                    bits.setdefault(name, set()).add(bit)
+                bit += int(width)
+        for name, addr in re.findall(r"#define (\w+) \(\*\(volatile unsigned (?:char|int) \*\)0x([0-9A-Fa-f]+)\)", text):
+            self.registers[name] = int(addr, 16)
+        for name, positions in bits.items():
+            if len(positions) == 1 and name not in self.registers:
+                self.words[name.upper()] = Word(name, "const", value=next(iter(positions)))
+        for name, addr in self.registers.items():
+            self.words[name.upper()] = Word(name, "const", value=addr)
+
+    # -- reading the source ---------------------------------------------------
+    def load(self, text, filename):
+        self.text, self.pos, self.filename = text, 0, filename
+        if filename not in self.source_files:
+            self.source_files.append(filename)
+            self.source_text[filename] = text.split("\n")
+        while True:
+            token = self.token()
+            if token is None:
+                break
+            try:
+                self.handle(token)
+            except Error as e:
+                raise Error(f"{filename}:{self.line()}: {e}") from None
+        if self.current:
+            raise Error(f"{filename}: the definition of {self.current.name} is not finished")
+
+    def line(self):
+        return self.text.count("\n", 0, self.pos) + 1
+
+    def token(self):
+        m = re.compile(r"\s*(\S+)").match(self.text, self.pos)
+        if not m:
+            return None
+        self.pos = m.end()
+        return m.group(1)
+
+    def until(self, end):
+        """The text up to `end`, for strings and comments: one space after
+        the word that opened it is not part of it."""
+        start = self.pos + 1 if self.text[self.pos:self.pos + 1] in (" ", "\t") else self.pos
+        stop = self.text.find(end, start)
+        if stop < 0:
+            raise Error(f"no closing {end}")
+        self.pos = stop + len(end)
+        return self.text[start:stop]
+
+    def name(self):
+        token = self.token()
+        if token is None:
+            raise Error("a name is missing")
+        return token
+
+    @staticmethod
+    def number(token):
+        t = token.replace("_", "")
+        try:
+            if len(token) == 3 and token[0] == "'" and token[2] == "'":
+                return ord(token[1])
+            if t.startswith("$"):
+                return int(t[1:], 16)
+            if t.startswith("%"):
+                return int(t[1:], 2)
+            return int(t, 0)
+        except ValueError:
+            return None
+
+    # -- compiling --------------------------------------------------------------
+    def emit(self, *op):
+        self.current.ops.append(op + (self.line(), self.filename))
+
+    def label(self):
+        self.labels += 1
+        return self.labels
+
+    def handle(self, token):
+        upper = token.upper()
+        handler = getattr(self, "word_" + DIRECTIVES.get(upper, ""), None) if upper in DIRECTIVES else None
+        if handler:
+            return handler()
+        if upper in self.words:
+            return self.use(self.words[upper])
+        n = self.number(token)
+        if n is None:
+            raise Error(f"{token} is not a word or a number")
+        self.literal(n)
+
+    def literal(self, value):
+        if self.current:
+            self.emit("lit", value)
+        else:
+            self.host.append(value)
+
+    def use(self, w):
+        if w.kind == "const":
+            return self.literal(w.value)
+        if w.kind == "var":
+            return self.literal(Sym(w.symbol))
+        if not self.current:
+            return self.host_word(w)
+        if w.kind == "prim":
+            self.emit("prim", w.routine, w.name)
+        elif w.kind == "colon":
+            if w is self.current:
+                raise Error(f"{w.name} uses itself; write RECURSE")
+            self.emit("call", w)
+        else:
+            raise Error(f"{w.name} cannot be used here")
+
+    def host_word(self, w):
+        """Arithmetic outside a definition is done here and now, on numbers."""
+        ops = {"+": lambda a, b: a + b, "-": lambda a, b: a - b, "*": lambda a, b: a * b,
+               "/": lambda a, b: a // b, "MOD": lambda a, b: a % b, "AND": lambda a, b: a & b,
+               "OR": lambda a, b: a | b, "XOR": lambda a, b: a ^ b,
+               "LSHIFT": lambda a, b: a << b, "RSHIFT": lambda a, b: a >> b}
+        if w.name in ops and len(self.host) >= 2:
+            b, a = self.host.pop(), self.host.pop()
+            if isinstance(a, Sym) and isinstance(b, int) and w.name in "+-":
+                self.host.append(Sym(a.name, a.offset + (b if w.name == "+" else -b)))
+            elif isinstance(a, int) and isinstance(b, int):
+                self.host.append(ops[w.name](a, b))
+            else:
+                raise Error(f"{w.name} of an address is not known until the program is linked")
+            return
+        if w.name in ("DUP", "DROP", "SWAP", "NEGATE", "INVERT") and self.host:
+            if w.name == "DUP":
+                self.host.append(self.host[-1])
+            elif w.name == "DROP":
+                self.host.pop()
+            elif w.name == "SWAP" and len(self.host) >= 2:
+                self.host[-1], self.host[-2] = self.host[-2], self.host[-1]
+            elif w.name == "NEGATE":
+                self.host.append(-self.host.pop())
+            else:
+                self.host.append(~self.host.pop())
+            return
+        raise Error(f"{w.name} can only be used inside a definition")
+
+    def pop_host(self, what):
+        if not self.host:
+            raise Error(f"{what} needs a number before it")
+        v = self.host.pop()
+        if not isinstance(v, int):
+            raise Error(f"{what} needs a number, not an address")
+        return v
+
+    def inside(self, what):
+        if not self.current:
+            raise Error(f"{what} can only be used inside a definition")
+
+    # -- defining words -----------------------------------------------------------
+    def word_colon(self):
+        if self.current:
+            raise Error(f"the definition of {self.current.name} is not finished")
+        name = self.name()
+        self.current = Word(name, "colon", symbol=mangle(name), where=(self.filename, self.line()))
+        self.control = []
+
+    def word_interrupt(self):
+        self.word_colon()
+        if self.interrupt:
+            raise Error("there can be one interrupt handler")
+        self.interrupt = self.current
+        self.current.used = True
+
+    def word_semicolon(self):
+        self.inside(";")
+        if self.control:
+            raise Error(f"{self.control[-1][0]} is not closed")
+        self.words[self.current.name.upper()] = self.current
+        self.last = self.current
+        self.current = None
+
+    def word_inline(self):
+        for op in self.last.ops:
+            if op[0] == "exit":
+                raise Error("an INLINE word cannot use EXIT")
+        self.last.inline = True
+
+    def word_export(self):
+        """The last definition also under its own name as a symbol, for C
+        code to call and for a debugger to find."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.last.name):
+            raise Error(f"{self.last.name} cannot be a symbol's name")
+        self.last.export = True
+        self.last.used = True
+
+    def word_constant(self):
+        if not self.host:
+            raise Error("CONSTANT needs a value before it")
+        value = self.host.pop()
+        name = self.name()
+        self.words[name.upper()] = Word(name, "const", value=value)
+
+    def variable(self, size, what):
+        name = self.name()
+        symbol = "v_" + mangle(name)[2:]
+        self.data += [f'    .section .bss.{symbol},"aw",@nobits', f"{symbol}:", f"    .space  {size}"]
+        self.words[name.upper()] = Word(name, "var", symbol=symbol)
+        self.need_bss = True
+
+    def word_variable(self):
+        self.variable(2, "VARIABLE")
+
+    def word_cvariable(self):
+        self.variable(1, "CVARIABLE")
+
+    def word_buffer(self):
+        self.variable(self.pop_host("BUFFER:"), "BUFFER:")
+
+    def word_create(self, rom=False):
+        name = self.name()
+        symbol = "t_" + mangle(name)[2:]
+        section = f".rodata.{symbol},\"a\"" if rom else f".data.{symbol},\"aw\""
+        self.data += [f"    .section {section},@progbits", f"{symbol}:"]
+        self.words[name.upper()] = Word(name, "var", symbol=symbol)
+        self.here = name
+        if not rom:
+            self.need_data = True
+
+    def word_romcreate(self):
+        self.word_create(rom=True)
+
+    def word_comma(self):
+        v = self.pop_table_value(",")
+        self.data.append(f"    .2byte  {v}")
+
+    def word_ccomma(self):
+        v = self.pop_table_value("C,")
+        self.data.append(f"    .byte   {v}")
+
+    def pop_table_value(self, what):
+        if self.here is None:
+            raise Error(f"{what} follows CREATE or ROM-CREATE")
+        if not self.host:
+            raise Error(f"{what} needs a value before it")
+        v = self.host.pop()
+        return v.expr() if isinstance(v, Sym) else str(v & 0xFFFF)
+
+    def word_allot(self):
+        if self.here is None:
+            raise Error("ALLOT follows CREATE")
+        self.data.append(f"    .space  {self.pop_host('ALLOT')}")
+
+    def word_config(self):
+        settings = self.until('"').replace(" ", "")
+        self.config.append(f"{self.filename}:{self.line()}: {settings}")
+
+    def word_clock(self):
+        self.clock = self.pop_host("CLOCK-HZ")
+
+    def word_loopstack(self):
+        self.loop_stack = self.pop_host("LOOP-STACK")
+
+    def word_include(self):
+        path = self.name()
+        if not os.path.isabs(path):
+            path = os.path.join(os.path.dirname(self.filename), path)
+        saved = (self.text, self.pos, self.filename)
+        self.load(open(path).read(), path)
+        self.text, self.pos, self.filename = saved
+
+    def word_cfunction(self):
+        name, symbol = self.name(), self.name()
+        nargs, results = self.name(), self.name()
+        if nargs not in "012" or results not in "01":
+            raise Error("C-FUNCTION: name symbol arguments(0-2) results(0-1)")
+        w = Word(name, "colon", symbol=mangle(name), where=(self.filename, self.line()))
+        w.ops = [("c", symbol, int(nargs), int(results), self.line(), self.filename)]
+        self.words[name.upper()] = w
+
+    # -- comments and strings --------------------------------------------------------
+    def word_backslash(self):
+        end = self.text.find("\n", self.pos)
+        self.pos = len(self.text) if end < 0 else end
+
+    def word_paren(self):
+        self.until(")")
+
+    def word_dotquote(self):
+        self.inside('."')
+        self.emit("print", self.until('"'))
+
+    def word_squote(self):
+        self.inside('S"')
+        self.emit("string", self.until('"'))
+
+    def word_char(self):
+        self.literal(ord(self.name()[0]))
+
+    def word_tick(self):
+        name = self.name()
+        w = self.words.get(name.upper())
+        if not w or w.kind != "colon":
+            raise Error(f"' needs a colon definition, and {name} is not one")
+        w.used = True
+        w.address_taken = True
+        if self.current:
+            self.emit("xt", w)
+        else:
+            raise Error("' can only be used inside a definition")
+
+    # -- control structures ------------------------------------------------------------
+    def word_if(self):
+        self.inside("IF")
+        l = self.label()
+        self.emit("zjump", l)
+        self.control.append(("IF", l))
+
+    def word_else(self):
+        self.inside("ELSE")
+        if not self.control or self.control[-1][0] != "IF":
+            raise Error("ELSE without IF")
+        _, l = self.control.pop()
+        done = self.label()
+        self.emit("jump", done)
+        self.emit("label", l)
+        self.control.append(("IF", done))
+
+    def word_then(self):
+        self.inside("THEN")
+        if not self.control or self.control[-1][0] != "IF":
+            raise Error("THEN without IF")
+        self.emit("label", self.control.pop()[1])
+
+    def word_begin(self):
+        self.inside("BEGIN")
+        l = self.label()
+        self.emit("label", l)
+        self.control.append(("BEGIN", l))
+
+    def word_until(self):
+        self.inside("UNTIL")
+        if not self.control or self.control[-1][0] != "BEGIN":
+            raise Error("UNTIL without BEGIN")
+        self.emit("zjump", self.control.pop()[1])
+
+    def word_again(self):
+        self.inside("AGAIN")
+        if not self.control or self.control[-1][0] != "BEGIN":
+            raise Error("AGAIN without BEGIN")
+        self.emit("jump", self.control.pop()[1])
+
+    def word_while(self):
+        self.inside("WHILE")
+        if not self.control or self.control[-1][0] != "BEGIN":
+            raise Error("WHILE without BEGIN")
+        l = self.label()
+        self.emit("zjump", l)
+        self.control.append(("WHILE", l))
+
+    def word_repeat(self):
+        self.inside("REPEAT")
+        if len(self.control) < 2 or self.control[-1][0] != "WHILE":
+            raise Error("REPEAT without WHILE")
+        _, out = self.control.pop()
+        _, top = self.control.pop()
+        self.emit("jump", top)
+        self.emit("label", out)
+
+    def word_do(self):
+        self.inside("DO")
+        top, leave = self.label(), self.label()
+        self.emit("prim", "f_do", "DO")
+        self.emit("label", top)
+        self.control.append(("DO", top, leave))
+
+    def word_loop(self, routine="f_loop"):
+        self.inside("LOOP")
+        if not self.control or self.control[-1][0] != "DO":
+            raise Error("LOOP without DO")
+        _, top, leave = self.control.pop()
+        self.emit("loop", routine, top)
+        self.emit("label", leave)
+        self.emit("prim", "f_unloop", "UNLOOP")
+
+    def word_plusloop(self):
+        self.word_loop("f_plusloop")
+
+    def word_leave(self):
+        self.inside("LEAVE")
+        for entry in reversed(self.control):
+            if entry[0] == "DO":
+                return self.emit("jump", entry[2])
+        raise Error("LEAVE outside DO")
+
+    def word_unloop(self):
+        self.inside("UNLOOP")
+        self.emit("prim", "f_unloop", "UNLOOP")
+
+    def word_exit(self):
+        self.inside("EXIT")
+        self.emit("exit")
+
+    def word_recurse(self):
+        self.inside("RECURSE")
+        self.emit("call", self.current)
+
+    # -- words compiled in line -------------------------------------------------------------
+    def simple(self, kind):
+        if not self.current and kind in ("1+", "1-", "2*", "2/"):
+            n = self.pop_host(kind)
+            return self.host.append({"1+": n + 1, "1-": n - 1, "2*": n * 2, "2/": n >> 1}[kind])
+        self.inside(kind.upper())
+        self.emit(kind)
+
+    def word_oneplus(self):
+        self.simple("1+")
+
+    def word_oneminus(self):
+        self.simple("1-")
+
+    def word_twostar(self):
+        self.simple("2*")
+
+    def word_twoslash(self):
+        self.simple("2/")
+
+    def word_bitset(self):
+        self.simple("bit-set")
+
+    def word_bitclr(self):
+        self.simple("bit-clr")
+
+    def word_bittoggle(self):
+        self.simple("bit-toggle")
+
+    def word_bittest(self):
+        self.simple("bit?")
+
+    def word_ei(self):
+        self.simple("ei")
+
+    def word_di(self):
+        self.simple("di")
+
+    def word_sleep(self):
+        self.simple("sleep")
+
+    def word_nop(self):
+        self.simple("nop")
+
+    def word_clrwdt(self):
+        self.simple("clrwdt")
+
+    def word_serial(self):
+        self.simple("serial")
+
+
+DIRECTIVES = {
+    ":": "colon", ";": "semicolon", "INTERRUPT:": "interrupt", "INLINE": "inline",
+    "EXPORT": "export",
+    "CONSTANT": "constant", "VARIABLE": "variable", "CVARIABLE": "cvariable",
+    "BUFFER:": "buffer", "CREATE": "create", "ROM-CREATE": "romcreate", ",": "comma",
+    "C,": "ccomma", "ALLOT": "allot", 'CONFIG"': "config", "CLOCK-HZ": "clock",
+    "LOOP-STACK": "loopstack", "INCLUDE": "include", "C-FUNCTION:": "cfunction",
+    "\\": "backslash", "(": "paren", '."': "dotquote", 'S"': "squote",
+    "CHAR": "char", "[CHAR]": "char", "'": "tick", "[']": "tick",
+    "IF": "if", "ELSE": "else", "THEN": "then", "BEGIN": "begin", "UNTIL": "until",
+    "AGAIN": "again", "WHILE": "while", "REPEAT": "repeat", "DO": "do", "LOOP": "loop",
+    "+LOOP": "plusloop", "LEAVE": "leave", "UNLOOP": "unloop", "EXIT": "exit",
+    "RECURSE": "recurse", "1+": "oneplus", "1-": "oneminus", "2*": "twostar",
+    "2/": "twoslash", "BIT-SET": "bitset", "BIT-CLR": "bitclr", "BIT-TOGGLE": "bittoggle",
+    "BIT?": "bittest", "EI": "ei", "DI": "di", "SLEEP": "sleep", "NOP": "nop",
+    "CLRWDT": "clrwdt", "SERIAL-INIT": "serial",
+}
+
+
+# ---------------------------------------------------------------------------
+# From the compiled words to assembly.
+# ---------------------------------------------------------------------------
+class Generator:
+    def __init__(self, compiler):
+        self.c = compiler
+        self.kernel = self.parse_kernel()
+        self.used_kernel = []
+        self.out = []
+        self.frames = []
+        self.need_lstack = False
+
+    def parse_kernel(self):
+        routines, name = {}, None
+        for line in KERNEL.split("\n"):
+            if line.startswith(";;; "):
+                name = line[4:].strip()
+                routines[name] = []
+            elif name and line.strip():
+                routines[name].append(line)
+        return routines
+
+    def register(self, name):
+        if name not in self.c.registers:
+            raise Error(f"the {self.c.device} has no register {name}, which the serial words need")
+        return self.c.registers[name]
+
+    def field(self, name):
+        w = self.c.words.get(name)
+        if not w or w.kind != "const":
+            raise Error(f"the {self.c.device} has no bit {name}, which the serial words need")
+        return w.value
+
+    # -- one function: its lines, with calls and jumps expanded -----------------------------
+    def finish(self, symbol, lines, section=None, is_global=False, flags="-"):
+        """Expand CALL/JUMP/branches, record what the function calls, and
+        add it to the output."""
+        calls, jumps = [], []
+        long = sum(1 for l in lines if not l.rstrip().endswith(":")) > 100
+        body = []
+        for line in lines:
+            m = re.match(r"\s*(CALL|JUMP|BRANCH|BRZ|BRNZ)\s+(\S+)", line)
+            if not m:
+                body.append(line)
+                continue
+            op, target = m.groups()
+            if op == "CALL":
+                body += [f"    PAGESEL({target})", f"    call    {target}"]
+                if target not in calls:
+                    calls.append(target)
+            elif op == "JUMP":
+                body += [f"    PAGESEL({target})", f"    goto    {target}"]
+                if target not in jumps:
+                    jumps.append(target)
+            elif op == "BRANCH":
+                body += ([f"    PAGESEL({target})", f"    goto    {target}"] if long
+                         else [f"    bra     {target}"])
+            else:
+                # Z is bit 2 of STATUS. A skip passes over one instruction,
+                # and a far jump is two.
+                if long:
+                    skip = "btfss" if op == "BRZ" else "btfsc"
+                    body += [f"    {skip}   STATUS, 2", "    bra     1f",
+                             f"    PAGESEL({target})", f"    goto    {target}", "1:"]
+                else:
+                    skip = "btfsc" if op == "BRZ" else "btfss"
+                    body += [f"    {skip}   STATUS, 2", f"    bra     {target}"]
+        self.out += ["", f'    .section {section or ".text." + symbol},"ax",@progbits']
+        if is_global:
+            self.out.append(f"    .globl  {symbol}")
+        self.out += [f"{symbol}:"] + body
+        record = f"F {symbol} {flags}\\n" + "".join(f"C {t}\\n" for t in calls) + "".join(f"J {t}\\n" for t in jumps)
+        self.frames.append(record)
+        for t in calls + jumps:
+            self.need(t)
+
+    def need(self, routine):
+        if routine in self.kernel and routine not in self.used_kernel:
+            self.used_kernel.append(routine)
+            lines = []
+            for line in self.kernel[routine]:
+                def sub(m):
+                    name = m.group(1)
+                    if name.endswith("@"):
+                        return str(self.register(name[:-1]) >> 7)
+                    if name in self.c.registers:
+                        return "0x%02X" % (self.register(name) & 0x7F)
+                    return str(self.field(name))
+                lines.append(re.sub(r"\{(\w+@?)\}", sub, line))
+            if routine in ("f_lsp",):
+                self.need_lstack = True
+            # EXECUTE calls through a pointer: any word whose address was
+            # taken.
+            self.finish(routine, lines, flags="p" if routine == "f_execute" else "-")
+
+    # -- a colon definition ------------------------------------------------------------------
+    def word(self, w):
+        self.lines = []
+        self.pending = []      # numbers and addresses not yet on the stack
+        self.bank = None       # the bank selected, if known
+        self.w = w
+        self.last_loc = None
+        ops = self.expand(w, set())
+        interrupt = w is self.c.interrupt
+        if interrupt:
+            self.lines.append("    CALL    f_isr_save")
+        for n, op in enumerate(ops):
+            self.loc(op)
+            # A call that is the last thing a word does is a jump.
+            last = n == len(ops) - 1 and not interrupt and w.name.upper() != "MAIN"
+            self.op(op, last)
+        self.flush()
+        if interrupt:
+            self.lines += ["    CALL    f_isr_restore", "    retfie"]
+            return self.finish("isr", self.lines, section=".isr", is_global=True, flags="i")
+        if w.name.upper() == "MAIN":
+            # Past the end of the program: stop.
+            self.lines += [".Lstop:", "    sleep", "    bra     .Lstop"]
+            prologue = ["    movlw   lo8(__stack_top)", "    movwf   FSR1L",
+                        "    movlw   hi8(__stack_top)", "    movwf   FSR1H", "    clrf    R12"]
+            return self.finish("main", prologue + self.lines, is_global=True)
+        if not self.ends_in_jump():
+            self.lines.append("    return")
+        if getattr(w, "export", False):
+            self.lines = [f"    .globl  {w.name}", f"{w.name}:"] + self.lines
+        self.finish(w.symbol, self.lines)
+
+    def ends_in_jump(self):
+        for line in reversed(self.lines):
+            if line.strip().startswith(";"):
+                continue
+            return bool(re.match(r"\s*(JUMP|BRANCH|return)\b", line))
+        return False
+
+    def expand(self, w, seen):
+        """The word's operations, with the INLINE words it uses put in."""
+        out = []
+        for op in w.ops:
+            if op[0] == "call" and op[1].inline and op[1] is not w:
+                if op[1] in seen:
+                    raise Error(f"{op[1].name} is INLINE and uses itself")
+                inner = self.expand(op[1], seen | {op[1]})
+                # Its labels must be its own at each place it is put.
+                renames = {}
+                for i in inner:
+                    if i[0] == "label":
+                        renames[i[1]] = self.c.label()
+                for i in inner:
+                    if i[0] in ("label", "jump", "zjump"):
+                        i = (i[0], renames.get(i[1], i[1])) + i[2:]
+                    elif i[0] == "loop":
+                        i = (i[0], i[1], renames.get(i[2], i[2])) + i[3:]
+                    out.append(i)
+            else:
+                out.append(op)
+        return out
+
+    def loc(self, op):
+        filename, line = op[-1], op[-2]
+        if filename.startswith("<") or (filename, line) == self.last_loc:
+            return
+        self.last_loc = (filename, line)
+        # The Forth line as a comment above what it became: a debugger
+        # then shows both (with -g the assembler records this file's lines).
+        text = self.c.source_text.get(filename, [])
+        source = text[line - 1].strip() if 0 < line <= len(text) else ""
+        self.lines.append(f"; {os.path.basename(filename)}:{line}: {source}")
+
+    # -- the pending literals ------------------------------------------------------------------
+    def load_tos(self, value):
+        if isinstance(value, Sym):
+            self.lines += [f"    movlw   lo8({value.expr()})", "    movwf   R0",
+                           f"    movlw   hi8({value.expr()})", "    movwf   R1"]
+            return
+        value &= 0xFFFF
+        for reg, byte in (("R0", value & 0xFF), ("R1", value >> 8)):
+            if byte == 0:
+                self.lines.append(f"    clrf    {reg}")
+            else:
+                self.lines += [f"    movlw   {byte}", f"    movwf   {reg}"]
+
+    def flush(self):
+        for value in self.pending:
+            self.call("f_dup")
+            self.load_tos(value)
+        self.pending = []
+
+    def call(self, routine):
+        self.lines.append(f"    CALL    {routine}")
+        self.bank = None
+
+    def take(self, count, ints=False):
+        """The last `count` pending literals, if there are that many (and,
+        with `ints`, if they are numbers)."""
+        if len(self.pending) < count:
+            return None
+        values = self.pending[-count:]
+        if ints and not all(isinstance(v, int) for v in values):
+            return None
+        del self.pending[-count:]
+        return values
+
+    def file(self, addr, plus=0):
+        """Select the bank of a byte and give its operand: (lines, operand)."""
+        lines = []
+        if isinstance(addr, Sym):
+            key = ("sym", addr.name)
+            if self.bank != key:
+                lines.append(f"    movlb   bank({addr.expr(plus)})")
+                self.bank = key
+            return lines, f"off({addr.expr(plus)})"
+        a = (addr + plus) & 0xFFFF
+        if a >= 0x2000:
+            raise Error("a fixed address above 0x1FFF is not a register; use @ and ! with it on the stack")
+        off = a & 0x7F
+        # Common RAM and the core registers are the same in every bank.
+        if off < 0x0C or off >= 0x70:
+            return lines, "0x%02X" % off
+        if self.bank != a >> 7:
+            lines.append(f"    movlb   {a >> 7}")
+            self.bank = a >> 7
+        return lines, "0x%02X" % off
+
+    def op(self, op, last):
+        kind = op[0]
+        L = self.lines
+        if kind == "lit":
+            return self.pending.append(op[1])
+        if kind == "xt":
+            self.flush()
+            self.call("f_dup")
+            L += [f"    movlw   pm_lo8({op[1].symbol})", "    movwf   R0",
+                  f"    movlw   pm_hi8({op[1].symbol})", "    movwf   R1"]
+            record = f"A {op[1].symbol}\\n"
+            if record not in self.frames:
+                self.frames.append(record)
+            return
+        if kind == "prim":
+            return self.prim(op[1], op[2], last)
+        if kind in ("1+", "1-", "2*", "2/"):
+            v = self.take(1, ints=True)
+            if v:
+                n = v[0]
+                return self.pending.append({"1+": n + 1, "1-": n - 1, "2*": n * 2, "2/": n >> 1}[kind])
+            self.flush()
+            L += {"1+": ["    incf    R0, F", "    btfsc   STATUS, 2", "    incf    R1, F"],
+                  "1-": ["    movlw   1", "    subwf   R0, F", "    movlw   0", "    subwfb  R1, F"],
+                  "2*": ["    lslf    R0, F", "    rlf     R1, F"],
+                  "2/": ["    asrf    R1, F", "    rrf     R0, F"]}[kind]
+            return
+        if kind in ("bit-set", "bit-clr", "bit-toggle", "bit?"):
+            v = self.take(2)
+            if not v or not isinstance(v[1], int) or not 0 <= v[1] <= 7:
+                raise Error(f"{kind.upper()} needs a register and a bit number (0-7) known when the program is compiled")
+            if kind == "bit?":
+                self.flush()
+                self.call("f_dup")
+            lines, operand = self.file(v[0])
+            L += lines
+            if kind == "bit-set":
+                L.append(f"    bsf     {operand}, {v[1]}")
+            elif kind == "bit-clr":
+                L.append(f"    bcf     {operand}, {v[1]}")
+            elif kind == "bit-toggle":
+                L += [f"    movlw   {1 << v[1]}", f"    xorwf   {operand}, F"]
+            else:
+                L += ["    clrf    R0", f"    btfsc   {operand}, {v[1]}", "    comf    R0, F",
+                      "    movf    R0, W", "    movwf   R1"]
+            return
+        if kind in ("ei", "di"):
+            L.append(f"    {'bsf' if kind == 'ei' else 'bcf'}     0x0B, 7")
+            return
+        if kind in ("sleep", "nop", "clrwdt"):
+            L.append(f"    {kind}")
+            return
+        self.flush()
+        if kind == "call":
+            target = op[1]
+            target.used = True
+            if last:
+                L.append(f"    JUMP    {target.symbol}")
+            else:
+                self.call(target.symbol)
+        elif kind == "exit":
+            if self.w is self.c.interrupt or self.w.name.upper() == "MAIN":
+                raise Error("EXIT cannot be used in MAIN or in the interrupt handler")
+            L.append("    return")
+        elif kind == "label":
+            L.append(f".L{self.w.symbol}_{op[1]}:")
+            self.bank = None
+        elif kind == "jump":
+            L.append(f"    BRANCH  .L{self.w.symbol}_{op[1]}")
+        elif kind == "zjump":
+            self.call("f_popflag")
+            L.append(f"    BRZ     .L{self.w.symbol}_{op[1]}")
+        elif kind == "loop":
+            self.call(op[1])
+            L.append(f"    BRNZ    .L{self.w.symbol}_{op[2]}")
+        elif kind in ("print", "string"):
+            n = len(self.c.strings)
+            self.c.strings.append(op[1])
+            if kind == "print":
+                L += [f"    movlw   lo8(forth_str_{n})", "    movwf   FSR0L",
+                      f"    movlw   hi8(forth_str_{n})", "    movwf   FSR0H"]
+                self.call("f_typez")
+            else:
+                self.call("f_dup")
+                self.load_tos(Sym(f"forth_str_{n}"))
+                self.call("f_dup")
+                self.load_tos(len(op[1].encode()))
+        elif kind == "serial":
+            # 8 data bits, no parity, one stop bit, 9600 baud.
+            divisor = (self.c.clock // 4 + 9600 // 2) // 9600 - 1
+            for name, value in (("SP1BRGL", divisor & 0xFF), ("SP1BRGH", divisor >> 8)):
+                lines, operand = self.file(self.gen_register(name))
+                L += lines + ([f"    clrf    {operand}"] if value == 0 else
+                              [f"    movlw   {value}", f"    movwf   {operand}"])
+            for reg, bit in (("BAUDCON", "BRG16"), ("TXSTA", "BRGH"), ("RCSTA", "SPEN"),
+                             ("TXSTA", "TXEN"), ("RCSTA", "CREN")):
+                lines, operand = self.file(self.gen_register(reg))
+                L += lines + [f"    bsf     {operand}, {self.field(bit)}"]
+        elif kind == "c":
+            self.c_call(*op[1:4])
+        else:
+            raise Error(f"internal: {kind}")
+
+    def gen_register(self, name):
+        return self.register(name)
+
+    def c_call(self, symbol, nargs, results):
+        L = self.lines
+        self.need_spsave = True
+        if nargs == 2:
+            L += ["    movf    R0, W", "    movwf   R2", "    movf    R1, W", "    movwf   R3"]
+            self.call("f_drop")
+        elif nargs == 0 and results:
+            self.call("f_dup")
+        # A C function may use FSR1 for its own purposes, and one with a
+        # stack frame takes its stack from the cell __sp: put the data
+        # stack's pointer there, so that C's frames go below this stack,
+        # and take it back from there afterwards (a C function leaves the
+        # cell as it found it).
+        L += ["    movlb   bank(__sp)", "    movf    FSR1L, W", "    movwf   off(__sp)",
+              "    movf    FSR1H, W", "    movwf   off(__sp+1)"]
+        self.call(symbol)
+        L += ["    movlb   bank(__sp)", "    movf    off(__sp), W", "    movwf   FSR1L",
+              "    movf    off(__sp+1), W", "    movwf   FSR1H"]
+        self.bank = None
+        if not results and nargs:
+            self.call("f_drop")
+
+    need_spsave = False
+
+    def prim(self, routine, name, last):
+        L = self.lines
+        # Two numbers: done now.
+        fold = {"f_add": lambda a, b: a + b, "f_sub": lambda a, b: a - b, "f_mul": lambda a, b: a * b,
+                "f_and": lambda a, b: a & b, "f_or": lambda a, b: a | b, "f_xor": lambda a, b: a ^ b,
+                "f_lshift": lambda a, b: a << b, "f_rshift": lambda a, b: (a & 0xFFFF) >> b}
+        if routine in fold and len(self.pending) >= 2:
+            a, b = self.pending[-2], self.pending[-1]
+            if isinstance(a, int) and isinstance(b, int):
+                del self.pending[-2:]
+                return self.pending.append(fold[routine](a, b))
+            if isinstance(a, Sym) and isinstance(b, int) and routine in ("f_add", "f_sub"):
+                del self.pending[-2:]
+                return self.pending.append(Sym(a.name, a.offset + (b if routine == "f_add" else -b)))
+        if routine in ("f_cfetch", "f_fetch") and self.pending and self.direct(self.pending[-1]):
+            addr = self.pending.pop()
+            self.flush()
+            self.call("f_dup")
+            lines, operand = self.file(addr)
+            L += lines + [f"    movf    {operand}, W", "    movwf   R0"]
+            if routine == "f_fetch":
+                lines, operand = self.file(addr, 1)
+                L += lines + [f"    movf    {operand}, W", "    movwf   R1"]
+            else:
+                L.append("    clrf    R1")
+            return
+        if routine in ("f_cstore", "f_store") and self.pending and self.direct(self.pending[-1]):
+            addr = self.pending.pop()
+            value = self.pending.pop() if self.pending and isinstance(self.pending[-1], int) else None
+            self.flush()
+            for plus in range(2 if routine == "f_store" else 1):
+                lines, operand = self.file(addr, plus)
+                L += lines
+                if value is None:
+                    L += [f"    movf    R{plus}, W", f"    movwf   {operand}"]
+                else:
+                    byte = (value >> (8 * plus)) & 0xFF
+                    L += [f"    clrf    {operand}"] if byte == 0 else [f"    movlw   {byte}", f"    movwf   {operand}"]
+            if value is None:
+                self.call("f_drop")
+            return
+        if routine == "f_plusstore" and self.pending and self.direct(self.pending[-1]):
+            addr = self.pending.pop()
+            value = self.pending.pop() if self.pending and isinstance(self.pending[-1], int) else None
+            self.flush()
+            for plus in range(2):
+                lines, operand = self.file(addr, plus)
+                L += lines
+                if value is None:
+                    L.append(f"    movf    R{plus}, W")
+                else:
+                    L.append(f"    movlw   {(value >> (8 * plus)) & 0xFF}")
+                L.append(f"    {'addwfc' if plus else 'addwf '}  {operand}, F")
+            if value is None:
+                self.call("f_drop")
+            return
+        if routine in ("f_add", "f_sub") and self.pending and isinstance(self.pending[-1], int):
+            n = self.pending.pop()
+            self.flush()
+            n = (n if routine == "f_add" else -n) & 0xFFFF
+            if n:
+                L += [f"    movlw   {n & 0xFF}", "    addwf   R0, F", f"    movlw   {n >> 8}", "    addwfc  R1, F"]
+            return
+        if routine in ("f_and", "f_or", "f_xor") and self.pending and isinstance(self.pending[-1], int):
+            n = self.pending.pop() & 0xFFFF
+            self.flush()
+            ins = {"f_and": "andwf ", "f_or": "iorwf ", "f_xor": "xorwf "}[routine]
+            for reg, byte in (("R0", n & 0xFF), ("R1", n >> 8)):
+                if routine == "f_and" and byte == 0:
+                    L.append(f"    clrf    {reg}")
+                elif not (byte == (0xFF if routine == "f_and" else 0)):
+                    L += [f"    movlw   {byte}", f"    {ins}  {reg}, F"]
+            return
+        if routine in ("f_lshift", "f_rshift") and self.pending and isinstance(self.pending[-1], int) \
+                and 0 <= self.pending[-1] <= 4:
+            n = self.pending.pop()
+            self.flush()
+            L += (["    lslf    R0, F", "    rlf     R1, F"] if routine == "f_lshift"
+                  else ["    lsrf    R1, F", "    rrf     R0, F"]) * n
+            return
+        if routine == "f_emit" and self.pending and isinstance(self.pending[-1], int):
+            c = self.pending.pop()
+            self.flush()
+            L.append(f"    movlw   {c & 0xFF}")
+            return self.call("f_emit_w")
+        if routine == "f_ms" and self.pending and isinstance(self.pending[-1], int):
+            # A constant delay: the count for the delay routine is worked
+            # out here. It takes ten cycles a turn.
+            ms = self.pending.pop()
+            self.flush()
+            cycles = ms * (self.c.clock // 4000)
+            loops = (cycles - 7) // 10 if cycles > 16 else 0
+            self.call("f_dup")
+            for i in range(4):
+                byte = (loops >> (8 * i)) & 0xFF
+                L += [f"    clrf    R{i}"] if byte == 0 else [f"    movlw   {byte}", f"    movwf   R{i}"]
+            return self.call("f_delay")
+        self.flush()
+        if last:
+            L.append(f"    JUMP    {routine}")
+        else:
+            self.call(routine)
+
+    @staticmethod
+    def direct(addr):
+        """An address an instruction can name: a register or a variable."""
+        return isinstance(addr, Sym) and not addr.name.startswith(("t_", "forth_str")) or \
+            (isinstance(addr, int) and 0 <= addr < 0x2000)
+
+    # -- the whole program ----------------------------------------------------------------------
+    def program(self):
+        c = self.c
+        main = c.words.get("MAIN")
+        if not main or main.kind != "colon":
+            raise Error("the program has no word MAIN")
+        main.used = True
+        # Words are compiled as they are found to be used, starting from
+        # MAIN and the interrupt handler.
+        done = set()
+        while True:
+            todo = [w for w in c.words.values() if w.kind == "colon" and w.used and w not in done
+                    and not (w.inline and not getattr(w, "address_taken", False))]
+            if not todo:
+                break
+            for w in todo:
+                done.add(w)
+                try:
+                    self.word(w)
+                except Error as e:
+                    raise Error(f"in {w.name}: {e}") from None
+        head = [
+            "; Made by pic16f1-forth. Do not edit.",
+            "#define R0 0x70", "#define R1 0x71", "#define R2 0x72", "#define R3 0x73",
+            "#define R4 0x74", "#define R5 0x75", "#define R6 0x76", "#define R7 0x77",
+            "#define R8 0x78", "#define R9 0x79", "#define R10 0x7A", "#define R11 0x7B",
+            "#define R12 0x7C", "#define TMP0 0x7E", "#define TMP1 0x7F",
+            "#define INDF0 0x00", "#define STATUS 0x03", "#define FSR0L 0x04", "#define FSR0H 0x05",
+            "#define FSR1L 0x06", "#define FSR1H 0x07", "#define PCLATH 0x0A",
+            f"#define FORTH_MS_LO {max((c.clock // 4000 - 7) // 10, 0) & 0xFF}",
+            f"#define FORTH_MS_HI {max((c.clock // 4000 - 7) // 10, 0) >> 8}",
+            "#ifdef ONE_PAGE", "#define PAGESEL(target)", "#else",
+            "#define PAGESEL(target) movlp page(target)", "#endif",
+        ]
+        tail = []
+        if self.need_lstack:
+            tail += ['    .section .bss.forth_lstack,"aw",@nobits', "forth_lstack:",
+                     f"    .space  {c.loop_stack}"]
+        tail += c.data
+        for n, s in enumerate(c.strings):
+            text = s.replace("\\", "\\\\").replace('"', '\\"')
+            tail += [f'    .section .rodata.forth_str_{n},"a",@progbits', f"forth_str_{n}:",
+                     f'    .asciz  "{text}"']
+        for n, record in enumerate(c.config):
+            tail += ['    .section .pic16f1.config,"a",@progbits', f'    .asciz  "{record}"']
+        # The startup code clears variables and copies tables only if asked.
+        if self.need_lstack or getattr(c, "need_bss", False):
+            tail.append("    .globl  __do_clear_bss")
+        if getattr(c, "need_data", False):
+            tail.append("    .globl  __do_copy_data")
+        # For the linker's count of hardware stack levels.
+        tail += ['    .section .pic16f1.frames,"",@progbits']
+        tail += [f'    .ascii  "{r}"' for r in self.frames]
+        return "\n".join(head + self.out + [""] + tail) + "\n"
+
+
+def find_include(device):
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    for c in (os.environ.get("PIC16F1_INCLUDE"), os.path.join(HERE, "..", "include", "pic16f1"),
+              os.path.join(HERE, "..", "include")):
+        if c and os.path.exists(os.path.join(c, device + ".h")):
+            return c
+    sys.exit(f"pic16f1-forth: no header for {device}")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    output, device, asm_only = None, "pic16f1937", False
+    sources, passed = [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-o":
+            output = args[i + 1]
+            i += 1
+        elif a == "-S":
+            asm_only = True
+        elif a.endswith((".fth", ".fs", ".4th", ".forth")):
+            sources.append(a)
+        else:
+            if a.startswith("-mcpu="):
+                device = a[len("-mcpu="):].lower()
+                if not device.startswith("pic"):
+                    device = "pic" + device
+            passed.append(a)
+        i += 1
+    if not sources:
+        sys.exit("pic16f1-forth: no Forth source (.fth)")
+    output = output or os.path.splitext(sources[0])[0] + (".S" if asm_only else ".hex")
+    asm = output if asm_only else os.path.splitext(output)[0] + ".S"
+    try:
+        compiler = Compiler(device, find_include(device))
+        for s in sources:
+            compiler.load(open(s).read(), s)
+        text = Generator(compiler).program()
+    except Error as e:
+        sys.exit(f"pic16f1-forth: {e}")
+    with open(asm, "w") as f:
+        f.write(text)
+    if asm_only:
+        return 0
+    return subprocess.run([sys.executable, os.path.join(HERE, "pic16f1-cc")] + passed
+                          + [asm, "-o", output]).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
