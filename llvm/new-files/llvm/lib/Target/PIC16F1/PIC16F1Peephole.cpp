@@ -1993,6 +1993,13 @@ bool PIC16F1WConventions::runOnModule(Module &M) {
   if (Functions.empty() ||
       Functions.front()->getTarget().getOptLevel() == CodeGenOptLevel::None)
     return false;
+  // Code that runs in an interrupt handler calls a function by another
+  // name, which the linker may make the function itself.
+  for (Function &F : M)
+    if (F.hasFnAttribute("pic16f1-isr-of"))
+      if (const Function *Of = M.getFunction(
+              F.getFnAttribute("pic16f1-isr-of").getValueAsString()))
+        Referenced.insert(Of);
   for (MachineFunction *MF : Functions)
     for (MachineBasicBlock &MBB : *MF)
       for (MachineInstr &MI : MBB) {

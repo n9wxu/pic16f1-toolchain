@@ -29,9 +29,9 @@
 // call in the program and uses F.sf where F cannot be re-entered.
 //
 // With -flto the whole program is one module and nearly every function
-// qualifies outright. This is the first stage of static frames: spill slots and saved
-// registers are still on the software stack, and the fixed variables of
-// different functions do not yet share memory.
+// qualifies outright. The linker then places the frames, letting those of
+// functions that are never active together share memory (lld's
+// Arch/PIC16F1.cpp).
 //
 //===----------------------------------------------------------------------===//
 

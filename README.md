@@ -10,7 +10,9 @@ testing without a real part's memory limits.
 
 ## Status
 
-Everything below runs on the simulator; hardware work has not started.
+The test suites run on the simulator. Programs have also been programmed
+into and debugged on a real PIC16LF1937, through a PICkit 2 running the
+probe firmware of a companion project and its OpenOCD.
 [docs/status.md](docs/status.md) tracks each exit criterion of the plan's
 gates G0 to G2.
 
@@ -19,7 +21,9 @@ gates G0 to G2.
 | 1 | Repository, CI, releases | done |
 | 2 | Test programs and XC8 reference binaries | done |
 | 3 | Simulator and benchmark runner | done |
-| 4 | LLVM backend, C working | done: 97% of the GCC C torture tests that fit the device pass, picolibc builds and its tests pass |
+| 4 | LLVM backend, C working | done: 98.7% of the GCC C torture tests that build pass, picolibc builds and its tests pass |
+| 5 | Optimization | every benchmark no larger and no slower than XC8 at each of its levels; in total 0.73 of XC8's size at `-Os` |
+| 6 | Debugging | LLDB with a PIC16F1 plugin, on the simulator and on the part; VS Code projects (`pic16f1-new-project`) |
 
 ## Layout
 
@@ -34,6 +38,7 @@ gates G0 to G2.
 | `tests/assembler/` | Instruction encodings checked against Microchip `pic-as`, and a round-trip test |
 | `tests/lit/` | Regression tests for the assembler, linker and code generator (LLVM lit) |
 | `tests/libc/` | A `printf` program using picolibc |
+| `tests/debug/`, `tests/float/`, `tests/overlay/`, `tests/stack/`, `tests/switch/`, `tests/wcall/`, `tests/xc8/`, `tests/vla/`, `tests/setjmp/`, `tests/frames/`, `tests/builtins/`, `tests/inject/` | One feature each, run by the `scripts/test-*.sh` of the same name |
 | `tests/devices/` | A program that must build and run on every device in the database |
 | `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
 | `tests/common/` | Harness shared by the programs (UART output, exit code) |
@@ -42,7 +47,9 @@ gates G0 to G2.
 | `tools/bench.py` | Runs binaries on the simulator and reports size and cycles |
 | `tools/memguard.py` | Runs a command and kills any process under it that passes a memory limit |
 | `llvm/` | LLVM, Clang and LLD changes: a patch plus the new files |
-| `toolchain/` | Compiler driver, runtime library, device headers, linker scripts |
+| `toolchain/` | Compiler driver, runtime library, device headers, linker scripts, register descriptions (SVD), debugger wrappers and the template for new projects |
+| `examples/debug/` | A program with a VS Code setup for debugging on the simulator |
+| `pcb/` | KiCad project of a simple programmer and debugger |
 | `scripts/` | Build helpers |
 
 ## Quick start
@@ -62,6 +69,14 @@ scripts/build-picolibc.sh # optional: the C library (printf, string.h, malloc)
 build/toolchain/bin/pic16f1-cc -mcpu=pic16f1937 -Os -I tests/common \
     -o hello.hex tests/programs/hello/main.c tests/common/bench.c
 build/toolchain/bin/pic16f1-sim run hello.hex
+```
+
+To start a program of your own, with a Makefile and a VS Code setup for
+building and for debugging on the simulator and on the part:
+
+```sh
+scripts/package-toolchain.sh          # everything into build/toolchain
+build/toolchain/bin/pic16f1-new-project --device pic16f1937 ~/projects/blink
 ```
 
 `scripts/build-llvm-tests.sh` builds every test program at each optimization

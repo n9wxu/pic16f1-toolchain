@@ -31,10 +31,12 @@ LLVM itself is not stored here. `llvm/LLVM_VERSION` pins a release;
   torture test SelectionDAG passes. See "Instruction selection" below.
 - **16-bit values are legal**, held in pairs of byte registers, as well as
   bytes. The plan has i8 as the only legal type.
-- **Most frames are on the software stack.** Static frames have been
-  started (see "Static frames"); the placement passes of stages C and D
-  have not. The optimizations that are in place are described under
-  "Optimization" below.
+- **Frames are static where they can be** (see "Static frames"): in a
+  whole-program build nearly every function that cannot be re-entered has
+  its variables at fixed addresses, shared with functions never active at
+  the same time. The rest use the software stack. The placement passes of
+  stages C and D are not written. The optimizations that are in place are
+  described under "Optimization" below.
 - **Test programs exit through `LATD` and `SLEEP`** rather than a
   simulator-only register, so the same binary runs on silicon.
 
@@ -865,7 +867,9 @@ session, so each session starts from a freshly programmed and reset part.
 The same LLDB debugs a real part through any gdb-remote server that keeps
 to the [debug interface](spec/debug-interface.md); the PICkit 2 probe
 firmware's OpenOCD target does, and has run this debugger against a
-PIC16LF1937. Build with `-mdebugger` as well as `-g`:
+PIC16LF1937 (its `pic16f1 load_debug` loads the ELF file: program,
+configuration words, user ID and EEPROM data). Build with `-mdebugger` as
+well as `-g`:
 
 ```sh
 pic16f1-cc -g -O1 -mdebugger -mcpu=pic16f1937 -o main.hex main.c
@@ -945,15 +949,14 @@ Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
 
 ## Test results
 
-All run on the simulator. (The debugger has also been run against a real
-PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
+All run on the simulator, except the one row that says otherwise.
 
 | Suite | Result |
 |---|---|
 | Assembler against Microchip `pic-as` (`scripts/test-assembler.sh`) | 57 of 57 instruction forms identical |
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
-| Regression tests (`tests/lit`) | 23 of 23 pass |
+| Regression tests (`tests/lit`) | 24 of 24 pass |
 | One program on all seven devices (`scripts/test-devices.sh`) | 14 of 14 builds pass |
 | GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,490 of the 1,511 that build pass (98.6%) |
 | GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,494 of 1,514 (98.7%) |
@@ -970,6 +973,8 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |
 | XC8 source forms (`scripts/test-xc8.sh`) | pass: configuration, user ID and EEPROM words at 4 settings; wrong settings refused |
 | Switches (`scripts/test-switch.sh`) | pass on 2 devices: 5 levels, both code models, both selectors, tables on and off |
+| Arguments and results in W (`scripts/test-wcall.sh`) | pass on 2 devices: 5 levels, both code models, both selectors, the choice on and off |
+| On a PIC16LF1937, through the PICkit 2 probe's OpenOCD, by a scripted LLDB session | program, configuration words, user ID and EEPROM load and read back; breakpoints by line and by function, five steps over (two of them over calls), a step out, the call stack and variables all as on the simulator; OpenOCD ends with the session |
 | Floating point (`scripts/test-float.sh`) | pass: bit for bit against a host's arithmetic (47 million checks by default, 282 million run), and on 2 devices at 3 levels |
 | Static frames that share memory (`scripts/test-overlay.sh`) | pass on 2 devices at 5 settings: no frame overwritten, 30 bytes where there were 44 |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
@@ -1112,18 +1117,18 @@ has most to find:
 
   | Level | Words, LLVM / XC8 | Closest program in size | Cycles (geometric mean) | Closest program in speed |
   |---|---|---|---|---|
-  | `-O0` | 5,304 / 8,542 (0.62) | `crc8tab` 0.84 | 0.36 | `timer_isr` 0.89 |
-  | `-O1` | 5,052 / 7,818 (0.65) | `crc8tab` 0.86 | 0.39 | `timer_isr` 0.89 |
-  | `-O2` | 5,039 / 7,697 (0.65) | `crc8tab` 0.87 | 0.40 | `timer_isr` 0.90 |
-  | `-O3` | 4,946 / 6,790 (0.73) | `strings` 0.99 (4 words) | 0.48 | `sieve` 0.98 |
-  | `-Os` | 4,837 / 6,601 (0.73) | `matrix` 0.98 (12 words) | 0.48 | `sieve` 0.97 |
+  | `-O0` | 5,270 / 8,542 (0.62) | `crc8tab` 0.84 | 0.36 | `timer_isr` 0.89 |
+  | `-O1` | 5,022 / 7,818 (0.64) | `strings` 0.86 | 0.39 | `timer_isr` 0.89 |
+  | `-O2` | 5,009 / 7,697 (0.65) | `crc8tab` 0.86 | 0.40 | `timer_isr` 0.90 |
+  | `-O3` | 4,916 / 6,790 (0.72) | `strings` 0.99 (5 words) | 0.48 | `sieve` 0.97 |
+  | `-Os` | 4,807 / 6,601 (0.73) | `matrix` 0.98 (14 words) | 0.48 | `sieve` 0.96 |
 
   That holds because of what `pic16f1-cc` makes of each level; see "What
   the levels mean". `-Oz` has no XC8 counterpart; against XC8 `-Os` it is
-  smaller in total (4,999 words) but two programs are larger (`crc8tab`
-  by 1 word, `matrix` by 19). `-munoptimized` is about 1.4 times XC8
-  `-O0` in size. These are whole-program builds, the default; compiled
-  file by file (`-fno-lto`) the `-Os` set is 4,962 words.
+  smaller in total (4,715 words) but one program is larger (`matrix`,
+  by 9 words). `-munoptimized` is about 1.6 times XC8 `-O0` in size.
+  These are whole-program builds, the default; compiled file by file
+  (`-fno-lto`) the `-Os` set is 4,952 words.
 - Outlining at `-Os` and the lower inlining threshold at every level trade hardware
   stack levels for space; see "Shared sequences" and "Inlining".
 - In a function with a stack frame, only one pointer at a time can be in
@@ -1131,10 +1136,10 @@ has most to find:
   each pointer to FSR0 in turn, and each call costs five instructions to
   get the stack pointer back. An array index that is not a loop
   counter is added to the array's address, 16 bits, for each access.
-  Static frames are a first stage: see what is not done yet under
-  "Static frames".
+  See what is not done yet under "Static frames".
 - The count of hardware stack levels cannot bound a recursive program, and
   takes a call through a pointer to reach every function whose address is
   taken. The simulator stops on an overflow.
-- On silicon only the debugger has been tried (by hand, on a
-  PIC16LF1937); the test suites run on the simulator.
+- On silicon, programs have been loaded and debugged on a PIC16LF1937
+  (see "Test results"); the test suites themselves run on the simulator,
+  and timing has not been compared with the part.
