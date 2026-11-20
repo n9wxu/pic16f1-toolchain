@@ -1019,9 +1019,13 @@ has most to find:
 
 - `printf` and the rest of the C library come from picolibc, built
   separately (`scripts/build-picolibc.sh`) and selected with
-  `pic16f1-cc --libc`. `printf` handles integers only by default, and a
-  program using it is about 3,600 words.
-  `malloc` works; the heap sits between the data and the stack.
+  `pic16f1-cc --libc`. `-mprintf=` chooses how much `printf` can do, and
+  what a program that uses it costs: `minimal` (no field widths, `long` or
+  floating point) about 2,600 words, `integer` (the default) 3,600, `float`
+  9,800, which is more than the 8K-word parts hold; `-mscanf=` likewise.
+  The library's float conversion is the smaller, inexact one (correct to
+  the digits a `float` has). `malloc` works; the heap sits between the data
+  and the stack.
 - Floating point is single precision (`double` is the same type), IEEE
   with subnormals, round to nearest. The arithmetic, comparisons and
   conversions to and from 32-bit integers are the runtime library's own

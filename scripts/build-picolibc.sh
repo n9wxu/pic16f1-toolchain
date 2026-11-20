@@ -62,7 +62,7 @@ CROSS
     "$root/build/venv/bin/meson" setup --cross-file "$cross" \
         -Dmultilib=false -Dtests=false -Dpicocrt=false -Dsemihost=false \
         -Dthread-local-storage=false -Dsingle-thread=true -Dformat-default=integer \
-        -Dio-long-long=false -Datomic-ungetc=false -Dspecsdir=none \
+        -Dio-long-long=false -Dio-float-exact=false -Datomic-ungetc=false -Dspecsdir=none \
         -Dnewlib-global-errno=true -Dposix-console=false -Dmb-capable=false \
         -Dwant-math-errno=false -Doptimization=s -Dprefix="$out" \
         "$bld" "$src" > "$bld.setup.log" 2>&1 || { tail -20 "$bld.setup.log"; exit 1; }

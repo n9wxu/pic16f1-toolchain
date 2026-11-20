@@ -30,7 +30,9 @@ does not have.)
 
 --libc compiles and links against picolibc (stdio, string, stdlib, math),
 if it has been built (scripts/build-picolibc.sh). The program must supply
-`stdout` for printf; see docs/toolchain.md.
+`stdout` for printf; see docs/toolchain.md. -mprintf=minimal, integer (the
+default) or float chooses how much printf can do (about 2,600, 3,600 and
+9,800 words of a program that uses it), and -mscanf= the same for scanf.
 
 The linker counts the levels of the hardware return stack that the deepest
 chain of calls takes, and warns if they are more than the part's 16.
@@ -135,6 +137,17 @@ def main():
         elif a == "-mmain-saves-registers":
             cflags += ["-mllvm", "-pic16f1-main-saves-registers"]
         elif a == "--libc":
+            use_libc = True
+        elif a.startswith(("-mprintf=", "-mscanf=")):
+            # picolibc has printf and scanf in several sizes; these names
+            # choose among them. (Each option brings its function into the
+            # program, so there is one for each.)
+            option, kind = a.split("=", 1)
+            kinds = {"minimal": "m", "integer": "i", "float": "d"}
+            if kind not in kinds:
+                sys.exit(f"pic16f1-cc: {option} must be minimal, integer or float")
+            f = "vfprintf" if option == "-mprintf" else "vfscanf"
+            ldflags += [f"--defsym={f}=__{kinds[kind]}_{f}"]
             use_libc = True
         elif a.startswith("-Wl,"):
             ldflags += a[4:].split(",")

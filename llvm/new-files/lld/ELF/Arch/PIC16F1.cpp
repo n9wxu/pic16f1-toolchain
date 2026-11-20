@@ -446,7 +446,9 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport) {
     d->size = version->size;
   };
   for (auto &[sym, node] : nodes) {
-    if (!node.staticVersion || !isa<Defined>(sym))
+    // (A name the command line or the script gives a value of its own,
+    // --defsym=F=G, is not this function any more.)
+    if (!node.staticVersion || !isa<Defined>(sym) || sym->scriptDefined)
       continue;
     if (const char *why = whyStack(sym, node)) {
       Log(ctx) << "stack frame for " << sym->getName() << ": " << why;

@@ -15,6 +15,20 @@ trap 'rm -rf "$tmp"' EXIT
 "$sim" run "$tmp/hello.hex" | cmp - "$root/tests/libc/hello/expected.txt"
 echo "printf program: output matches"
 
+# The kinds of printf the driver chooses among (-mprintf=): what each makes
+# of integers and of floating point.
+for kind in minimal integer float; do
+    case $kind in
+    minimal) want="n=42 big=123456789 x=%f e=%g" ;;
+    integer) want="n=42 big=123456789 x=*float* e=*float*" ;;
+    float) want="n=42 big=123456789 x=3.142 e=3141.59" ;;
+    esac
+    "$cc" -Os -w -mprintf=$kind -mcpu=pic16f18877 -o "$tmp/p.elf" "$root/tests/libc/printf/main.c"
+    got=$("$sim" run --device pic16f18877 "$tmp/p.elf")
+    [ "$got" = "$want" ] || { echo "FAIL -mprintf=$kind: '$got'"; exit 1; }
+    echo "-mprintf=$kind: $("$sim" size --device pic16f18877 "$tmp/p.elf") words, output as expected"
+done
+
 for dir in test/test-stdio test; do
     printf '%-16s' "$dir"
     PIC16F1_CC=$cc python3 "$root/tools/torture.py" "$root/build/picolibc/$dir" \

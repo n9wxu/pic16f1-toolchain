@@ -42,7 +42,13 @@ make list       # disassembly
 - `__delay_ms(n)` and `__delay_us(n)` need `_XTAL_FREQ` defined first.
 - An interrupt handler is `void __attribute__((interrupt)) isr(void)`.
 - `pic16f1-cc --libc` adds the C library (`printf`, `string.h`, `math.h`);
-  add `--libc` to `CFLAGS` in the Makefile.
+  add `--libc` to `CFLAGS` in the Makefile. `-mprintf=minimal` makes
+  `printf` smaller; `-mprintf=float` gives it floating point, at a size
+  that needs a part with more than 8K words.
+- If the probe is not found when debugging on the part, its firmware may
+  have gone back to the PICkit 2's bootloader (it does if nothing talks to
+  it within 20 seconds of power-up): `host/pk2boot.py run` in the probe's
+  repository restarts it.
 - The debugger stops at a position within a line (VS Code marks it in the
   line) because the compiler records columns. `CFLAGS = -gno-column-info`
   in the Makefile makes it go by lines only.
