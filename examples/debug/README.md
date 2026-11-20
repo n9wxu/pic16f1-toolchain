@@ -11,8 +11,7 @@ A small program and a VS Code setup for debugging it on the simulator.
 simulator's debug server; `.vscode/launch.json` attaches the toolchain's
 own LLDB to it and runs to `main`. The device, the optimization level and
 the toolchain's location are in `.vscode/settings.json`. For a project of
-your own, copy the `.vscode` folder and set `pic16f1.toolchain` to where
-this repository is.
+your own, `pic16f1-new-project` makes one with the same setup and more.
 
 ## From a terminal
 

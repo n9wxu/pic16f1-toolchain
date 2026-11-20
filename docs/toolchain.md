@@ -697,6 +697,52 @@ pointer's value needs `0x800000` added there. `scripts/test-debug.sh` runs
 a session on two devices at three levels and checks that `-g` leaves the
 code as it is.
 
+### What the debugger shows
+
+- **Registers** are named as in the data sheet: `PC`, `WREG`, `STATUS`,
+  `BSR`, `PCLATH`, `FSR0`, `FSR1` and their halves `FSR0L`..., `STKPTR`.
+  (`PC` is the address in bytes, twice the data sheet's word address,
+  because source lines and symbols go by it. Names are matched without
+  regard to case, and `w` still means `WREG`.) What the compiler uses as
+  its registers `r0`-`r13`, `tmp0` and `tmp1` is listed as what it is, the
+  common RAM at 0x70-0x7F, and the 16-bit pairs `rp0`-`rp6` after it.
+- **Peripheral registers** are described by an SVD file per device
+  (`toolchain/svd`, written by `tools/devdb/gen_svd.py` from the device
+  database, the registers grouped by name into ports, timers and so on).
+  A launch configuration's `svdPath` gives it to VS Code's Peripheral
+  Viewer extension (`mcu-debug.peripheral-viewer`), whose view is
+  XPeripherals. The addresses in it are the debugger's: data memory
+  address + `0x800000`. Reading a register through the debugger can have
+  the side effects reading it has for the program (`RCREG`, for one).
+- **Disassembly** and **memory** are VS Code's own views ("Open
+  Disassembly View" on a frame; the Memory View extension follows the
+  session when `memory-view.trackDebuggers` names `lldb-dap`).
+
+Views that other extensions add to the debug sidebar under similar names
+(PlatformIO's Peripherals, Registers, Memory and Disassembly, for
+instance) belong to those extensions' own debuggers and stay empty here.
+
+### A project of your own
+
+`scripts/package-toolchain.sh` assembles everything in one tree
+(`build/toolchain`, or the directory it is given): the compiler, linker,
+simulator, debugger, C library, device headers, linker scripts and
+register descriptions. `pic16f1-new-project` in its `bin` starts a project
+that uses it:
+
+```sh
+build/toolchain/bin/pic16f1-new-project --device pic16f1937 ~/projects/blink
+cd ~/projects/blink && make        # or open the folder in VS Code and press F5
+```
+
+The project has a small program for the F1 Evaluation Platform, a Makefile
+(`make`, `make debug`, `make size`, `make list`), and a VS Code setup: a
+build task, "Debug on the simulator" and "Debug on the part (PICkit 2
+probe)" configurations, and include paths for the editor. The second
+configuration builds with `-mdebugger`, has the probe's OpenOCD program
+the part and waits for that to finish; OpenOCD ends with the debug
+session, so each session starts from a freshly programmed and reset part.
+
 ### On the part itself
 
 The same LLDB debugs a real part through any gdb-remote server that keeps
@@ -735,6 +781,15 @@ instruction at its address. LLDB allows for both:
 `PIC16F1_SIM_SILICON=1 pic16f1-sim gdb ...` makes the simulator behave the
 same way, which is how the test script checks all this without a part.
 
+## Delays
+
+`<xc.h>` has XC8's `_delay(cycles)`, `__delay_ms(ms)` and `__delay_us(us)`;
+the last two need `_XTAL_FREQ`, the oscillator frequency in Hz, defined
+first. A delay is a call to a counting loop in the runtime library and
+takes at least the time asked for and at most a dozen instruction cycles
+more, at any optimization level (`scripts/test-delay.sh` measures it). The
+argument must be a constant.
+
 ## Assembly syntax
 
 Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
@@ -761,6 +816,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | `setjmp` and `longjmp` (`scripts/test-setjmp.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | Debugging with LLDB on the simulator (`scripts/test-debug.sh`) | pass on 2 devices at `-munoptimized`, `-O1`, `-Os` |
 | The same against the simulator behaving as the part's debug hardware (one breakpoint, stopping late) | pass at `-munoptimized` and `-O1` |
+| Delays (`scripts/test-delay.sh`) | pass on 2 devices at 3 levels: never short, at most 12 cycles long |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
@@ -875,7 +931,7 @@ has most to find:
 - `printf` and the rest of the C library come from picolibc, built
   separately (`scripts/build-picolibc.sh`) and selected with
   `pic16f1-cc --libc`. `printf` handles integers only by default, and a
-  program using it is about 3,600 words. `setjmp` is not implemented.
+  program using it is about 3,600 words.
   `malloc` works; the heap sits between the data and the stack.
 - Floating point works (single precision; `double` is the same type) and
   matches IEEE results bit for bit in the tests, but uses LLVM's generic
@@ -885,7 +941,6 @@ has most to find:
   says so.
 - No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
-- No debug information.
 - Against XC8 at the same level, every one of the fifteen benchmark
   programs is no larger and no slower, at each of XC8's five levels:
 
@@ -913,4 +968,5 @@ has most to find:
   Static frames are a first stage: see what is not done yet under
   "Static frames".
 - Hardware stack depth is not analysed; the simulator stops on overflow.
-- Not yet run on silicon.
+- On silicon only the debugger has been tried (by hand, on a
+  PIC16LF1937); the test suites run on the simulator.
