@@ -41,7 +41,7 @@ define void @isr_calls() "interrupt" {
 ; CHECK-NEXT: movf 0x7f, W
 ; CHECK-NEXT: movwi --FSR1
 ; CHECK:      movf __sp, W
-; CHECK:      movwf isr_calls.sp
+; CHECK:      movwf __sp_saved
 ; CHECK:      movf 0x06, W
 ; CHECK:      movwf __sp
 ; The call is to work$isr: the linker makes that work itself, or a copy of
@@ -49,7 +49,7 @@ define void @isr_calls() "interrupt" {
 ; CHECK:      call work$isr
 ; CHECK:      movf __sp, W
 ; CHECK-NEXT: movwf 0x06
-; CHECK:      movf isr_calls.sp, W
+; CHECK:      movf __sp_saved, W
 ; CHECK:      movwf __sp
 ; CHECK:      moviw FSR1++
 ; CHECK-NEXT: movwf 0x7f

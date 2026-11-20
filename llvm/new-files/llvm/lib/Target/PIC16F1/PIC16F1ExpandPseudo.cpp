@@ -26,6 +26,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PIC16F1.h"
+#include "PIC16F1MachineFunctionInfo.h"
 #include "PIC16F1InstrInfo.h"
 #include "PIC16F1Subtarget.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -1380,6 +1381,30 @@ bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
       }
       MI.eraseFromParent();
       Changed = true;
+    }
+  }
+  // For a debugger: a block that ends a function leaves the rule for the
+  // caller's stack level as it is after the frame is gone (see
+  // PIC16F1FrameLowering.cpp). The block that comes after it in the
+  // program is inside the frame again and says so.
+  const auto *Info = MF.getInfo<PIC16F1MachineFunctionInfo>();
+  if (Info->frameRule() >= 0) {
+    bool InFrame = false;
+    for (MachineBasicBlock &MBB : MF) {
+      if (&MBB != &MF.front() && !InFrame) {
+        BuildMI(MBB, MBB.begin(), DebugLoc(),
+                TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(Info->frameRule());
+        InFrame = true;
+      }
+      for (const MachineInstr &MI : MBB)
+        if (MI.isCFIInstruction()) {
+          int Index = MI.getOperand(0).getCFIIndex();
+          if (Index == Info->frameRule())
+            InFrame = true;
+          else if (Index == Info->commonRule())
+            InFrame = false;
+        }
     }
   }
   return Changed;

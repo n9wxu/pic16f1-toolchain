@@ -74,6 +74,35 @@ for device in pic16f1937 pic16f18877; do
     done
 done
 
+# Every instruction of a recursive function, prologue and epilogue too: the
+# callers' frames must be right after each step.
+for device in pic16f1937 pic16f18877; do
+    "$cc" -g -munoptimized -mcpu=$device -o "$tmp/g.hex" "$src"
+    python3 "$root/tests/debug/stepcheck.py" "$lldb" "$sim" "$tmp/g.elf" $device 250 > "$tmp/out" 2>&1 ||
+        { echo "FAIL $device: frames while stepping by instruction"; cat "$tmp/out"; exit 1; }
+    echo "pass  $device, stepping by instruction ($(cat "$tmp/out"))"
+done
+
+# The call stack from inside an interrupt handler that makes a call, down
+# through the recursion it interrupted, with that recursion's variables.
+for level in -munoptimized -O1; do
+    label="pic16f1937 $level, interrupt"
+    "$cc" -g $level -mcpu=pic16f1937 -o "$tmp/i.hex" "$root/tests/debug/isr.c"
+    session pic16f1937 "$tmp/i.elf" \
+        -o "breakpoint set --name tick" -o "continue" -o "bt" \
+        -o "frame select 3" -o "frame variable here" \
+        -o "frame select 6" -o "frame variable here" \
+        -o "breakpoint delete 1" -o "continue"
+    expect "the handler" "i.elf\`isr at isr.c"
+    expect "the interrupted function" "frame #2: "
+    expect "the bottom of the stack" "frame #7: "
+    grep -q "frame #7: .*i.elf\`main" "$tmp/out" || { echo "FAIL $label: main is not frame 7"; cat "$tmp/out"; exit 1; }
+    expect "a variable of an interrupted caller" "(volatile unsigned char) here = '\\x01'"
+    expect "a variable further out" "(volatile unsigned char) here = '\\x04'"
+    expect "exit code" "exited with status = 26"
+    echo "pass  $label"
+done
+
 export PIC16F1_SIM_SILICON=1
 device=pic16f1937
 label="$device as silicon, -munoptimized"

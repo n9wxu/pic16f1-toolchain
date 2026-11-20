@@ -101,6 +101,16 @@ inline void cell(SmallVectorImpl<char> &E) {
   op(E, 2);
 }
 
+/// Push what an interrupt handler that makes calls has kept of the cell:
+/// the two bytes after it.
+inline void savedCell(SmallVectorImpl<char> &E) {
+  op(E, dwarf::DW_OP_lit0);
+  op(E, dwarf::DW_OP_plus_uconst);
+  uleb(E, Cell + 2);
+  op(E, dwarf::DW_OP_deref_size);
+  op(E, 2);
+}
+
 /// Push the stack level of the frame: the cell in the innermost frame,
 /// the unwound FSR1 in a caller's.
 inline void stackLevel(SmallVectorImpl<char> &E) {

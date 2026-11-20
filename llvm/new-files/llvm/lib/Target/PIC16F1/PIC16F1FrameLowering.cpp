@@ -102,7 +102,9 @@ bool llvm::pic16f1HasFrameBase(const MachineFunction &MF) {
 static const GlobalVariable *savedStackPointer(MachineFunction &MF) {
   const Function &F = MF.getFunction();
   Module &M = const_cast<Module &>(*F.getParent());
-  std::string Name = (F.getName() + ".sp").str();
+  // (One handler to a program, and one place for this: the linker scripts
+  // put it straight after the cell, where a debugger looks for it.)
+  std::string Name = "__sp_saved";
   if (GlobalVariable *GV = M.getNamedGlobal(Name))
     return GV;
   Type *Ty = ArrayType::get(Type::getInt8Ty(M.getContext()), 2);
@@ -110,7 +112,7 @@ static const GlobalVariable *savedStackPointer(MachineFunction &MF) {
                                 GlobalValue::InternalLinkage,
                                 Constant::getNullValue(Ty), Name);
   GV->setAlignment(Align(1));
-  GV->setSection((".noinit." + Name));
+  GV->setSection(".noinit.__sp_saved");
   return GV;
 }
 
@@ -155,38 +157,80 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
           .addImm(TII.fileAddr(B ? PIC16F1::R13 : PIC16F1::R12));
     }
   }
-  // For a debugger: where the caller's stack level is, now that the frame
-  // is set up (see MCTargetDesc/PIC16F1Dwarf.h).
-  if (MF.needsFrameMoves() && !IsInterrupt) {
-    SmallString<48> Level, Rule;
-    if (HasBase) {
-      PIC16F1Dwarf::op(Level, dwarf::DW_OP_breg0 + PIC16F1Dwarf::RP6);
-      PIC16F1Dwarf::op(Level, 0);
-    } else if (MFI.hasCalls()) {
-      PIC16F1Dwarf::stackLevel(Level);
-    }
-    if (Level.empty()) {
-      // No calls: the cell is still the caller's.
-      PIC16F1Dwarf::cell(Level);
-    } else {
-      PIC16F1Dwarf::op(Level, dwarf::DW_OP_plus_uconst);
-      PIC16F1Dwarf::uleb(Level, MFI.getStackSize());
-    }
+  // For a debugger: the caller's stack level (see
+  // MCTargetDesc/PIC16F1Dwarf.h). Until here the rule that holds for every
+  // function is right: the cell is still the caller's level. While the
+  // cell is being written, two bytes in four instructions, it is neither
+  // level, and the rule goes by FSR1 itself, which the innermost frame can;
+  // from then on by the cell, or by RP6 where that is the frame's base.
+  // The epilogue goes back to FSR1 once that is the caller's level again.
+  const bool Describe = MF.needsFrameMoves() && !IsInterrupt;
+  // An interrupt handler that makes calls gives them its own stack and
+  // keeps the interrupted code's level beside the cell meanwhile.
+  if (MF.needsFrameMoves() && IsInterrupt && MFI.hasCalls()) {
+    SmallString<48> Saved, Rule, Level, Common;
+    PIC16F1Dwarf::savedCell(Saved);
+    PIC16F1Dwarf::valExpression(Rule, PIC16F1Dwarf::FSR1, Saved);
+    PIC16F1Dwarf::stackLevel(Level);
+    PIC16F1Dwarf::valExpression(Common, PIC16F1Dwarf::FSR1, Level);
+    MF.getInfo<PIC16F1MachineFunctionInfo>()->setFrameRules(
+        MF.addFrameInst(MCCFIInstruction::createEscape(nullptr, Rule.str())),
+        MF.addFrameInst(MCCFIInstruction::createEscape(nullptr, Common.str())));
+  }
+  auto rule = [&](const SmallVectorImpl<char> &Level) {
+    SmallString<48> Rule;
     PIC16F1Dwarf::valExpression(Rule, PIC16F1Dwarf::FSR1, Level);
-    unsigned Index = MF.addFrameInst(
-        MCCFIInstruction::createEscape(nullptr, Rule.str()));
+    return MF.addFrameInst(MCCFIInstruction::createEscape(nullptr, Rule.str()));
+  };
+  auto byRegister = [&](unsigned Reg, uint64_t Plus) {
+    SmallString<16> Level;
+    PIC16F1Dwarf::op(Level, dwarf::DW_OP_breg0 + Reg);
+    PIC16F1Dwarf::op(Level, 0);
+    if (Plus) {
+      PIC16F1Dwarf::op(Level, dwarf::DW_OP_plus_uconst);
+      PIC16F1Dwarf::uleb(Level, Plus);
+    }
+    return rule(Level);
+  };
+  auto say = [&](unsigned Index) {
     BuildMI(MBB, I, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(Index)
         .setMIFlag(MachineInstr::FrameSetup);
-  }
+  };
+  const bool StoresCell = MFI.hasCalls() || HasBase;
+  if (Describe && StoresCell)
+    say(HasBase ? byRegister(PIC16F1Dwarf::RP6, MFI.getStackSize())
+                : byRegister(PIC16F1Dwarf::FSR1, MFI.getStackSize()));
   // What this function calls starts below its frame.
-  if (MFI.hasCalls() || HasBase) {
-    if (IsInterrupt)
+  if (StoresCell) {
+    if (IsInterrupt) {
       BuildMI(MBB, I, DL, TII.get(PIC16F1::SPSWITCH))
           .addGlobalAddress(savedStackPointer(MF));
-    else
+      int Saved = MF.getInfo<PIC16F1MachineFunctionInfo>()->frameRule();
+      if (Saved >= 0)
+        BuildMI(MBB, I, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(Saved)
+            .setMIFlag(MachineInstr::FrameSetup);
+    } else
       BuildMI(MBB, I, DL, TII.get(PIC16F1::SPSTORE));
   }
+  if (Describe && StoresCell) {
+    unsigned Frame;
+    if (HasBase) {
+      Frame = byRegister(PIC16F1Dwarf::RP6, MFI.getStackSize());
+    } else {
+      SmallString<48> Level;
+      PIC16F1Dwarf::stackLevel(Level);
+      PIC16F1Dwarf::op(Level, dwarf::DW_OP_plus_uconst);
+      PIC16F1Dwarf::uleb(Level, MFI.getStackSize());
+      Frame = rule(Level);
+    }
+    say(Frame);
+    MF.getInfo<PIC16F1MachineFunctionInfo>()->setFrameRules(
+        Frame, byRegister(PIC16F1Dwarf::FSR1, 0));
+  }
+  // (A function with a stack frame and no calls leaves the cell alone, and
+  // the rule for every function stays right.)
 }
 
 void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
@@ -205,9 +249,16 @@ void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
          std::prev(I)->getFlag(MachineInstr::FrameDestroy))
     --I;
   if (IsInterrupt) {
-    if (MFI.hasCalls())
+    if (MFI.hasCalls()) {
       BuildMI(MBB, I, DL, TII.get(PIC16F1::SPBACK))
           .addGlobalAddress(savedStackPointer(MF));
+      // For a debugger: the cell is the interrupted code's level again.
+      int Common = MF.getInfo<PIC16F1MachineFunctionInfo>()->commonRule();
+      if (Common >= 0)
+        BuildMI(MBB, I, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(Common)
+            .setMIFlag(MachineInstr::FrameDestroy);
+    }
     // RETFIE restores FSR1, so a handler that pops nothing has nothing
     // more to undo.
     if (MFI.getCalleeSavedInfo().empty())
@@ -216,8 +267,17 @@ void PIC16F1FrameLowering::emitEpilogue(MachineFunction &MF,
   adjustSP(MBB, I, DL, MFI.getStackSize() - MFI.getCalleeSavedInfo().size());
   // After the pops FSR1 is what it was on entry: back in the cell with it.
   // That also gives back every variable-sized object.
-  if ((MFI.hasCalls() || pic16f1HasFrameBase(MF)) && !IsInterrupt)
+  if ((MFI.hasCalls() || pic16f1HasFrameBase(MF)) && !IsInterrupt) {
+    // For a debugger: FSR1 is the caller's level from here to the return.
+    // (The blocks that follow this one get the frame's rule back:
+    // PIC16F1ExpandPseudo.)
+    int Leaving = MF.getInfo<PIC16F1MachineFunctionInfo>()->commonRule();
+    if (Leaving >= 0)
+      BuildMI(MBB, Term, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(Leaving)
+          .setMIFlag(MachineInstr::FrameDestroy);
     BuildMI(MBB, Term, DL, TII.get(PIC16F1::SPSTORE));
+  }
 }
 
 MachineBasicBlock::iterator PIC16F1FrameLowering::eliminateCallFramePseudoInstr(

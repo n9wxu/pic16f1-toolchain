@@ -58,6 +58,9 @@ SECTIONS
     /* The stack pointer cell comes first of all, at a fixed address:
      * debug information that cannot hold a relocation names it. */
     *(.noinit.__sp)
+    /* Where an interrupt handler that makes calls keeps the cell's value
+     * meanwhile: also at a fixed address, for the same reason. */
+    *(.noinit.__sp_saved)
     *libpicrt*.a:*(.noinit .noinit.*)
     *(.noinit .noinit.*)
   } > ram

@@ -742,7 +742,8 @@ same.
 
 Limits: a variable the optimizer keeps in a register is shown only where
 the debug information can say where it is ("not available" elsewhere);
-inside a prologue or epilogue a stack frame's variables are not yet right;
+a variable in one of the registers a call preserves can show a later
+function's value in a caller's frame;
 `memory read` takes addresses in the debugger's address space, so a C
 pointer's value needs `0x800000` added there. `scripts/test-debug.sh` runs
 a session on two devices at three levels and checks that `-g` leaves the
@@ -898,6 +899,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | `setjmp` and `longjmp` (`scripts/test-setjmp.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | Debugging with LLDB on the simulator (`scripts/test-debug.sh`) | pass on 2 devices at `-munoptimized`, `-O1`, `-Os` |
+| Callers' frames after every instruction of a recursive function, and the call stack through an interrupt handler | pass on 2 devices; 248 steps, none wrong |
 | The same against the simulator behaving as the part's debug hardware (one breakpoint, stopping late) | pass at `-munoptimized` and `-O1` |
 | Delays (`scripts/test-delay.sh`) | pass on 2 devices at 3 levels: never short, at most 12 cycles long |
 | Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |

@@ -169,9 +169,22 @@ The cell is the first two bytes of RAM, `0x802000` (the linker scripts
 place it there), so that these rules, which cannot hold a relocation, can
 name it.
 
-**Open:** inside a function's prologue and epilogue the frame base is not
-yet what the description says, and a function called from an interrupt
-handler is not unwound through the handler's own stack.
+Inside a prologue and an epilogue the rules follow the frame as it is made
+and undone: the common rule until the cell is written, a rule that goes by
+FSR1 itself while it is (two bytes in four instructions; only the innermost
+frame can be there), and in the epilogue FSR1 again once it is the caller's
+level. Only a function's own variables are not to be had while its frame
+is half made.
 
-**Open:** `rp6` in a caller's frame is taken to be what it is now, which is
-wrong while a function further down has saved it and is using it.
+An interrupt handler that makes calls gives them a stack of its own and
+keeps the interrupted code's level in the two bytes after the cell
+(`0x802002`, also fixed by the linker scripts) meanwhile; its rule says so,
+and the call stack reads through the handler into what it interrupted. A
+handler that makes no calls leaves the cell alone. (What a function without
+calls was doing with FSR1 when it was interrupted is not described: its
+stack-frame variables are wrong in that one frame.)
+
+**Open:** the registers a call preserves (`r8`-`r13`, and `rp6`, the frame
+base of a function with variable-length arrays) are taken in a caller's
+frame to be what they are now. That is wrong while a function further down
+has saved one and is using it; where it saved it is not described.

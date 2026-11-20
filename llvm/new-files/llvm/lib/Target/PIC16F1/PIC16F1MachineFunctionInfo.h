@@ -42,7 +42,20 @@ class PIC16F1MachineFunctionInfo : public MachineFunctionInfo {
   /// PIC16F1StaticFrames.cpp): the variable each is in, and where.
   DenseMap<int, std::pair<const GlobalVariable *, int64_t>> StaticObjects;
 
+  /// For a debugger, two of the rules for the caller's stack level in a
+  /// function with a stack frame (PIC16F1FrameLowering.cpp): the one that
+  /// holds while the frame stands and the one from the epilogue on, as
+  /// indices of the function's frame instructions; -1 if not made.
+  int FrameRule = -1, CommonRule = -1;
+
 public:
+  int frameRule() const { return FrameRule; }
+  int commonRule() const { return CommonRule; }
+  void setFrameRules(int Frame, int Common) {
+    FrameRule = Frame;
+    CommonRule = Common;
+  }
+
   PIC16F1MachineFunctionInfo() = default;
   PIC16F1MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {
   }
