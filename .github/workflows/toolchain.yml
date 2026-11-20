@@ -170,7 +170,7 @@ jobs:
       run:
         shell: bash
     env:
-      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Keep line endings as they are in the repository
         run: git config --global core.autocrlf false
@@ -185,15 +185,12 @@ jobs:
         run: mv /usr/bin/link.exe /usr/bin/link-coreutils.exe
 
       - name: Install build tools
-        run: choco install ninja ccache -y --no-progress
+        run: choco install ninja -y --no-progress
 
+      # (sccache, not ccache as on Linux: ccache from Chocolatey reported
+      # compilations done that left no object file.)
       - name: Compiler cache
-        uses: actions/cache@v4
-        with:
-          path: .ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Build simulator
         env:
@@ -226,16 +223,15 @@ jobs:
         run: |
           here=$(cygpath -m "$PWD")
           xml=$(ls build/libxml2/lib/*.lib | head -1)
-          ccache --max-size=3G
           export HOST_ONLY=1
           # The C run-time library is linked in (MultiThreaded), so that
           # the programs need no Visual C++ redistributable.
           export CMAKE_EXTRA="-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
             -DLIBXML2_INCLUDE_DIR=$here/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$here/$xml"
           scripts/build-llvm.sh
-          ccache --show-stats
+          sccache --show-stats
 
       # The programs only; the next job puts them with the Linux job's
       # files for the PIC16F1. (Apart, so that this long build does not

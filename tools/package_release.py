@@ -168,6 +168,20 @@ def main():
                       "lib/itcl4.2.4", "lib/thread2.8.9", "lib/tcl8", "Lib/test", "Lib/idlelib", "Lib/tkinter",
                       "Lib/ensurepip", "Lib/site-packages", "tcl", "Scripts", "libs"):
             shutil.rmtree(os.path.join(libexec, "python", extra), ignore_errors=True)
+        home = os.path.join(libexec, "python")
+        for folder, dirs, files in os.walk(home):
+            for d in [d for d in dirs if re.match(r"(tcl|tk|itcl|thread)\d", d)]:
+                shutil.rmtree(os.path.join(folder, d), ignore_errors=True)
+                dirs.remove(d)
+            for f in files:
+                if re.search(r"(^lib(tcl|tk)|_tkinter|^tcl\d|^tk\d)", f):
+                    os.unlink(os.path.join(folder, f))
+        if not windows:
+            # One python3, not the same program under three names, and
+            # none of the commands that come with it.
+            for f in os.listdir(os.path.join(home, "bin")):
+                if f != "python3":
+                    os.unlink(os.path.join(home, "bin", f))
 
     with open(os.path.join(tree, "VERSION"), "w") as f:
         f.write(f"{o.version} {o.platform}\n")
