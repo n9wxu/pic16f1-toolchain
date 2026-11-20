@@ -665,6 +665,7 @@ PIC16F1InstrInfo::getOutliningTypeImpl(const MachineModuleInfo &MMI,
   // A return from an interrupt would not be reached by a jump from a
   // sequence that began as ordinary code, but nothing forbids sharing it.
   case PIC16F1::RETURN:
+  case PIC16F1::RETLW:
   case PIC16F1::RETFIE:
     return outliner::InstrType::Legal;
   // Depends on where it is.

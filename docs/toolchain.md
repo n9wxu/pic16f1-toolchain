@@ -501,6 +501,58 @@ code 11% smaller at `-O1` and 19% at `-Os`, and faster by 4% and 18%
 (`scripts/test-switch.sh` runs it in both code models, through both
 instruction selectors, and with tables off).
 
+### Arguments and results in W
+
+The calling convention passes every byte in a byte register, and a value
+gets there through W: `movlw 62` / `movwf R0` / `call put`. Hand-written
+code would often leave it in W. Whether that is better depends on the
+function (does it use the argument at once, does it return constants?) and
+on its callers (do they have the value in W, or already in `R0` from the
+call before?), so the code generator decides function by function, by
+trying. For each function that only direct calls in the program reach, it
+tries
+
+- the byte result in W,
+- each byte argument in W, one at a time, and
+- the first argument in W together with the results of the functions whose
+  result is passed straight on as that argument (`put(hex(c))` costs
+  nothing in `R0` and nothing in W, but a word if `hex` returns one way and
+  `put` takes the other),
+
+rewrites the function and every caller, cleans them up again, and keeps the
+change only if those functions together are no larger, no slower (counting
+instructions by the depth of the loops they are in), and better in one of
+the two. A constant result then returns with `RETLW`, a result that is
+tested at once is tested in W, and a constant argument is one instruction.
+
+Everything that code outside the compilation can see keeps the documented
+convention: functions with external linkage in a build without `-flto`,
+functions whose address is taken, interrupt handlers, the runtime library.
+With the default whole-program build that leaves nearly every function of
+the program free to vary.
+
+| | Words, off | Words, on |
+|---|---|---|
+| `tests/wcall/wcall.c`, `-O1` | 339 | 321 |
+| `tests/wcall/wcall.c`, `-Os` | 304 | 290 |
+| The 15 benchmarks, `-O1` | 5,052 | 5,022 |
+| The 15 benchmarks, `-Os` | 4,837 | 4,807 |
+
+The benchmarks gain little because most of their calls are inlined; a
+program made of small functions that hand bytes to each other gains more.
+No benchmark got larger or slower.
+
+`-Wl,-mllvm,-pic16f1-w-report` (with `-fno-lto`: `-mllvm
+-pic16f1-w-report`) lists the functions that were changed and the words
+saved; `-pic16f1-w-conventions=0` in the same two places turns the choice
+off. `scripts/test-wcall.sh` checks the results both ways, in both code
+models and through both instruction selectors.
+
+In a debugger, a parameter or variable whose value now lives only in W is
+shown as unavailable until it is stored (it was never in its register).
+This is at the optimized levels only: `-munoptimized` builds use the
+documented convention throughout.
+
 ### Inlining
 
 LLVM's inliner assumes that a call costs several instructions and that a
@@ -595,6 +647,7 @@ in. Use it around anything that runs a freshly changed compiler many times.
 | Preserved | `R8`-`R13`. Neither FSR is |
 | Variadic functions | All arguments on the stack |
 | Structs | Passed as a pointer to a copy made by the caller |
+| Functions only the program calls | May take one byte argument, and return a byte result, in W: see "Arguments and results in W" |
 | Data stack | Only for functions with stack frames. Grows down; the pointer is in the cell `__sp` between functions and in FSR1 inside one, pointing at the lowest byte in use. At a call with stack arguments FSR1 points at them as well |
 | Return addresses | Hardware stack (16 levels); the linker counts the levels the program needs (see "The hardware stack"). A call that is the last thing a function does is a jump and uses no level; an outlined sequence uses one while it runs |
 | `PCLATH` | Not preserved. Every `CALL` and `GOTO` is preceded by `MOVLP` |

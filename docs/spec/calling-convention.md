@@ -72,6 +72,27 @@ the callee does not remove it.
 | 64 bits | `RP0`-`RP3`, low part first |
 | struct, union | Written through a pointer the caller passes as a hidden first argument |
 
+## Functions only the program itself calls
+
+The rules above are what any code outside a compilation can rely on:
+another object file, hand-written assembly, the runtime library, a call
+through a pointer. A function that none of those can reach (every call of it
+is a direct call the compiler can see, which with whole-program compilation
+is nearly every function) may be compiled with a variation, chosen for that
+function alone and applied to it and to all of its callers together:
+
+| Variation | Instead of |
+|---|---|
+| The 8-bit result in `W` | `R0` |
+| One 8-bit argument in `W` | Its byte register |
+| Only the registers the function really changes are lost across a call of it | All of `R0`-`R7` and both FSRs |
+
+A variation is used only where it makes the function and its callers
+together smaller or faster and neither worse; see "Arguments and results in
+W" in docs/toolchain.md. Nothing else about the function changes: its other
+arguments, wider results, the stack and the preserved registers are as
+above.
+
 ## Runtime library
 
 The compiler calls these with the convention above: `__mulqi3`, `__mulhi3`,

@@ -26,6 +26,11 @@
 //  * It reads a byte of the stack frame again instead of a register it was
 //    copied to, when that leaves the register unused.
 //
+// A second pass in this file, over the whole module, then chooses for each
+// function that only this module calls whether a byte argument and a byte
+// result travel in W instead of a byte register; see PIC16F1WConventions
+// at the end.
+//
 // Only W, the Z and C flags, the sixteen bytes of common RAM and the two
 // bytes of FSR0 are modelled; "byte register" below means one of those
 // eighteen. Any other file register is memory, possibly a device register:
@@ -42,7 +47,12 @@
 #include "PIC16F1Subtarget.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineLoopInfo.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/IR/Module.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/CommandLine.h"
 #include <climits>
@@ -152,6 +162,23 @@ uint32_t clobberedFiles(const MachineInstr &MI, const MachineOperand &Mask) {
   for (MCPhysReg Reg : {PIC16F1::TMP0, PIC16F1::TMP1})
     Bits |= registerFiles(MI, Reg);
   return Bits;
+}
+
+/// The function a call or a jump out of the function goes to, if known.
+const Function *calleeOf(const MachineInstr &MI) {
+  if (MI.getNumOperands() == 0 || !MI.getOperand(0).isGlobal())
+    return nullptr;
+  return dyn_cast<Function>(MI.getOperand(0).getGlobal());
+}
+
+/// The position of the byte register whose argument \p F takes in W
+/// instead ("pic16f1-w-arg", set by PIC16F1WConventions), or -1.
+int wArgOf(const Function *F) {
+  unsigned N = 0;
+  if (!F || !F->hasFnAttribute("pic16f1-w-arg") ||
+      F->getFnAttribute("pic16f1-w-arg").getValueAsString().getAsInteger(10, N))
+    return -1;
+  return N;
 }
 
 Effect effectOf(const MachineInstr &MI) {
@@ -366,6 +393,8 @@ Effect effectOf(const MachineInstr &MI) {
         MF.getSubtarget().getRegisterInfo()->getCalleeSavedRegs(&MF);
     for (; Saved && *Saved; ++Saved)
       E.Reads |= registerFiles(MI, *Saved);
+    if (int N = wArgOf(calleeOf(MI)); N >= 0)
+      E.Reads = (E.Reads & ~(1u << N)) | WBit;
     return E;
   }
   case NOP:
@@ -374,9 +403,10 @@ Effect effectOf(const MachineInstr &MI) {
     E.Memory = true;
     return E;
   case CALL: {
-    // Arguments are in byte registers, never in W; the instruction lists
-    // them. W, the flags and the registers the callee need not keep do
-    // not survive the call.
+    // Arguments are in byte registers, which the instruction lists; a
+    // function may have been given one of them in W instead. W, the flags
+    // and the registers the callee need not keep do not survive the call
+    // (a result in W is in W afterwards, which is a write here).
     E.Memory = true;
     E.Writes = WBit | ZBit | CBit;
     const MachineOperand *Mask = nullptr;
@@ -391,8 +421,11 @@ Effect effectOf(const MachineInstr &MI) {
       return E;
     }
     E.Writes |= clobberedFiles(MI, *Mask);
+    if (int N = wArgOf(calleeOf(MI)); N >= 0)
+      E.Reads = (E.Reads & ~(1u << N)) | WBit;
     return E;
   }
+  case RETLW:
   case RETURN: {
     // The result, which the instruction lists, and the registers the
     // caller expects back unchanged.
@@ -405,6 +438,13 @@ Effect effectOf(const MachineInstr &MI) {
         MF.getSubtarget().getRegisterInfo()->getCalleeSavedRegs(&MF);
     for (; Saved && *Saved; ++Saved)
       E.Reads |= registerFiles(MI, *Saved);
+    // A byte result this function returns in W, not in R0. (RETLW loads
+    // it itself.)
+    if (MF.getFunction().hasFnAttribute("pic16f1-w-ret")) {
+      E.Reads &= ~1u;
+      if (Opc == RETURN)
+        E.Reads |= WBit;
+    }
     return E;
   }
   case RETFIE:
@@ -435,6 +475,9 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override;
   StringRef getPassName() const override { return "PIC16F1 peephole"; }
+  /// The work itself, also for PIC16F1WConventions.
+  bool run(MachineFunction &MF);
+  static bool isConditional(const MachineInstr &MI);
 
 private:
   /// For each block, the state that is read after its last instruction.
@@ -443,8 +486,6 @@ private:
   DenseMap<const MachineInstr *, uint32_t> LiveAfter;
 
   static bool isReal(const MachineInstr &MI) { return !MI.isMetaInstruction(); }
-  /// True if the instruction before \p MI is a skip, so \p MI may not run.
-  static bool isConditional(const MachineInstr &MI);
   static uint32_t transfer(const MachineInstr &MI, uint32_t Live);
 
   void computeLiveness(MachineFunction &MF);
@@ -453,6 +494,7 @@ private:
   bool stepPointer(MachineBasicBlock &MBB);
   bool removeBankSelects(MachineFunction &MF);
   bool tailCalls(MachineFunction &MF);
+  bool returnConstants(MachineFunction &MF);
 };
 
 } // end anonymous namespace
@@ -865,6 +907,23 @@ bool PIC16F1Peephole::forward(MachineBasicBlock &MBB) {
       Changed = true;
     }
 
+    // W already holds the register, which is not read again, but Z is
+    // wanted and does not describe W: set it from W. The register may then
+    // go unwritten.
+    if (!Cond && (Steps & 2) && Opc == MOVF && Idx >= 0 && !E.Memory &&
+        MI.getOperand(1).getImm() == 0 && (WEq & (1u << Idx)) && !ZIsW &&
+        (After & ZBit) && !(After & (1u << Idx))) {
+      const PIC16F1InstrInfo &TII =
+          *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+      MI.setDesc(TII.get(IORLW));
+      MI.removeOperand(1);
+      MI.getOperand(0).setImm(0);
+      ZIsW = true;
+      ZFile = -1;
+      Changed = true;
+      continue;
+    }
+
     if (!Cond && (Steps & 2)) {
       bool Remove = false;
       // W already holds the register. Z would be set from the same value;
@@ -1105,7 +1164,7 @@ BankState bankAfter(const MachineInstr &MI, BankState S, bool Cond) {
   case CLRW: case ADDLW: case SUBLW: case ANDLW: case IORLW: case XORLW:
   case MOVLW: case MOVLP: case ADDFSR: case MOVIWm: case MOVIWk: case MOVWIm:
   case MOVWIk: case BRA: case GOTO: case NOP: case SLEEP: case CLRWDT:
-  case RETURN: case RETFIE:
+  case RETURN: case RETFIE: case RETLW:
     return S;
   default:
     // Calls, inline assembly and anything not understood.
@@ -1285,9 +1344,46 @@ bool PIC16F1Peephole::stepPointer(MachineBasicBlock &MBB) {
   return Changed;
 }
 
+/// movlw K ; return   =>   retlw K
+/// in a function that returns its byte result in W.
+bool PIC16F1Peephole::returnConstants(MachineFunction &MF) {
+  if (!MF.getFunction().hasFnAttribute("pic16f1-w-ret"))
+    return false;
+  const PIC16F1InstrInfo &TII =
+      *MF.getSubtarget<PIC16F1Subtarget>().getInstrInfo();
+  bool Changed = false;
+  for (MachineBasicBlock &MBB : MF) {
+    MachineBasicBlock::iterator Ret = MBB.getLastNonDebugInstr();
+    if (Ret == MBB.end() || Ret->getOpcode() != PIC16F1::RETURN ||
+        Ret == MBB.begin() || isConditional(*Ret))
+      continue;
+    MachineBasicBlock::iterator Load = std::prev(Ret);
+    while (Load != MBB.begin() && !isReal(*Load))
+      --Load;
+    if (Load->getOpcode() != PIC16F1::MOVLW || !Load->getOperand(0).isImm() ||
+        isConditional(*Load))
+      continue;
+    MachineInstrBuilder New =
+        BuildMI(MBB, Ret, Ret->getDebugLoc(), TII.get(PIC16F1::RETLW))
+            .addImm(Load->getOperand(0).getImm());
+    for (const MachineOperand &MO : Ret->operands())
+      if (MO.isReg() && MO.isImplicit())
+        New.add(MO);
+    Load->eraseFromParent();
+    Ret->eraseFromParent();
+    Changed = true;
+  }
+  return Changed;
+}
+
 bool PIC16F1Peephole::runOnMachineFunction(MachineFunction &MF) {
-  if (!EnablePeephole || MF.getTarget().getOptLevel() == CodeGenOptLevel::None ||
-      skipFunction(MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
+    return false;
+  return run(MF);
+}
+
+bool PIC16F1Peephole::run(MachineFunction &MF) {
+  if (!EnablePeephole || MF.getTarget().getOptLevel() == CodeGenOptLevel::None)
     return false;
   bool Changed = false;
   // Each kind of change opens the way for the other; a few rounds settle it.
@@ -1311,5 +1407,642 @@ bool PIC16F1Peephole::runOnMachineFunction(MachineFunction &MF) {
     Changed |= removeBankSelects(MF);
   if (Steps & 128)
     Changed |= tailCalls(MF);
+  Changed |= returnConstants(MF);
+  return Changed;
+}
+
+//===----------------------------------------------------------------------===//
+//
+// PIC16F1WConventions: W in calls, chosen function by function.
+//
+// The calling convention (docs/spec/calling-convention.md) passes every
+// byte in a byte register, and a value gets there through W. Hand-written
+// code would often leave it in W: "movlw 5 ; call f", or a result tested
+// straight away. Which is better depends on the function and on its
+// callers, so it is decided for each function by trying:
+//
+//  * the byte result in W instead of R0,
+//  * one byte argument in W instead of its register (each in turn), and
+//  * the first argument in W together with the results of the functions
+//    whose result is passed straight on as that argument: "f(g())" is
+//    free in R0, and in W, but not with one of each,
+//
+// rewriting the function and every caller, running the peephole pass over
+// them again, and keeping the change only if those functions together got
+// no larger and no slower, and one of the two better. A function qualifies
+// if every call of it is a direct one in this module: with -flto, nearly
+// every function of the program. Everything else, and so everything another
+// file or assembly code can see, keeps the documented convention.
+//
+// This is a module pass because it needs the final instructions of every
+// function at once. It runs after the pass that records, for callers
+// compiled later, which registers a function changes; the rewriting never
+// makes a function change a register it did not change before.
+//
+//===----------------------------------------------------------------------===//
+
+static cl::opt<unsigned> WConventions(
+    "pic16f1-w-conventions", cl::Hidden, cl::init(3),
+    cl::desc("Bit mask: 1 let a function return a byte in W, 2 let it take "
+             "a byte argument in W, where that is smaller or faster"));
+
+static cl::opt<bool> WReport(
+    "pic16f1-w-report", cl::Hidden, cl::init(false),
+    cl::desc("Print each function given an argument or its result in W"));
+
+namespace {
+
+class PIC16F1WConventions : public ModulePass {
+public:
+  static char ID;
+  PIC16F1WConventions() : ModulePass(ID) {}
+  StringRef getPassName() const override {
+    return "PIC16F1 arguments and results in W";
+  }
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<MachineModuleInfoWrapperPass>();
+    AU.setPreservesAll();
+  }
+  bool runOnModule(Module &M) override;
+
+private:
+  struct Cost {
+    uint64_t Words = 0, Cycles = 0;
+    bool betterThan(const Cost &O) const {
+      return Words <= O.Words && Cycles <= O.Cycles &&
+             (Words < O.Words || Cycles < O.Cycles);
+    }
+  };
+  struct Snapshot {
+    MachineFunction *MF;
+    std::vector<std::pair<MachineBasicBlock *, std::vector<MachineInstr *>>>
+        Blocks;
+  };
+  using FunctionSet = SmallPtrSet<MachineFunction *, 8>;
+
+  MachineModuleInfo *MMI = nullptr;
+  std::vector<MachineFunction *> Functions;
+  /// How often a block runs, as a guess: by loop depth, and by the loop
+  /// depth of the calls that lead to its function.
+  DenseMap<const MachineBasicBlock *, uint64_t> Weight;
+  /// The functions that call or jump to each function.
+  DenseMap<const Function *, FunctionSet> Callers;
+  /// Functions something refers to other than by calling them.
+  SmallPtrSet<const Function *, 8> Referenced;
+
+  MachineFunction *machineFunction(const Function *F) const {
+    return F && !F->isDeclaration() ? MMI->getMachineFunction(*F) : nullptr;
+  }
+  bool isPrivate(const Function *F) const;
+  void computeWeights();
+  Cost cost(const FunctionSet &Set) const;
+  std::vector<Snapshot> save(const FunctionSet &Set) const;
+  void restore(std::vector<Snapshot> &Saved) const;
+  void discard(std::vector<Snapshot> &Saved) const;
+  void cleanUp(const FunctionSet &Set) const;
+
+  /// Changes to make together.
+  struct Change {
+    SmallVector<const Function *, 8> Results; // the result in W
+    const Function *Argument = nullptr;       // the argument of Register in W
+    int Register = -1;
+  };
+  bool attempt(const Change &C, bool Keep, Cost &Gain);
+  void fixDebugValues(MachineFunction &MF) const;
+  bool resultGroup(const Function *F, SmallVectorImpl<const Function *> &Group);
+  bool applyResult(ArrayRef<const Function *> Group);
+  bool tryResult(const Function *F);
+  bool applyArgument(const Function *F, int N);
+  bool tryArgument(const Function *F);
+  FunctionSet affected(ArrayRef<const Function *> Group);
+};
+
+} // end anonymous namespace
+
+char PIC16F1WConventions::ID = 0;
+
+INITIALIZE_PASS(PIC16F1WConventions, "pic16f1-w-conventions",
+                "PIC16F1 arguments and results in W", false, false)
+
+ModulePass *llvm::createPIC16F1WConventionsPass() {
+  return new PIC16F1WConventions();
+}
+
+static bool isRealInstr(const MachineInstr &MI) {
+  return !MI.isMetaInstruction();
+}
+
+/// True if \p MI calls, or jumps out of its function to, another function.
+static bool isCallOrTailJump(const MachineInstr &MI) {
+  return MI.getOpcode() == PIC16F1::CALL ||
+         (MI.getOpcode() == PIC16F1::GOTO && !MI.getOperand(0).isMBB());
+}
+
+bool PIC16F1WConventions::isPrivate(const Function *F) const {
+  if (!F || !machineFunction(F) || !F->hasLocalLinkage() ||
+      F->hasAddressTaken() || F->isVarArg() || Referenced.count(F) ||
+      F->hasFnAttribute("interrupt") || F->hasFnAttribute(Attribute::Naked) ||
+      F->hasFnAttribute(Attribute::OptimizeNone))
+    return false;
+  // Functions compiled twice, and the copies made for interrupt handlers:
+  // the linker chooses between those.
+  for (const char *A : {"pic16f1-dual", "pic16f1-dual-of", "pic16f1-dual-sf",
+                        "pic16f1-isr-of", "pic16f1-isr-of-local",
+                        "pic16f1-isr-copy"})
+    if (F->hasFnAttribute(A))
+      return false;
+  return true;
+}
+
+void PIC16F1WConventions::computeWeights() {
+  DenseMap<const MachineFunction *, uint64_t> Scale;
+  for (MachineFunction *MF : Functions) {
+    MachineDominatorTree MDT(*MF);
+    MachineLoopInfo MLI(MDT);
+    for (MachineBasicBlock &MBB : *MF) {
+      uint64_t W = 1;
+      for (unsigned D = std::min(MLI.getLoopDepth(&MBB), 4u); D; --D)
+        W *= 10;
+      Weight[&MBB] = W;
+    }
+    Scale[MF] = 1;
+  }
+  // A function called in a loop runs as often as the loop. A few rounds
+  // carry that down the call graph; recursion is cut off by the limit.
+  const uint64_t Limit = 100000000;
+  for (unsigned Round = 0; Round != 4; ++Round)
+    for (MachineFunction *MF : Functions)
+      for (MachineBasicBlock &MBB : *MF)
+        for (MachineInstr &MI : MBB)
+          if (isCallOrTailJump(MI))
+            if (MachineFunction *Callee = machineFunction(calleeOf(MI)))
+              Scale[Callee] = std::max(
+                  Scale[Callee], std::min(Limit, Scale[MF] * Weight[&MBB]));
+  for (MachineFunction *MF : Functions)
+    for (MachineBasicBlock &MBB : *MF)
+      Weight[&MBB] *= Scale[MF];
+}
+
+PIC16F1WConventions::Cost
+PIC16F1WConventions::cost(const FunctionSet &Set) const {
+  Cost C;
+  for (MachineFunction *MF : Set) {
+    const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
+    for (MachineBasicBlock &MBB : *MF)
+      for (MachineInstr &MI : MBB) {
+        if (!isRealInstr(MI))
+          continue;
+        uint64_t Words = TII.getInstSizeInBytes(MI) / 2;
+        C.Words += Words;
+        C.Cycles += Words * Weight.lookup(&MBB);
+      }
+  }
+  return C;
+}
+
+std::vector<PIC16F1WConventions::Snapshot>
+PIC16F1WConventions::save(const FunctionSet &Set) const {
+  std::vector<Snapshot> Saved;
+  for (MachineFunction *MF : Set) {
+    Snapshot S;
+    S.MF = MF;
+    for (MachineBasicBlock &MBB : *MF) {
+      S.Blocks.emplace_back(&MBB, std::vector<MachineInstr *>());
+      for (MachineInstr &MI : MBB)
+        S.Blocks.back().second.push_back(MF->CloneMachineInstr(&MI));
+    }
+    Saved.push_back(std::move(S));
+  }
+  return Saved;
+}
+
+void PIC16F1WConventions::restore(std::vector<Snapshot> &Saved) const {
+  for (Snapshot &S : Saved)
+    for (auto &[MBB, Instrs] : S.Blocks) {
+      while (!MBB->empty())
+        MBB->erase(MBB->begin());
+      for (MachineInstr *MI : Instrs)
+        MBB->push_back(MI);
+    }
+  Saved.clear();
+}
+
+void PIC16F1WConventions::discard(std::vector<Snapshot> &Saved) const {
+  for (Snapshot &S : Saved)
+    for (auto &[MBB, Instrs] : S.Blocks)
+      for (MachineInstr *MI : Instrs)
+        S.MF->deleteMachineInstr(MI);
+  Saved.clear();
+}
+
+void PIC16F1WConventions::cleanUp(const FunctionSet &Set) const {
+  for (MachineFunction *MF : Set) {
+    if (MF->getFunction().hasFnAttribute(Attribute::OptimizeNone))
+      continue;
+    PIC16F1Peephole Peephole;
+    Peephole.run(*MF);
+  }
+}
+
+PIC16F1WConventions::FunctionSet
+PIC16F1WConventions::affected(ArrayRef<const Function *> Group) {
+  FunctionSet Set;
+  for (const Function *F : Group) {
+    Set.insert(machineFunction(F));
+    for (MachineFunction *Caller : Callers[F])
+      Set.insert(Caller);
+  }
+  return Set;
+}
+
+/// True if the only register \p MI lists as read is \p Reg.
+static bool listsOnly(const MachineInstr &MI, MCRegister Reg) {
+  bool Found = false;
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || !MO.isUse())
+      continue;
+    if (MO.getReg() != Reg)
+      return false;
+    Found = true;
+  }
+  return Found;
+}
+
+/// The functions that must return their result the same way as \p F: the
+/// ones it ends in a jump to, and the ones that end in a jump to it. False
+/// if one of them cannot return a byte in W.
+bool PIC16F1WConventions::resultGroup(
+    const Function *F, SmallVectorImpl<const Function *> &Group) {
+  SmallPtrSet<const Function *, 8> Seen;
+  SmallVector<const Function *, 8> Work{F};
+  while (!Work.empty()) {
+    const Function *G = Work.pop_back_val();
+    if (!Seen.insert(G).second)
+      continue;
+    if (!isPrivate(G) || G->hasFnAttribute("pic16f1-w-ret"))
+      return false;
+    Group.push_back(G);
+    bool Returns = false;
+    for (MachineBasicBlock &MBB : *machineFunction(G))
+      for (MachineInstr &MI : MBB) {
+        if (MI.getOpcode() == PIC16F1::RETURN) {
+          // A byte in R0 and nothing else.
+          if (!listsOnly(MI, PIC16F1::R0))
+            return false;
+          Returns = true;
+        } else if (MI.getOpcode() == PIC16F1::RETLW) {
+          return false;
+        } else if (MI.getOpcode() == PIC16F1::GOTO &&
+                   !MI.getOperand(0).isMBB()) {
+          // Its result is this function's.
+          const Function *Callee = calleeOf(MI);
+          if (!Callee)
+            return false;
+          Work.push_back(Callee);
+        }
+      }
+    // The callers that pass the result on as their own.
+    for (MachineFunction *Caller : Callers[G])
+      for (MachineBasicBlock &MBB : *Caller)
+        for (MachineInstr &MI : MBB)
+          if (MI.getOpcode() == PIC16F1::GOTO && calleeOf(MI) == G)
+            Work.push_back(&Caller->getFunction());
+    (void)Returns;
+  }
+  // At least one of them must return a value itself.
+  for (const Function *G : Group)
+    for (MachineBasicBlock &MBB : *machineFunction(G))
+      for (MachineInstr &MI : MBB)
+        if (MI.getOpcode() == PIC16F1::RETURN)
+          return true;
+  return false;
+}
+
+bool PIC16F1WConventions::applyResult(ArrayRef<const Function *> Group) {
+  using namespace PIC16F1;
+  for (const Function *F : Group) {
+    MachineFunction &MF = *machineFunction(F);
+    const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : make_early_inc_range(MBB))
+        if (MI.getOpcode() == RETURN) {
+          if (PIC16F1Peephole::isConditional(MI))
+            return false;
+          BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(MOVF))
+              .addImm(0x70)
+              .addImm(0);
+        }
+    for (MachineFunction *Caller : Callers[F])
+      for (MachineBasicBlock &MBB : *Caller)
+        for (MachineInstr &MI : make_early_inc_range(MBB))
+          if (MI.getOpcode() == CALL && calleeOf(MI) == F) {
+            if (PIC16F1Peephole::isConditional(MI))
+              return false;
+            BuildMI(MBB, std::next(MI.getIterator()), MI.getDebugLoc(),
+                    TII.get(MOVWF))
+                .addImm(0x70);
+          }
+  }
+  return true;
+}
+
+bool PIC16F1WConventions::applyArgument(const Function *F, int N) {
+  using namespace PIC16F1;
+  MachineFunction &MF = *machineFunction(F);
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  MachineBasicBlock &Entry = MF.front();
+  if (!Entry.pred_empty())
+    return false; // (runOnModule gave such a function a block of its own)
+  BuildMI(Entry, Entry.begin(), DebugLoc(), TII.get(MOVWF)).addImm(0x70 + N);
+  for (MachineFunction *Caller : Callers[F])
+    for (MachineBasicBlock &MBB : *Caller)
+      for (MachineInstr &MI : make_early_inc_range(MBB)) {
+        if (!isCallOrTailJump(MI) || calleeOf(MI) != F)
+          continue;
+        if (PIC16F1Peephole::isConditional(MI))
+          return false;
+        // Above the page selection, which belongs to the call.
+        MachineBasicBlock::iterator At = MI.getIterator();
+        while (At != MBB.begin()) {
+          MachineBasicBlock::iterator Prev = std::prev(At);
+          if (isRealInstr(*Prev) && Prev->getOpcode() != MOVLP)
+            break;
+          At = Prev;
+        }
+        if (At->getOpcode() == MOVLP && PIC16F1Peephole::isConditional(*At))
+          return false;
+        BuildMI(MBB, At, MI.getDebugLoc(), TII.get(MOVF))
+            .addImm(0x70 + N)
+            .addImm(0);
+      }
+  return true;
+}
+
+/// Make the changes of \p C together and see whether the functions
+/// concerned got better. If not, or if not asked to keep them, put
+/// everything back.
+bool PIC16F1WConventions::attempt(const Change &C, bool Keep, Cost &Gain) {
+  SmallVector<const Function *, 8> All(C.Results.begin(), C.Results.end());
+  if (C.Argument)
+    All.push_back(C.Argument);
+  FunctionSet Set = affected(All);
+  Cost Before = cost(Set);
+  std::vector<Snapshot> Saved = save(Set);
+  // The attributes are what tells the peephole pass where things are.
+  for (const Function *G : C.Results)
+    const_cast<Function *>(G)->addFnAttr("pic16f1-w-ret");
+  if (C.Argument)
+    const_cast<Function *>(C.Argument)
+        ->addFnAttr("pic16f1-w-arg", utostr(C.Register));
+  bool Good = applyResult(C.Results) &&
+              (!C.Argument || applyArgument(C.Argument, C.Register));
+  Cost After;
+  if (Good) {
+    cleanUp(Set);
+    After = cost(Set);
+    Good = After.betterThan(Before);
+  }
+  if (Good) {
+    Gain.Words = Before.Words - After.Words;
+    Gain.Cycles = Before.Cycles - After.Cycles;
+  }
+  if (Good && Keep) {
+    if (WReport) {
+      for (const Function *G : C.Results)
+        errs() << "pic16f1: " << G->getName() << ": result in W\n";
+      if (C.Argument)
+        errs() << "pic16f1: " << C.Argument->getName()
+               << ": the argument of R" << C.Register << " in W\n";
+      errs() << "pic16f1:   " << Before.Words << " -> " << After.Words
+             << " words in the functions concerned\n";
+    }
+    discard(Saved);
+    return true;
+  }
+  for (const Function *G : C.Results)
+    const_cast<Function *>(G)->removeFnAttr("pic16f1-w-ret");
+  if (C.Argument)
+    const_cast<Function *>(C.Argument)->removeFnAttr("pic16f1-w-arg");
+  restore(Saved);
+  return Good;
+}
+
+bool PIC16F1WConventions::tryResult(const Function *F) {
+  Change C;
+  if (!resultGroup(F, C.Results))
+    return false;
+  Cost Gain;
+  return attempt(C, true, Gain);
+}
+
+bool PIC16F1WConventions::tryArgument(const Function *F) {
+  if (!isPrivate(F) || F->hasFnAttribute("pic16f1-w-arg"))
+    return false;
+  // The byte registers every call passes an argument in. (A wider value
+  // is in pairs, which the instruction lists as pairs.) And the functions
+  // whose result is passed straight on as the first argument: "f(g())".
+  uint32_t Bytes = 0xFF;
+  bool Called = false;
+  SmallVector<const Function *, 4> Feeders;
+  const TargetRegisterInfo &TRI =
+      *machineFunction(F)->getSubtarget().getRegisterInfo();
+  for (MachineFunction *Caller : Callers[F])
+    for (MachineBasicBlock &MBB : *Caller) {
+      const MachineInstr *Last = nullptr;
+      for (MachineInstr &MI : MBB) {
+        if (!isRealInstr(MI) || MI.getOpcode() == PIC16F1::MOVLP)
+          continue;
+        const MachineInstr *Before = Last;
+        Last = &MI;
+        if (!isCallOrTailJump(MI) || calleeOf(MI) != F)
+          continue;
+        Called = true;
+        uint32_t Here = 0;
+        for (const MachineOperand &MO : MI.operands())
+          if (MO.isReg() && MO.isUse() && MO.getReg().isPhysical() &&
+              PIC16F1::GPR8RegClass.contains(MO.getReg())) {
+            unsigned Enc = TRI.getEncodingValue(MO.getReg());
+            if (Enc >= 0x70 && Enc < 0x78)
+              Here |= 1u << (Enc - 0x70);
+          }
+        Bytes &= Here;
+        if (Before && Before->getOpcode() == PIC16F1::CALL)
+          if (const Function *G = calleeOf(*Before))
+            if (!is_contained(Feeders, G))
+              Feeders.push_back(G);
+      }
+    }
+  if (!Called || !Bytes)
+    return false;
+
+  std::vector<Change> Choices;
+  for (int N = 0; N != 8; ++N)
+    if (Bytes & (1u << N)) {
+      Change C;
+      C.Argument = F;
+      C.Register = N;
+      Choices.push_back(C);
+    }
+  if ((Bytes & 1) && (WConventions & 1)) {
+    // With the result of each such function in W, and of all of them.
+    Change Every;
+    Every.Argument = F;
+    Every.Register = 0;
+    unsigned Groups = 0;
+    for (const Function *G : Feeders) {
+      Change C;
+      C.Argument = F;
+      C.Register = 0;
+      if (is_contained(Every.Results, G) || !resultGroup(G, C.Results))
+        continue;
+      for (const Function *Member : C.Results)
+        if (!is_contained(Every.Results, Member))
+          Every.Results.push_back(Member);
+      Choices.push_back(C);
+      ++Groups;
+    }
+    if (Groups > 1)
+      Choices.push_back(Every);
+  }
+
+  const Change *Best = nullptr;
+  Cost BestGain;
+  for (const Change &C : Choices) {
+    Cost Gain;
+    if (!attempt(C, false, Gain))
+      continue;
+    if (!Best || Gain.Words > BestGain.Words ||
+        (Gain.Words == BestGain.Words && Gain.Cycles > BestGain.Cycles)) {
+      Best = &C;
+      BestGain = Gain;
+    }
+  }
+  // Again, to keep: the same steps give the same result.
+  return Best && attempt(*Best, true, BestGain);
+}
+
+/// Debug information says where a variable is by naming a register. Where
+/// a value now stays in W and its register is never written (the argument
+/// on entry, the result after a call), what names the register is wrong
+/// until the register is next written: say the variable is unavailable
+/// there instead. This changes no code.
+void PIC16F1WConventions::fixDebugValues(MachineFunction &MF) const {
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
+  auto RegisterOf = [&](int N) {
+    for (MCPhysReg Reg : PIC16F1::GPR8RegClass)
+      if (TRI.getEncodingValue(Reg) == unsigned(0x70 + N))
+        return MCRegister(Reg);
+    return MCRegister();
+  };
+  // From \p From to the next write of register N in the block.
+  auto Forget = [&](MachineBasicBlock &MBB, MachineBasicBlock::iterator From,
+                    int N) {
+    MCRegister Reg = RegisterOf(N);
+    for (MachineInstr &MI : make_range(From, MBB.end())) {
+      if (MI.isDebugValue()) {
+        for (MachineOperand &MO : MI.debug_operands())
+          if (MO.isReg() && MO.getReg() == Reg)
+            MO.setReg(Register());
+        continue;
+      }
+      if (!isRealInstr(MI))
+        continue;
+      Effect E = effectOf(MI);
+      if (E.Barrier || (E.Writes & (1u << N)))
+        return false;
+    }
+    return true;
+  };
+  auto StoresW = [](const MachineInstr &MI, int N) {
+    return MI.getOpcode() == PIC16F1::MOVWF && MI.getOperand(0).isImm() &&
+           MI.getOperand(0).getImm() == 0x70 + N;
+  };
+  if (int N = wArgOf(&MF.getFunction()); N >= 0) {
+    // The entry block, and the one below it if it ran through.
+    MachineBasicBlock *MBB = &MF.front();
+    auto First = find_if(*MBB, isRealInstr);
+    if (First == MBB->end() || !StoresW(*First, N))
+      if (Forget(*MBB, MBB->begin(), N) && MBB->succ_size() == 1)
+        Forget(**MBB->succ_begin(), (*MBB->succ_begin())->begin(), N);
+  }
+  for (MachineBasicBlock &MBB : MF)
+    for (MachineInstr &MI : MBB) {
+      if (MI.getOpcode() != PIC16F1::CALL)
+        continue;
+      const Function *Callee = calleeOf(MI);
+      if (!Callee || !Callee->hasFnAttribute("pic16f1-w-ret"))
+        continue;
+      auto Next = std::find_if(MachineBasicBlock::iterator(std::next(MI.getIterator())),
+                               MBB.end(), isRealInstr);
+      if (Next == MBB.end() || !StoresW(*Next, 0))
+        Forget(MBB, MachineBasicBlock::iterator(std::next(MI.getIterator())), 0);
+    }
+}
+
+bool PIC16F1WConventions::runOnModule(Module &M) {
+  if (!WConventions || !EnablePeephole)
+    return false;
+  MMI = &getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+  Functions.clear();
+  Weight.clear();
+  Callers.clear();
+  Referenced.clear();
+  for (Function &F : M)
+    if (MachineFunction *MF = machineFunction(&F))
+      Functions.push_back(MF);
+  if (Functions.empty() ||
+      Functions.front()->getTarget().getOptLevel() == CodeGenOptLevel::None)
+    return false;
+  for (MachineFunction *MF : Functions)
+    for (MachineBasicBlock &MBB : *MF)
+      for (MachineInstr &MI : MBB) {
+        if (isCallOrTailJump(MI))
+          if (const Function *Callee = calleeOf(MI))
+            Callers[Callee].insert(MF);
+        // Any other mention of a function, but for the page selection
+        // that goes with a call or a jump, is its address.
+        for (unsigned I = 0, E = MI.getNumOperands(); I != E; ++I) {
+          const MachineOperand &MO = MI.getOperand(I);
+          if (!MO.isGlobal() || !isa<Function>(MO.getGlobal()))
+            continue;
+          if ((I == 0 && isCallOrTailJump(MI)) ||
+              MI.getOpcode() == PIC16F1::MOVLP)
+            continue;
+          Referenced.insert(cast<Function>(MO.getGlobal()));
+        }
+      }
+  // A function whose first block is the top of a loop gets an empty block
+  // above it, where an argument that arrives in W can be stored once.
+  bool Changed = false;
+  for (MachineFunction *MF : Functions) {
+    MachineBasicBlock &Entry = MF->front();
+    if (Entry.pred_empty() || !isPrivate(&MF->getFunction()))
+      continue;
+    MachineBasicBlock *First = MF->CreateMachineBasicBlock();
+    MF->insert(MF->begin(), First);
+    First->addSuccessor(&Entry);
+    for (const auto &LI : Entry.liveins())
+      First->addLiveIn(LI);
+    Changed = true;
+  }
+  computeWeights();
+
+  // One choice can open the way for another; a few rounds settle it.
+  for (unsigned Round = 0; Round != 3; ++Round) {
+    bool RoundChanged = false;
+    for (MachineFunction *MF : Functions) {
+      const Function *F = &MF->getFunction();
+      if (WConventions & 1)
+        RoundChanged |= tryResult(F);
+      if (WConventions & 2)
+        RoundChanged |= tryArgument(F);
+    }
+    if (!RoundChanged)
+      break;
+    Changed = true;
+  }
+  if (Changed)
+    for (MachineFunction *MF : Functions)
+      fixDebugValues(*MF);
   return Changed;
 }

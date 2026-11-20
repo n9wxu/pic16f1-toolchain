@@ -64,6 +64,7 @@ enum StatusBit : unsigned { STATUS_C = 0, STATUS_Z = 2 };
 } // namespace PIC16F1
 
 class FunctionPass;
+class ModulePass;
 class InstructionSelector;
 class PIC16F1RegisterBankInfo;
 class PIC16F1Subtarget;
@@ -83,6 +84,7 @@ FunctionPass *createPIC16F1ExpandPseudoPass();
 /// branch relaxation.
 FunctionPass *createPIC16F1ExpandBranchesPass();
 FunctionPass *createPIC16F1PeepholePass();
+ModulePass *createPIC16F1WConventionsPass();
 /// Mark the functions that cannot be re-entered and give their small
 /// variables fixed addresses.
 ModulePass *createPIC16F1StaticFramesPass();
@@ -119,6 +121,7 @@ void initializePIC16F1DAGToDAGISelLegacyPass(PassRegistry &);
 void initializePIC16F1ExpandPseudoPass(PassRegistry &);
 void initializePIC16F1ExpandBranchesPass(PassRegistry &);
 void initializePIC16F1PeepholePass(PassRegistry &);
+void initializePIC16F1WConventionsPass(PassRegistry &);
 void initializePIC16F1PointerSetupPass(PassRegistry &);
 
 } // namespace llvm

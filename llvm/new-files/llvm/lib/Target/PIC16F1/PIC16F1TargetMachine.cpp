@@ -39,6 +39,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializePIC16F1Target() 
   initializePIC16F1ExpandPseudoPass(PR);
   initializePIC16F1ExpandBranchesPass(PR);
   initializePIC16F1PeepholePass(PR);
+  initializePIC16F1WConventionsPass(PR);
   initializePIC16F1PointerSetupPass(PR);
   initializePIC16F1StaticFramesPass(PR);
   initializePIC16F1PointerIVsPass(PR);
@@ -108,7 +109,15 @@ namespace {
 class PIC16F1PassConfig : public TargetPassConfig {
 public:
   PIC16F1PassConfig(PIC16F1TargetMachine &TM, PassManagerBase &PM)
-      : TargetPassConfig(TM, PM) {}
+      : TargetPassConfig(TM, PM) {
+    // After the pass that records which registers each function changes
+    // (it follows addPreEmitPass, and this one comes after), and before
+    // the outliner: this is a module pass, and one placed any earlier
+    // would have every function compiled before any is recorded.
+    if (TM.getOptLevel() != CodeGenOptLevel::None)
+      insertPass(&FuncletLayoutID, IdentifyingPassPtr(
+                                       createPIC16F1WConventionsPass()));
+  }
 
   PIC16F1TargetMachine &getPIC16F1TargetMachine() const {
     return getTM<PIC16F1TargetMachine>();
