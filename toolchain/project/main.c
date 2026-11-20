@@ -2,18 +2,16 @@
  *
  * Counts on the four LEDs of the F1 Evaluation Platform (RE0, RE1, RE2 and
  * RD1) about twice a second. Change it into your program. */
+
+/* Configuration: internal oscillator, watchdog off, MCLR and low-voltage
+ * programming on. (Erased configuration words select an external clock,
+ * and the part does not run.) */
+#pragma config FOSC = INTOSC, WDTE = OFF, PWRTE = ON, MCLRE = ON
+#pragma config BOREN = OFF, CLKOUTEN = OFF, IESO = OFF, FCMEN = OFF
+#pragma config WRT = OFF, PLLEN = OFF, STVREN = ON, BORV = LO, LVP = ON
+
 #include <xc.h>
 #include <stdint.h>
-
-/* Configuration words: internal oscillator, watchdog off, MCLR and
- * low-voltage programming on. (Erased configuration words select an
- * external clock, and the part does not run.) This toolchain takes them
- * this way and not from #pragma config. */
-PIC_CONFIG_WORDS(_CONFIG1_FOSC_INTOSC & _CONFIG1_WDTE_OFF & _CONFIG1_PWRTE_ON &
-                     _CONFIG1_MCLRE_ON & _CONFIG1_BOREN_OFF & _CONFIG1_CLKOUTEN_OFF &
-                     _CONFIG1_IESO_OFF & _CONFIG1_FCMEN_OFF,
-                 _CONFIG2_WRT_OFF & _CONFIG2_PLLEN_OFF & _CONFIG2_STVREN_ON &
-                     _CONFIG2_BORV_LO & _CONFIG2_LVP_ON);
 
 /* The oscillator's frequency, for the delays: 500 kHz is what the internal
  * oscillator runs at out of reset. */

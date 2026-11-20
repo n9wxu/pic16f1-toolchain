@@ -152,9 +152,8 @@ def main():
 
     clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
              "-ffunction-sections", "-fdata-sections",
-             # A #pragma the compiler does not know (XC8's #pragma config,
-             # for one: use PIC_CONFIG_WORDS from <xc.h>) is otherwise
-             # ignored without a word.
+             # A #pragma the compiler does not know is otherwise ignored
+             # without a word.
              "-Wunknown-pragmas"]
     libs = [os.path.join(lib, "libpicrt.a")]
     if debugger:
@@ -263,9 +262,13 @@ def main():
             # Debug information about code the linker left out (the versions
             # of a function it did not choose, among others) gets an address
             # no code has, where the default, 0, is the reset vector.
+            table = os.path.join(lib, cpu + ".cfg")
             link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
                     "-z", "dead-reloc-in-nonalloc=.debug_*=0xffffffff",
                     crt0] + objs + objects + rt + ["-o", elf] + ldflags
+            # What the settings of #pragma config mean on this device.
+            if os.path.exists(table):
+                link += ["-z", "pic16f1-config=" + table]
             if lto:
                 link += ["-mllvm", f"-code-model={model}",
                          f"-plugin-opt=mcpu={cpu}"] + link_tuning

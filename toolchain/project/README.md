@@ -38,8 +38,7 @@ make list       # disassembly
 
 - `#include <xc.h>` declares the device's registers (`LATE`,
   `LATDbits.LATD1`, ...).
-- Configuration words are set with `PIC_CONFIG_WORDS(word1, word2)` and the
-  `_CONFIG1_...`/`_CONFIG2_...` values ANDed together, not `#pragma config`.
+- Configuration words are set with `#pragma config`, as for XC8.
 - `__delay_ms(n)` and `__delay_us(n)` need `_XTAL_FREQ` defined first.
 - An interrupt handler is `void __attribute__((interrupt)) isr(void)`.
 - `pic16f1-cc --libc` adds the C library (`printf`, `string.h`, `math.h`);

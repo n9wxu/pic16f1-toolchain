@@ -17,6 +17,7 @@ MEMORY
   ram      (rw) : ORIGIN = 0x802000, LENGTH = 1008
   flashdat (r)  : ORIGIN = 0x808000, LENGTH = 0x2000
   config   (r)  : ORIGIN = 0x1000e, LENGTH = 6
+  userid   (r)  : ORIGIN = 0x10000, LENGTH = 8
 }
 
 
@@ -94,6 +95,9 @@ SECTIONS
   __heap_end = __stack_top - __stack_size;
 
   .config : { KEEP(*(.config)) } > config
+
+  /* User ID words, from #pragma config IDLOCn. */
+  .userid : { KEEP(*(.userid)) } > userid
 
   __flash_words_used = (__text_end + 1) / 2 + SIZEOF(.rodata) + SIZEOF(.data);
   ASSERT(__flash_words_used <= 8192, "program does not fit in flash")

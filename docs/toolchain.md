@@ -808,6 +808,35 @@ instruction at its address. LLDB allows for both:
 `PIC16F1_SIM_SILICON=1 pic16f1-sim gdb ...` makes the simulator behave the
 same way, which is how the test script checks all this without a part.
 
+## Source written for XC8
+
+Much of it compiles as it is:
+
+- **`#pragma config NAME = VALUE, ...`**, before or after `<xc.h>`, in any
+  source file. The compiler records the text and the linker makes the
+  configuration words from the device's table of settings
+  (`toolchain/lib/<device>.cfg`, from the device database); a setting not
+  given keeps its erased value. A value is one of the setting's names or
+  a number. `IDLOC0`-`IDLOC3` set the user ID words. A setting or value the
+  device does not have, and one given twice differently, are errors that
+  name the source line. `PIC_CONFIG_WORDS(word1, word2)` gives the words
+  whole instead; a program uses one or the other.
+- **`__EEPROM_DATA(a, b, c, d, e, f, g, h)`** puts eight bytes in the
+  initial content of the data EEPROM, each use after the one before.
+- **`void __interrupt() isr(void)`**, `__bit` (a `_Bool`), `__persistent`,
+  `__section("name")`, `__pack`, `ei()`, `di()`, `__nop()`, and the delays
+  below.
+
+The HEX file carries user IDs, configuration words and EEPROM data where
+programmers expect them (word addresses 0x8000, 0x8007 and 0xF000).
+`scripts/test-xc8.sh` builds a program in these forms and compares the
+words.
+
+Not there: `__at(address)` for a variable at a fixed address; the `eeprom`
+qualifier and `eeprom_read`/`eeprom_write`; the single-bit names XC8's
+headers give port and flag bits (`RA0`, `GIE`: write `PORTAbits.RA0`,
+`INTCONbits.GIE`); `__DEBUG`-style options given as pragmas.
+
 ## Delays
 
 `<xc.h>` has XC8's `_delay(cycles)`, `__delay_ms(ms)` and `__delay_us(us)`;
@@ -845,6 +874,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | The same against the simulator behaving as the part's debug hardware (one breakpoint, stopping late) | pass at `-munoptimized` and `-O1` |
 | Delays (`scripts/test-delay.sh`) | pass on 2 devices at 3 levels: never short, at most 12 cycles long |
 | Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |
+| XC8 source forms (`scripts/test-xc8.sh`) | pass: configuration, user ID and EEPROM words at 4 settings; wrong settings refused |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |

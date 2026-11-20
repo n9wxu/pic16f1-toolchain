@@ -17,6 +17,8 @@ MEMORY
   ram      (rw) : ORIGIN = 0x802000, LENGTH = 1008
   flashdat (r)  : ORIGIN = 0x808000, LENGTH = 0x2000
   config   (r)  : ORIGIN = 0x1000e, LENGTH = 4
+  userid   (r)  : ORIGIN = 0x10000, LENGTH = 8
+  eeprom   (r)  : ORIGIN = 0x1e000, LENGTH = 512
 }
 
 
@@ -94,6 +96,13 @@ SECTIONS
   __heap_end = __stack_top - __stack_size;
 
   .config : { KEEP(*(.config)) } > config
+
+  /* User ID words, from #pragma config IDLOCn. */
+  .userid : { KEEP(*(.userid)) } > userid
+
+  /* Initial content of the data EEPROM (__EEPROM_DATA in <xc.h>): as in a
+   * HEX file, a 16-bit word for each byte. */
+  .eeprom : { KEEP(*(.eeprom .eeprom.*)) } > eeprom
 
   __flash_words_used = (__text_end + 1) / 2 + SIZEOF(.rodata) + SIZEOF(.data);
   ASSERT(__flash_words_used <= 8192, "program does not fit in flash")

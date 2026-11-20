@@ -36,6 +36,18 @@ index 1fb491a54..7d19b133a 100644
  LANGOPT(NoMathBuiltin     , 1, 0, NotCompatible, "disable math builtin functions")
  LANGOPT(GNUAsm            , 1, 1, NotCompatible, "GNU-style inline assembly")
  LANGOPT(Coroutines        , 1, 0, NotCompatible, "C++20 coroutines")
+diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
+index 892715a6d..43bd91119 100644
+--- a/clang/include/clang/Parse/Parser.h
++++ b/clang/include/clang/Parse/Parser.h
+@@ -7142,6 +7142,7 @@ private:
+   std::unique_ptr<PragmaHandler> MaxTokensTotalPragmaHandler;
+   std::unique_ptr<PragmaHandler> ExportHandler;
+   std::unique_ptr<PragmaHandler> RISCVPragmaHandler;
++  std::unique_ptr<PragmaHandler> PIC16F1ConfigHandler;
+ 
+   /// Initialize all pragma handlers.
+   void initializePragmaHandlers();
 diff --git a/clang/lib/Basic/CMakeLists.txt b/clang/lib/Basic/CMakeLists.txt
 index 21851e79b..d30cca396 100644
 --- a/clang/lib/Basic/CMakeLists.txt
@@ -281,6 +293,156 @@ index 8898e63ab..441b32022 100644
    if (!Opts.NoBuiltin)
      getAllNoBuiltinFuncValues(Args, Opts.NoBuiltinFuncs);
    if (Arg *A = Args.getLastArg(options::OPT_LongDouble_Group)) {
+diff --git a/clang/lib/Parse/ParsePragma.cpp b/clang/lib/Parse/ParsePragma.cpp
+index f58d2c70b..499c46af5 100644
+--- a/clang/lib/Parse/ParsePragma.cpp
++++ b/clang/lib/Parse/ParsePragma.cpp
+@@ -14,6 +14,7 @@
+ #include "clang/Basic/DiagnosticParse.h"
+ #include "clang/Basic/PragmaKinds.h"
+ #include "clang/Basic/TargetInfo.h"
++#include "clang/Lex/Lexer.h"
+ #include "clang/Lex/Preprocessor.h"
+ #include "clang/Lex/Token.h"
+ #include "clang/Parse/LoopHint.h"
+@@ -27,6 +28,7 @@
+ #include "llvm/ADT/ArrayRef.h"
+ #include "llvm/ADT/ScopeExit.h"
+ #include "llvm/ADT/StringSwitch.h"
++#include "llvm/Support/MemoryBuffer.h"
+ #include <optional>
+ using namespace clang;
+ 
+@@ -403,6 +405,21 @@ struct PragmaExportHandler : public PragmaHandler {
+                     Token &FirstToken) override;
+ };
+ 
++/// #pragma config NAME = VALUE [, NAME = VALUE]...
++///
++/// PIC16F1, as in XC8: settings of the device's configuration words and
++/// user ID locations. The compiler does not know the device's settings; it
++/// records the text, with where it stood, in the section .pic16f1.config,
++/// and the linker, which is given the device's table, makes the words.
++struct PragmaPIC16F1ConfigHandler : public PragmaHandler {
++  PragmaPIC16F1ConfigHandler() : PragmaHandler("config") {}
++  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
++                    Token &FirstToken) override;
++
++private:
++  unsigned Count = 0;
++};
++
+ struct PragmaRISCVHandler : public PragmaHandler {
+   PragmaRISCVHandler(Sema &Actions)
+       : PragmaHandler("riscv"), Actions(Actions) {}
+@@ -572,6 +589,11 @@ void Parser::initializePragmaHandlers() {
+     PP.AddPragmaHandler(ExportHandler.get());
+   }
+ 
++  if (getTargetInfo().getTriple().getArch() == llvm::Triple::pic16f1) {
++    PIC16F1ConfigHandler = std::make_unique<PragmaPIC16F1ConfigHandler>();
++    PP.AddPragmaHandler(PIC16F1ConfigHandler.get());
++  }
++
+   if (getTargetInfo().getTriple().isRISCV()) {
+     RISCVPragmaHandler = std::make_unique<PragmaRISCVHandler>(Actions);
+     PP.AddPragmaHandler("clang", RISCVPragmaHandler.get());
+@@ -712,6 +734,11 @@ void Parser::resetPragmaHandlers() {
+     ExportHandler.reset();
+   }
+ 
++  if (PIC16F1ConfigHandler) {
++    PP.RemovePragmaHandler(PIC16F1ConfigHandler.get());
++    PIC16F1ConfigHandler.reset();
++  }
++
+   if (getTargetInfo().getTriple().isRISCV()) {
+     PP.RemovePragmaHandler("clang", RISCVPragmaHandler.get());
+     RISCVPragmaHandler.reset();
+@@ -4291,6 +4318,83 @@ void PragmaExportHandler::HandlePragma(Preprocessor &PP,
+   zOSPragmaHandlerHelper(PP, FirstToken, tok::annot_pragma_export);
+ }
+ 
++void PragmaPIC16F1ConfigHandler::HandlePragma(Preprocessor &PP,
++                                              PragmaIntroducer Introducer,
++                                              Token &FirstToken) {
++  auto Bad = [&](Token &At, StringRef What) {
++    unsigned ID = PP.getDiagnostics().getCustomDiagID(
++        DiagnosticsEngine::Error,
++        "#pragma config: expected %0 (the form is NAME = VALUE, NAME = "
++        "VALUE ...)");
++    PP.Diag(At.getLocation(), ID) << What;
++    while (At.isNot(tok::eod) && At.isNot(tok::eof))
++      PP.LexUnexpandedToken(At);
++  };
++  std::string Settings;
++  Token Tok;
++  for (;;) {
++    PP.LexUnexpandedToken(Tok);
++    if (!Tok.getIdentifierInfo())
++      return Bad(Tok, "the name of a setting");
++    std::string Name = Tok.getIdentifierInfo()->getName().str();
++    PP.LexUnexpandedToken(Tok);
++    if (Tok.isNot(tok::equal))
++      return Bad(Tok, "'='");
++    PP.LexUnexpandedToken(Tok);
++    std::string Value;
++    if (Tok.getIdentifierInfo())
++      Value = Tok.getIdentifierInfo()->getName().str();
++    else if (Tok.is(tok::numeric_constant))
++      Value = PP.getSpelling(Tok);
++    else
++      return Bad(Tok, "a value");
++    if (!Settings.empty())
++      Settings += ',';
++    Settings += Name + '=' + Value;
++    PP.LexUnexpandedToken(Tok);
++    if (Tok.is(tok::eod))
++      break;
++    if (Tok.isNot(tok::comma))
++      return Bad(Tok, "','");
++  }
++
++  SourceManager &SM = PP.getSourceManager();
++  PresumedLoc Where = SM.getPresumedLoc(Introducer.Loc);
++  std::string Text = "static const char __pic16f1_config_" +
++                     std::to_string(Count++) +
++                     "[] __attribute__((section(\".pic16f1.config\"), "
++                     "used)) = \"";
++  if (Where.isValid()) {
++    for (char C : StringRef(Where.getFilename())) {
++      if (C == '\\' || C == '"')
++        Text += '\\';
++      Text += C;
++    }
++    Text += ':' + std::to_string(Where.getLine()) + ": ";
++  }
++  Text += Settings + "\";";
++
++  // The declaration, as tokens.
++  FileID FID = SM.createFileID(
++      llvm::MemoryBuffer::getMemBufferCopy(Text, "<pragma config>"),
++      SrcMgr::C_User, 0, 0, Introducer.Loc);
++  Lexer Raw(FID, SM.getBufferOrFake(FID), SM, PP.getLangOpts());
++  SmallVector<Token, 32> Tokens;
++  for (;;) {
++    Token T;
++    Raw.LexFromRawLexer(T);
++    if (T.is(tok::eof))
++      break;
++    if (T.is(tok::raw_identifier))
++      PP.LookUpIdentifierInfo(T);
++    Tokens.push_back(T);
++  }
++  auto Stream = std::make_unique<Token[]>(Tokens.size());
++  std::copy(Tokens.begin(), Tokens.end(), Stream.get());
++  PP.EnterTokenStream(std::move(Stream), Tokens.size(),
++                      /*DisableMacroExpansion=*/true, /*IsReinject=*/false);
++}
++
+ // Handle '#pragma clang riscv intrinsic vector'.
+ //        '#pragma clang riscv intrinsic sifive_vector'.
+ //        '#pragma clang riscv intrinsic andes_vector'.
 diff --git a/clang/lib/Sema/SemaDeclAttr.cpp b/clang/lib/Sema/SemaDeclAttr.cpp
 index 1b272b541..5873a2499 100644
 --- a/clang/lib/Sema/SemaDeclAttr.cpp
@@ -319,7 +481,7 @@ index e22897c27..3ae60e1f1 100644
    Arch/PPC64.cpp
    Arch/RISCV.cpp
 diff --git a/lld/ELF/Driver.cpp b/lld/ELF/Driver.cpp
-index 51d9e3241..7ee446b5c 100644
+index 51d9e3241..e3bcfed2a 100644
 --- a/lld/ELF/Driver.cpp
 +++ b/lld/ELF/Driver.cpp
 @@ -174,6 +174,7 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
@@ -350,10 +512,20 @@ index 51d9e3241..7ee446b5c 100644
    for (auto *arg : args.filtered(OPT_z))
      if (!arg->isClaimed())
        Warn(ctx) << "unknown -z value: " << StringRef(arg->getValue());
-@@ -3524,6 +3529,13 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
+@@ -3524,6 +3529,23 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
    // Split SHF_MERGE and .eh_frame sections into pieces in preparation for garbage collection.
    splitSections<ELFT>(ctx);
  
++  // PIC16F1: make the configuration words from the settings the program
++  // gives with #pragma config.
++  if (ctx.arg.emachine == EM_PIC16F1) {
++    StringRef table;
++    for (auto *arg : args.filtered(OPT_z))
++      if (StringRef(arg->getValue()).consume_front("pic16f1-config="))
++        table = StringRef(arg->getValue()).substr(strlen("pic16f1-config="));
++    pic16f1ConfigWords(ctx, table);
++  }
++
 +  // PIC16F1: decide which functions get static frames, before the versions
 +  // not chosen are collected.
 +  if (ctx.arg.emachine == EM_PIC16F1)
@@ -442,16 +614,17 @@ index 89e4dbeed..e2739024a 100644
      return setPPCTargetInfo(ctx);
    case EM_PPC64:
 diff --git a/lld/ELF/Target.h b/lld/ELF/Target.h
-index 50f0cd8a9..16351281f 100644
+index 50f0cd8a9..8d6fb139d 100644
 --- a/lld/ELF/Target.h
 +++ b/lld/ELF/Target.h
-@@ -212,6 +212,9 @@ void setAVRTargetInfo(Ctx &);
+@@ -212,6 +212,10 @@ void setAVRTargetInfo(Ctx &);
  void setHexagonTargetInfo(Ctx &);
  void setLoongArchTargetInfo(Ctx &);
  void setMSP430TargetInfo(Ctx &);
 +void setPIC16F1TargetInfo(Ctx &);
 +// Choose between the stack-frame and static-frame versions of functions.
 +void pic16f1SelectFrames(Ctx &, bool copiesWanted, bool stackReport);
++void pic16f1ConfigWords(Ctx &, StringRef tablePath);
  void setMipsTargetInfo(Ctx &);
  void setPPC64TargetInfo(Ctx &);
  void setPPCTargetInfo(Ctx &);

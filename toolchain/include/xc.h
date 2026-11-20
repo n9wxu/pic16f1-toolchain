@@ -38,7 +38,34 @@ void __delay_loops(unsigned long loops);
 #define __delay_ms(ms) _delay((unsigned long)((ms) * (_XTAL_FREQ / 4000.0)))
 #define __delay_us(us) _delay((unsigned long)((us) * (_XTAL_FREQ / 4000000.0)))
 
-/* Place the two configuration words in the image. Use once per program. */
+/* XC8's names for things this compiler spells otherwise. */
+#define __interrupt(...) __attribute__((interrupt))
+#define __persistent __attribute__((section(".noinit")))
+#define __section(name) __attribute__((section(name)))
+#define __pack __attribute__((packed))
+#define __reentrant
+#define __near
+#define __far
+typedef _Bool __bit;
+#define __nop() NOP()
+#define ei() (INTCONbits.GIE = 1)
+#define di() (INTCONbits.GIE = 0)
+
+/* Eight bytes of initial data EEPROM content. Each use follows the one
+ * before, from the start of the EEPROM; one use to a line. */
+#define __EEPROM_CAT2(a, b) a##b
+#define __EEPROM_CAT(a, b) __EEPROM_CAT2(a, b)
+#define __EEPROM_DATA(a, b, c, d, e, f, g, h)                                  \
+    __attribute__((section(".eeprom"), used))                                  \
+    static const unsigned int __EEPROM_CAT(__eeprom_data_, __LINE__)[8] = {    \
+        (unsigned char)(a), (unsigned char)(b), (unsigned char)(c),            \
+        (unsigned char)(d), (unsigned char)(e), (unsigned char)(f),            \
+        (unsigned char)(g), (unsigned char)(h)}
+
+/* The configuration words can be given as XC8 gives them, with
+ *     #pragma config FOSC = INTOSC, WDTE = OFF
+ * (the linker makes the words; a setting not given keeps its erased
+ * value), or whole, with this. Use one or the other, once per program. */
 #define PIC_CONFIG_WORDS(word1, word2)                                         \
     __attribute__((section(".config"), used))                                  \
     static const unsigned int __pic_config_words[2] = {(word1), (word2)}

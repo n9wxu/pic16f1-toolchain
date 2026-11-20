@@ -628,3 +628,162 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport) {
         .overwrite(*alias);
   }
 }
+
+//===----------------------------------------------------------------------===//
+// Configuration words from #pragma config.
+//
+// The compiler leaves each pragma's text in the section .pic16f1.config, a
+// string "file:line: NAME=VALUE,NAME=VALUE". What the names mean depends on
+// the device and is in a table the driver names with -z pic16f1-config=:
+//   W address default        a configuration word
+//   U address default        a user ID word
+//   S name address mask      a setting: the bits of a word
+//   V name value bits        a value of the setting, in place
+// A value may also be a number, which is the value of the setting's bits.
+// The words go in the sections .config and .userid, each made only if some
+// setting of its kind is given; what is not set keeps the default.
+//===----------------------------------------------------------------------===//
+
+void elf::pic16f1ConfigWords(Ctx &ctx, StringRef tablePath) {
+  SmallVector<StringRef, 8> records;
+  bool wordsGiven = false;
+  for (InputSectionBase *sec : ctx.inputSections) {
+    if (!sec || !sec->isLive())
+      continue;
+    if (sec->name == ".config")
+      wordsGiven = true;
+    if (sec->name != ".pic16f1.config")
+      continue;
+    StringRef text = toStringRef(sec->content());
+    while (!text.empty()) {
+      StringRef record;
+      std::tie(record, text) = text.split('\0');
+      if (!record.empty())
+        records.push_back(record);
+    }
+    sec->markDead();
+  }
+  if (records.empty())
+    return;
+  if (tablePath.empty()) {
+    Err(ctx) << "#pragma config is used, but the device's table of settings "
+                "is not given (-z pic16f1-config=FILE; pic16f1-cc does it)";
+    return;
+  }
+  std::optional<MemoryBufferRef> buffer = readFile(ctx, tablePath);
+  if (!buffer)
+    return;
+
+  struct Word {
+    uint32_t address;
+    uint16_t value;
+    bool userId;
+  };
+  struct Setting {
+    uint32_t address;
+    uint16_t mask;
+    StringMap<uint16_t> values;
+    // Where it was given, and as what.
+    StringRef where;
+    uint16_t given = 0;
+  };
+  SmallVector<Word, 8> words;
+  StringMap<Setting> settings;
+  StringRef table = buffer->getBuffer();
+  while (!table.empty()) {
+    StringRef line;
+    std::tie(line, table) = table.split('\n');
+    SmallVector<StringRef, 4> f;
+    line.split(f, ' ', -1, /*KeepEmpty=*/false);
+    if (f.empty() || f[0].starts_with("#"))
+      continue;
+    uint32_t a = 0, b = 0;
+    if ((f[0] == "W" || f[0] == "U") && f.size() == 3 &&
+        !f[1].getAsInteger(0, a) && !f[2].getAsInteger(0, b))
+      words.push_back({a, uint16_t(b), f[0] == "U"});
+    else if (f[0] == "S" && f.size() == 4 && !f[2].getAsInteger(0, a) &&
+             !f[3].getAsInteger(0, b) && b != 0) {
+      Setting &s = settings[f[1]];
+      s.address = a;
+      s.mask = b;
+    } else if (f[0] == "V" && f.size() == 4 && !f[3].getAsInteger(0, a))
+      settings[f[1]].values[f[2]] = a;
+    else
+      Err(ctx) << tablePath << ": cannot read the line '" << line << "'";
+  }
+
+  bool configSet = false, userIdSet = false;
+  for (StringRef record : records) {
+    StringRef where, list;
+    size_t split = record.rfind(": ");
+    if (split == StringRef::npos)
+      list = record;
+    else {
+      where = record.substr(0, split);
+      list = record.substr(split + 2);
+    }
+    while (!list.empty()) {
+      StringRef pair, name, text;
+      std::tie(pair, list) = list.split(',');
+      std::tie(name, text) = pair.split('=');
+      auto it = settings.find(name);
+      if (it == settings.end()) {
+        Err(ctx) << where << ": #pragma config: this device has no setting "
+                 << name;
+        continue;
+      }
+      Setting &s = it->second;
+      uint16_t bits;
+      uint32_t number;
+      auto v = s.values.find(text);
+      if (v != s.values.end())
+        bits = v->second;
+      else if (!text.getAsInteger(0, number) &&
+               number <= uint32_t(s.mask >> llvm::countr_zero(s.mask)))
+        bits = number << llvm::countr_zero(s.mask);
+      else {
+        std::string known;
+        for (auto &value : s.values)
+          known += (known.empty() ? "" : ", ") + value.first().str();
+        Err(ctx) << where << ": #pragma config: " << name << " cannot be "
+                 << text
+                 << (known.empty() ? std::string()
+                                   : " (it can be " + known + ")");
+        continue;
+      }
+      if (!s.where.empty() && s.given != bits) {
+        Err(ctx) << where << ": #pragma config: " << name
+                 << " is also set, differently, at " << s.where;
+        continue;
+      }
+      s.where = where.empty() ? StringRef("?") : where;
+      s.given = bits;
+      for (Word &w : words)
+        if (w.address == s.address) {
+          w.value = (w.value & ~s.mask) | bits;
+          (w.userId ? userIdSet : configSet) = true;
+        }
+    }
+  }
+  if (configSet && wordsGiven)
+    Err(ctx) << "the configuration words are given both by #pragma config "
+                "and as words (PIC_CONFIG_WORDS, or a section .config)";
+
+  auto emit = [&](StringRef name, bool userId) {
+    std::string bytes;
+    for (const Word &w : words)
+      if (w.userId == userId) {
+        bytes += char(w.value & 0xFF);
+        bytes += char(w.value >> 8);
+      }
+    StringRef saved = ctx.saver.save(bytes);
+    ctx.inputSections.push_back(make<InputSection>(
+        ctx.internalFile, name, SHT_PROGBITS, SHF_ALLOC, /*addralign=*/1,
+        /*entsize=*/0,
+        ArrayRef<uint8_t>((const uint8_t *)saved.data(), bytes.size())));
+  };
+  if (configSet)
+    emit(".config", false);
+  if (userIdSet)
+    emit(".userid", true);
+}

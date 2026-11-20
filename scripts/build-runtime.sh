@@ -56,5 +56,5 @@ rm -f $objs
 }
 build_all "" ""
 build_all "-small" "-mcmodel=small -DONE_PAGE"
-cp "$root"/toolchain/lib/*.ld "$out/"
+cp "$root"/toolchain/lib/*.ld "$root"/toolchain/lib/*.cfg "$out/"
 echo "runtime built in $out"
