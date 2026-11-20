@@ -12,12 +12,29 @@
 # come from this checkout's build/toolchain, brought up to date first;
 # that is for trying the packaging, not for a release.
 #
-# Usage: scripts/release-macos.sh [arm64] [x86_64]      (both if none named)
+# Usage: scripts/release-macos.sh [--upload TAG] [arm64] [x86_64]
+#   Both architectures if none is named. --upload v0.2.0 is for a release:
+#   it takes the target files from that GitHub release (which the Release
+#   workflow has published by then) and adds the macOS files to it. It
+#   needs the checkout to be at the tag, and gh.
 #   TARGET_FILES  the workflow's pic16f1-target-files.tar.gz
 #   NINJA_JOBS    compilations at once for the LLVM builds (default 5)
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 version=$(cat "$root/VERSION")
+upload=
+if [ "${1:-}" = --upload ]; then
+    upload=$2
+    shift 2
+    [ "$upload" = "v$version" ] || { echo "release-macos: VERSION says $version, not $upload" >&2; exit 1; }
+    [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$root" rev-parse "$upload^{commit}")" ] ||
+        { echo "release-macos: the checkout is not at $upload" >&2; exit 1; }
+    [ -z "$(git -C "$root" status --porcelain)" ] || { echo "release-macos: the checkout has changes" >&2; exit 1; }
+    mkdir -p "$root/build/release/dl"
+    (cd "$root" && gh release download "$upload" --pattern pic16f1-target-files.tar.gz \
+        --dir "$root/build/release/dl" --clobber)
+    TARGET_FILES=$root/build/release/dl/pic16f1-target-files.tar.gz
+fi
 [ $# -gt 0 ] || set -- arm64 x86_64
 export MACOSX_DEPLOYMENT_TARGET=11.0
 if [ -n "${TARGET_FILES:-}" ]; then
@@ -61,4 +78,11 @@ for arch in "$@"; do
     env -i HOME="$HOME" PATH=/usr/bin:/bin "$root/tools/test_package.sh" "$root/dist/$platform/pic16f1-toolchain"
     "$root/scripts/package-vsix.sh" "$platform" "$root/dist/pic16f1-toolchain-$version-$platform.tar.gz" "$root/dist"
 done
-ls -l "$root"/dist/*macos*
+ls -l "$root"/dist/*macos*.tar.gz "$root"/dist/*macos*.vsix
+if [ -n "$upload" ]; then
+    for arch in "$@"; do
+        (cd "$root" && gh release upload "$upload" --clobber \
+            "$root/dist/pic16f1-toolchain-$version-macos-$arch.tar.gz" \
+            "$root/dist/pic16f1-toolchain-$version-macos-$arch.vsix")
+    done
+fi

@@ -65,8 +65,9 @@ belong to the debugger.
 
 C and C++ need nothing more. **Rust** needs `rustup` (the project names
 the nightly compiler it was tested with, which rustup fetches). **Zig**
-needs Zig 0.15 on the PATH. **Forth** is compiled by `pic16f1-forth` from
-a terminal; a folder with a `.fth` file builds and debugs as a project.
+needs Zig 0.15 on the PATH. **Forth** is compiled by `pic16f1-forth`; a
+folder with a `.fth` file builds and debugs as a project once
+**PIC16F1: Select Device...** has named its device.
 
 ## Without the editor
 

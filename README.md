@@ -25,6 +25,7 @@ gates G0 to G2.
 | 5 | Optimization | every benchmark no larger and no slower than XC8 at each of its levels; in total 0.73 of XC8's size at `-Os` |
 | 6 | Debugging | LLDB with a PIC16F1 plugin, on the simulator and on the part; VS Code projects (`pic16f1-new-project`) |
 | 7 | Other languages | C++, Rust, Zig and Forth ([docs/languages.md](docs/languages.md)); a catalog of others ([docs/language-catalog.md](docs/language-catalog.md)) |
+| 8 | Releases | For macOS, Linux and Windows: the toolchain as an archive, and as a VS Code extension that installs it and builds and debugs projects ([docs/install.md](docs/install.md)) |
 
 ## Layout
 
@@ -56,7 +57,17 @@ gates G0 to G2.
 | `toolchain/` | Compiler driver, runtime library, device headers, linker scripts, register descriptions (SVD), debugger wrappers and the template for new projects |
 | `examples/debug/` | A program with a VS Code setup for debugging on the simulator |
 | `pcb/` | KiCad project of a simple programmer and debugger |
+| `vscode/` | The VS Code extension, and its tests |
 | `scripts/` | Build helpers |
+
+## Installing a release
+
+Install the `.vsix` file for your system in VS Code (Extensions view >
+... > Install from VSIX): it carries the whole toolchain. Then
+**PIC16F1: New Project...**, F7 to build, F5 to debug on the simulator.
+Without VS Code, unpack the archive and put its `bin` on the PATH.
+[docs/install.md](docs/install.md) has the details. The rest of this page
+is about working on the toolchain itself.
 
 ## Quick start
 
@@ -125,9 +136,11 @@ scripts/build-xc8-refs.sh
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` builds the simulator for Linux and macOS, runs the
-benchmark set, and publishes the binaries, the reference binaries and the
-benchmark report as a GitHub release.
+Pushing a tag `vX.Y.Z` builds, tests and packages the toolchain for Linux
+and Windows and publishes them as a GitHub release;
+`scripts/release-macos.sh --upload vX.Y.Z` on a Mac adds the macOS
+packages. [docs/install.md](docs/install.md) describes what a release
+holds and how it is made and tested.
 
 ## License
 

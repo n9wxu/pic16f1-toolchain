@@ -145,6 +145,23 @@ jobs:
           ldd dist/linux-x86_64/pic16f1-toolchain/bin/lldb-dap dist/linux-x86_64/pic16f1-toolchain/bin/clang
           tools/test_package.sh dist/linux-x86_64/pic16f1-toolchain
 
+      - name: Package the VS Code extension
+        run: scripts/package-vsix.sh linux-x86_64 dist/pic16f1-toolchain-*-linux-x86_64.tar.gz dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-linux-x86_64
+          path: dist/pic16f1-toolchain-*-linux-x86_64.vsix
+
+      # In a real VS Code: the extension as it will be installed unpacks
+      # its toolchain, builds a project and debugs it on the simulator.
+      - name: The extension works in VS Code
+        run: |
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2
+          (cd vscode && npm install --no-save --no-audit --no-fund @vscode/test-electron)
+          mkdir -p "$RUNNER_TEMP/vsix" && (cd "$RUNNER_TEMP/vsix" && unzip -q "$GITHUB_WORKSPACE"/dist/pic16f1-toolchain-*-linux-x86_64.vsix)
+          PIC16F1_HOME="$RUNNER_TEMP/pic16f1-home" xvfb-run -a node vscode/test/run.js --extension "$RUNNER_TEMP/vsix/extension"
+
   windows-build:
     name: Build (windows-x86_64)
     runs-on: windows-2022
@@ -282,6 +299,20 @@ jobs:
 
       - name: The package works with nothing else installed
         run: tools/test_package.sh dist/windows-x86_64/pic16f1-toolchain
+
+      - name: Package the VS Code extension
+        run: scripts/package-vsix.sh windows-x86_64 dist/pic16f1-toolchain-*-windows-x86_64.zip dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-windows-x86_64
+          path: dist/pic16f1-toolchain-*-windows-x86_64.vsix
+
+      - name: The extension works in VS Code
+        run: |
+          (cd vscode && npm install --no-save --no-audit --no-fund @vscode/test-electron)
+          mkdir -p "$RUNNER_TEMP/vsix" && (cd "$RUNNER_TEMP/vsix" && unzip -q "$GITHUB_WORKSPACE"/dist/pic16f1-toolchain-*-windows-x86_64.vsix)
+          PIC16F1_HOME="$(cygpath -w "$RUNNER_TEMP/pic16f1-home")" node vscode/test/run.js --extension "$(cygpath -w "$RUNNER_TEMP/vsix/extension")"
 
       - name: The benchmarks, built on Windows, run as they do built on Linux
         env:

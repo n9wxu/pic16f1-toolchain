@@ -862,12 +862,21 @@ program, a Makefile that builds it to the same `build/NAME.hex` and
 simulator and on the part work alike in all four.
 
 The project has a small program for the F1 Evaluation Platform, a Makefile
-(`make`, `make debug`, `make size`, `make list`), and a VS Code setup: a
-build task, "Debug on the simulator" and "Debug on the part (PICkit 2
-probe)" configurations, and include paths for the editor. The second
-configuration builds with `-mdebugger`, has the probe's OpenOCD program
-the part and waits for that to finish; OpenOCD ends with the debug
-session, so each session starts from a freshly programmed and reset part.
+(`make`, `make debug`, `make size`, `make list`), and a VS Code setup for
+the toolchain's extension (`vscode/`; [install.md](install.md)): "Debug on
+the simulator" and "Debug on the part (probe)" configurations, the device
+and optimization as settings, and include paths for the editor. The
+extension builds (F7), starts the simulator or the probe's OpenOCD, and
+debugs with the toolchain's LLDB. The second configuration builds with
+`-mdebugger`, has OpenOCD program the part and waits for that to finish;
+OpenOCD ends with the debug session, so each session starts from a freshly
+programmed and reset part.
+
+`pic16f1-build` builds a project as `make` does, without make (for
+Windows, and for the extension, which builds with it): it finds the
+language from what is in the directory, takes the device, level and name
+from the Makefile unless told otherwise, and has `clean`, `size`, `list`,
+`sim` and `debug` as well.
 
 ### On the part itself
 
