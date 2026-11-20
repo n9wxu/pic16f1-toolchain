@@ -464,6 +464,31 @@ sequence shared between functions would then cost more than it saves.
 In a whole-program build (the default) sequences are shared across source
 files as well.
 
+### Switches
+
+A `switch` is comparisons, tests of a bit mask, or a table of jumps:
+the index goes to W and `BRW` skips into a table of `GOTO`s that follows
+it (one word an entry in the one-page code model, `MOVLP` and `GOTO`
+otherwise, with W doubled). The table costs about seven words apart from
+its entries, one of which every value in the range needs, and a dozen
+cycles whatever the value; comparisons cost about three words for each run
+of consecutive values that go to one place, and time that grows with the
+number of runs. So a table is made
+
+- at the levels that count size (`-O3`, `-Os`, `-Oz`), only if it is no
+  larger than the comparisons;
+- otherwise if there are at least eight runs and it is no more than twice
+  the size;
+- never for fewer than four destinations (bit masks do those), or a range
+  over 255 values (127 with two-word entries).
+
+The driver also stops LLVM from copying the block that ends in the table
+jump into every block that leads to it, which it does for processors that
+predict branches. On a test program of six switches the tables make the
+code 11% smaller at `-O1` and 19% at `-Os`, and faster by 4% and 18%
+(`scripts/test-switch.sh` runs it in both code models, through both
+instruction selectors, and with tables off).
+
 ### Inlining
 
 LLVM's inliner assumes that a call costs several instructions and that a
@@ -877,6 +902,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | Delays (`scripts/test-delay.sh`) | pass on 2 devices at 3 levels: never short, at most 12 cycles long |
 | Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |
 | XC8 source forms (`scripts/test-xc8.sh`) | pass: configuration, user ID and EEPROM words at 4 settings; wrong settings refused |
+| Switches (`scripts/test-switch.sh`) | pass on 2 devices: 5 levels, both code models, both selectors, tables on and off |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
@@ -959,9 +985,9 @@ At `-Os`:
 | sieve | 54 | 141 | 270 | 287 | 236 | 16,542 | 32,668 | 33,838 |
 | sort | 75 | 266 | 449 | 529 | 446 | 12,493 | 24,213 | 28,704 |
 | strings | 74 | 238 | 506 | 532 | 436 | 3,661 | 8,781 | 11,015 |
-| structs | 53 | 170 | 325 | 405 | 226 | 914 | 3,028 | 3,292 |
+| structs | 53 | 170 | 321 | 405 | 226 | 914 | 3,008 | 3,292 |
 | timer_isr | 85 | 145 | 246 | 265 | 5,468 | 5,645 | 5,910 | 6,181 |
-| **Total** | 996 | 3,225 | 4,841 | 6,601 | | | | |
+| **Total** | 996 | 3,225 | 4,837 | 6,601 | | | | |
 
 LLVM's code is 4.9 times the size of the smallest programs and
 1.50 times the size of the ones that compute at run time; in
@@ -999,7 +1025,6 @@ has most to find:
   words, so a program using all three nearly fills an 8K-word part.
 - No variable-length arrays or `alloca` in an interrupt handler; the compiler
   says so.
-- No jump tables: a `switch` becomes a chain of comparisons.
 - `byval` struct arguments from front ends other than Clang are rejected.
 - Against XC8 at the same level, every one of the fifteen benchmark
   programs is no larger and no slower, at each of XC8's five levels:
@@ -1009,8 +1034,8 @@ has most to find:
   | `-O0` | 5,304 / 8,542 (0.62) | `crc8tab` 0.84 | 0.36 | `timer_isr` 0.89 |
   | `-O1` | 5,052 / 7,818 (0.65) | `crc8tab` 0.86 | 0.39 | `timer_isr` 0.89 |
   | `-O2` | 5,039 / 7,697 (0.65) | `crc8tab` 0.87 | 0.40 | `timer_isr` 0.90 |
-  | `-O3` | 4,950 / 6,790 (0.73) | `strings` 0.99 (4 words) | 0.48 | `sieve` 0.98 |
-  | `-Os` | 4,841 / 6,601 (0.73) | `matrix` 0.98 (12 words) | 0.48 | `sieve` 0.97 |
+  | `-O3` | 4,946 / 6,790 (0.73) | `strings` 0.99 (4 words) | 0.48 | `sieve` 0.98 |
+  | `-Os` | 4,837 / 6,601 (0.73) | `matrix` 0.98 (12 words) | 0.48 | `sieve` 0.97 |
 
   That holds because of what `pic16f1-cc` makes of each level; see "What
   the levels mean". `-Oz` has no XC8 counterpart; against XC8 `-Os` it is

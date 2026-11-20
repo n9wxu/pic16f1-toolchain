@@ -1336,6 +1336,15 @@ bool PIC16F1ExpandBranches::runOnMachineFunction(MachineFunction &MF) {
           BuildMI(MBB, MI, DL, TII.get(PIC16F1::MOVLP))
               .addMBB(Target, PIC16F1II::MO_PAGE);
         BuildMI(MBB, MI, DL, TII.get(PIC16F1::GOTO)).addMBB(Target);
+      } else if (Opc == PIC16F1::BRTABLE) {
+        // W takes the index, twice it where an entry is two words.
+        unsigned Index = TII.fileAddr(MI.getOperand(0).getReg());
+        bool OnePage = MF.getTarget().getCodeModel() == CodeModel::Small;
+        BuildMI(MBB, MI, DL, TII.get(OnePage ? PIC16F1::MOVF : PIC16F1::LSLF))
+            .addImm(Index)
+            .addImm(0);
+        BuildMI(MBB, MI, DL, TII.get(PIC16F1::BRTABLEW))
+            .addJumpTableIndex(MI.getOperand(1).getIndex());
       } else if (Opc == PIC16F1::JMPreg) {
         // PCLATH takes the high byte; writing PCL then performs the jump.
         unsigned Pair = TII.fileAddr(MI.getOperand(0).getReg());

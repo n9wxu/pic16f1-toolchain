@@ -16,6 +16,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -24,6 +25,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -42,7 +45,9 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
   setBooleanVectorContents(ZeroOrOneBooleanContent);
   setMinFunctionAlignment(Align(2));
   setPrefFunctionAlignment(Align(2));
-  setMinimumJumpTableEntries(UINT_MAX);
+  // A switch can go through a table of jumps (BRTABLE); whether one does is
+  // decided by isSuitableForJumpTable.
+  setMinimumJumpTableEntries(4);
   setMaxAtomicSizeInBitsSupported(0);
 
   for (MVT VT : MVT::integer_valuetypes()) {
@@ -93,7 +98,7 @@ PIC16F1TargetLowering::PIC16F1TargetLowering(const TargetMachine &TM,
   setOperationAction({ISD::GlobalAddress, ISD::ExternalSymbol,
                       ISD::BlockAddress},
                      MVT::i16, Custom);
-  setOperationAction(ISD::BR_JT, MVT::Other, Expand);
+  setOperationAction(ISD::BR_JT, MVT::Other, Custom);
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
   // The stack pointer that variable-sized objects move is the cell __sp.
   setOperationAction({ISD::STACKSAVE, ISD::STACKRESTORE}, MVT::Other, Custom);
@@ -133,6 +138,8 @@ SDValue PIC16F1TargetLowering::LowerOperation(SDValue Op,
     return LowerExternalSymbol(Op, DAG);
   case ISD::BR_CC:
     return LowerBR_CC(Op, DAG);
+  case ISD::BR_JT:
+    return LowerBR_JT(Op, DAG);
   case ISD::SELECT_CC:
     return LowerSELECT_CC(Op, DAG);
   case ISD::VASTART:
@@ -587,6 +594,73 @@ static PIC16F1CC::CondCodes normalizeCondition(ISD::CondCode CC, SDValue &LHS,
   default:
     llvm_unreachable("unexpected integer condition");
   }
+}
+
+static cl::opt<bool> NoJumpTables(
+    "pic16f1-no-jump-tables", cl::Hidden, cl::init(false),
+    cl::desc("Never make a switch a table of jumps"));
+
+unsigned PIC16F1TargetLowering::getJumpTableEncoding() const {
+  return MachineJumpTableInfo::EK_Inline;
+}
+
+// A table costs a fixed part (the range check, loading W, BRW: about seven
+// words and, with the jump out of the table, a dozen cycles) and an entry
+// for every value in the range, used or not: one word in the one-page code
+// model, two outside it. Comparisons cost about three words for each run
+// of consecutive values that go to one place (five for a run longer than
+// one value), and their time grows with the number of runs, where the
+// table's does not. So a table is made
+//   - where size is what counts, only if it is no larger than the
+//     comparisons;
+//   - otherwise if there are at least eight runs, where it is the faster,
+//     and it is no more than twice the size.
+// Fewer than four destinations are left to tests of a bit mask. W holds
+// the index, doubled for two-word entries, which bounds the range.
+bool PIC16F1TargetLowering::isSuitableForJumpTable(
+    const SwitchInst *SI, uint64_t NumCases, uint64_t Range,
+    ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI) const {
+  const Function *F = SI->getParent()->getParent();
+  const bool OnePage = getTargetMachine().getCodeModel() == CodeModel::Small;
+  const uint64_t EntryWords = OnePage ? 1 : 2;
+  if (NoJumpTables || Range > (OnePage ? 255u : 127u) || NumCases < 4)
+    return false;
+
+  SmallVector<std::pair<APInt, const BasicBlock *>, 16> Cases;
+  SmallPtrSet<const BasicBlock *, 8> Destinations;
+  for (const auto &Case : SI->cases()) {
+    Cases.push_back({Case.getCaseValue()->getValue(), Case.getCaseSuccessor()});
+    Destinations.insert(Case.getCaseSuccessor());
+  }
+  if (Destinations.size() < 4)
+    return false;
+  llvm::sort(Cases, [](const auto &A, const auto &B) {
+    return A.first.ult(B.first);
+  });
+  uint64_t Runs = 0, Compares = 0;
+  for (size_t I = 0; I != Cases.size();) {
+    size_t End = I + 1;
+    while (End != Cases.size() && Cases[End].second == Cases[I].second &&
+           Cases[End].first == Cases[End - 1].first + 1)
+      ++End;
+    ++Runs;
+    Compares += End - I > 1 ? 5 : 3;
+    I = End;
+  }
+  const uint64_t Table = 7 + Range * EntryWords;
+  if (F->hasOptSize() || F->hasMinSize())
+    return Table <= Compares;
+  return Runs >= 8 && Table <= 2 * Compares;
+}
+
+SDValue PIC16F1TargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc dl(Op);
+  SDValue Chain = Op.getOperand(0);
+  auto *Table = cast<JumpTableSDNode>(Op.getOperand(1));
+  SDValue Index =
+      DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Op.getOperand(2));
+  return DAG.getNode(PIC16F1ISD::BR_TABLE, dl, MVT::Other, Chain, Index,
+                     DAG.getTargetJumpTable(Table->getIndex(), MVT::i16));
 }
 
 SDValue PIC16F1TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {

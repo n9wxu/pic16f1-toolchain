@@ -1221,6 +1221,29 @@ bool PIC16F1InstructionSelector::select(MachineInstr &I) {
     return done(I, build(I, PIC16F1::JMP).addMBB(I.getOperand(0).getMBB()));
   case G_BRINDIRECT:
     return done(I, build(I, PIC16F1::JMPreg).addUse(I.getOperand(0).getReg()));
+  case G_BRJT: {
+    // The index is below the number of entries, which fits a byte. The
+    // table's address is not used: the table follows the jump.
+    Register Wide = I.getOperand(2).getReg();
+    if (!constrain(Wide))
+      return false;
+    Register Index = MRI->createVirtualRegister(&PIC16F1::GPR8RegClass);
+    build(I, TargetOpcode::COPY, Index).addUse(Wide, {}, PIC16F1::sub_lo);
+    return done(I, build(I, PIC16F1::BRTABLE)
+                       .addUse(Index)
+                       .addJumpTableIndex(I.getOperand(1).getIndex()));
+  }
+  case G_JUMP_TABLE: {
+    // Only G_BRJT refers to it, and that has no use for the address.
+    Register Dst = I.getOperand(0).getReg();
+    if (!MRI->use_nodbg_empty(Dst)) {
+      if (!constrain(Dst))
+        return false;
+      build(I, TargetOpcode::IMPLICIT_DEF, Dst);
+    }
+    I.eraseFromParent();
+    return true;
+  }
   case G_SELECT:
     return selectSelect(I);
   case G_SHL:

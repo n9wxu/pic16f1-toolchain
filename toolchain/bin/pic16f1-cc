@@ -213,6 +213,10 @@ def main():
         tuning += ["-mllvm", "-inline-threshold=10", "-mllvm", "-inline-call-penalty=5"]
     tuning += ["-mllvm", "-disable-loop-idiom-hashrecognize"]
     tuning += ["-mllvm", "-disable-loop-idiom-memset", "-mllvm", "-disable-loop-idiom-memcpy"]
+    #   - the block that ends in a computed jump (a switch's table of
+    #     jumps) is not copied into each block that leads to it, which LLVM
+    #     does for the sake of branch prediction.
+    tuning += ["-mllvm", "-tail-dup-indirect-size=0"]
     size_level = any(f in ("-Os", "-Oz") for f in cflags)
     unroll = [] if size_level or "-funroll-loops" in cflags else ["-fno-unroll-loops"]
     clang += unroll

@@ -10,6 +10,7 @@
 #include "PIC16F1.h"
 #include "PIC16F1Subtarget.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Module.h"
@@ -421,6 +422,16 @@ unsigned PIC16F1InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return MI.getMF()->getTarget().getCodeModel() == CodeModel::Small ? 2 : 4;
   case PIC16F1::JMPreg:
     return 8;
+  case PIC16F1::BRTABLE:
+  case PIC16F1::BRTABLEW: {
+    // The load of W, BRW, and an entry of one or two words for each case.
+    const MachineFunction *MF = MI.getMF();
+    const MachineJumpTableInfo *Tables = MF->getJumpTableInfo();
+    unsigned Index = MI.getOperand(Opc == PIC16F1::BRTABLE ? 1 : 0).getIndex();
+    unsigned Entries = Tables ? Tables->getJumpTables()[Index].MBBs.size() : 0;
+    bool OnePage = MF->getTarget().getCodeModel() == CodeModel::Small;
+    return 2 * ((Opc == PIC16F1::BRTABLE ? 2 : 1) + Entries * (OnePage ? 1 : 2));
+  }
   case TargetOpcode::INLINEASM:
   case TargetOpcode::INLINEASM_BR: {
     const MachineFunction *MF = MI.getParent()->getParent();

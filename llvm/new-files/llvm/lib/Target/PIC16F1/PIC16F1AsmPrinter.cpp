@@ -11,6 +11,7 @@
 #include "PIC16F1.h"
 #include "PIC16F1TargetMachine.h"
 #include "TargetInfo/PIC16F1TargetInfo.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -92,6 +93,30 @@ MCOperand PIC16F1AsmPrinter::lowerSymbol(const MachineOperand &MO,
 }
 
 void PIC16F1AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  if (MI->getOpcode() == PIC16F1::BRTABLEW) {
+    // BRW, then a jump for each value of the index.
+    MCInst Skip;
+    Skip.setOpcode(PIC16F1::BRW);
+    EmitToStreamer(*OutStreamer, Skip);
+    bool OnePage = TM.getCodeModel() == CodeModel::Small;
+    const MachineJumpTableEntry &Table =
+        MF->getJumpTableInfo()->getJumpTables()[MI->getOperand(0).getIndex()];
+    for (const MachineBasicBlock *Target : Table.MBBs) {
+      const MCExpr *To = MCSymbolRefExpr::create(Target->getSymbol(), OutContext);
+      if (!OnePage) {
+        MCInst Page;
+        Page.setOpcode(PIC16F1::MOVLP);
+        Page.addOperand(MCOperand::createExpr(
+            MCSpecifierExpr::create(To, PIC16F1::S_PAGE, OutContext)));
+        EmitToStreamer(*OutStreamer, Page);
+      }
+      MCInst Jump;
+      Jump.setOpcode(PIC16F1::GOTO);
+      Jump.addOperand(MCOperand::createExpr(To));
+      EmitToStreamer(*OutStreamer, Jump);
+    }
+    return;
+  }
   if (MI->isPseudo()) {
     MI->print(errs());
     report_fatal_error("pseudo instruction reached the assembly printer");

@@ -141,6 +141,8 @@ PIC16F1LegalizerInfo::PIC16F1LegalizerInfo(const PIC16F1Subtarget &ST) {
   getActionDefinitionsBuilder(G_BRCOND).legalFor({s8}).clampScalar(0, s8, s8);
   getActionDefinitionsBuilder(G_BR).alwaysLegal();
   getActionDefinitionsBuilder(G_BRINDIRECT).legalFor({p0});
+  getActionDefinitionsBuilder(G_BRJT).legalFor({{p0, s16}});
+  getActionDefinitionsBuilder(G_JUMP_TABLE).legalFor({p0});
 
   // Operations with no instruction of their own become simpler ones.
   getActionDefinitionsBuilder(

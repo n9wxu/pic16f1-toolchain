@@ -124,6 +124,8 @@ def PICcallseq_end : SDNode<"ISD::CALLSEQ_END", SDT_PICCallSeqEnd,
 def PICwrapper : SDNode<"PIC16F1ISD::WRAPPER", SDT_PICWrapper>;
 // Compare and branch: condition, left, right, target.
 def PICbrcc : SDNode<"PIC16F1ISD::BR_CC", SDT_PICBrCC, [SDNPHasChain]>;
+def SDT_PICBrTable : SDTypeProfile<0, 2, [SDTCisVT<0, i8>, SDTCisVT<1, i16>]>;
+def PICbrtable : SDNode<"PIC16F1ISD::BR_TABLE", SDT_PICBrTable, [SDNPHasChain]>;
 // Compare and select: condition, left, right, value if true, value if false.
 def PICselectcc : SDNode<"PIC16F1ISD::SELECT_CC", SDT_PICSelectCC>;
 // Shift by one bit.
@@ -664,6 +666,18 @@ def JMPFAR : Pseudo<(outs), (ins brtarget:$t), []>;
 // Jump to the code address in a register pair.
 let isBarrier = 1, isIndirectBranch = 1 in
 def JMPreg : Pseudo<(outs), (ins GPR16:$t), [(brind GPR16:$t)]>;
+
+// A switch through a table of jumps. The index, which is below the number
+// of entries, goes to W (doubled where an entry is two words: MOVLP and
+// GOTO, outside the one-page code model) and BRW skips that many words into
+// the table, which follows it. BRTABLE becomes the instruction that loads W
+// and BRTABLEW, which the printer writes out as BRW and the entries.
+let isBranch = 1, isIndirectBranch = 1, isTerminator = 1, isBarrier = 1,
+    Defs = [CARRY] in {
+def BRTABLE : Pseudo<(outs), (ins GPR8:$idx, i16imm:$jt),
+                     [(PICbrtable GPR8:$idx, tjumptable:$jt)]>;
+def BRTABLEW : Pseudo<(outs), (ins i16imm:$jt), []>;
+}
 
 let Defs = [CARRY, TMP0] in {
 def BRCC8rr : Pseudo<(outs), (ins cc:$c, GPR8:$a, GPR8:$b, brtarget:$t),
