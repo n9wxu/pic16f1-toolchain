@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Turn LLVM IR that a front end made for the AVR into IR for the PIC16F1.
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Turn LLVM IR that a front end made for the AVR into IR for the PIC16F1.
 
     pic16f1-retarget [-o out.ll] input.bc|input.ll|input.o
 
@@ -33,14 +41,16 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
 
 
 def llvm_bin():
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
     for c in (os.environ.get("PIC16F1_LLVM_BIN"),
-              HERE if os.path.exists(os.path.join(HERE, "clang")) else None,
+              HERE if os.path.exists(os.path.join(HERE, "clang" + EXE)) else None,
               os.path.join(repo, "build", "llvm-build", "bin")):
-        if c and os.path.exists(os.path.join(c, "clang")):
+        if c and os.path.exists(os.path.join(c, "clang" + EXE)):
             return c
     sys.exit("pic16f1-retarget: cannot find the LLVM tools (clang)")
 

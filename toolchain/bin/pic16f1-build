@@ -1,0 +1,254 @@
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Build a PIC16F1 project: what `make` does in one, without make.
+
+    pic16f1-build [build|clean|size|list|sim|debug] [options] [directory]
+
+The directory (the current one if none is named) is a project as
+pic16f1-new-project makes them, in C, C++, Rust, Zig or Forth; which it is
+shows from what is in it (Cargo.toml, main.zig, a .fth file, or C and C++
+sources). The program is built to build/NAME.hex and build/NAME.elf with
+debug information.
+
+    build   (the default) compile and link; print the flash words used
+    clean   remove what a build made
+    size    the flash words the program takes
+    list    its disassembly
+    sim     build, then start the simulator waiting for a debugger
+    debug   build, then debug on the simulator with LLDB in this terminal
+
+    --device NAME   the device (pic16f1937)
+    --opt LEVEL     -munoptimized, -O1, -O2, -O3 or -Os
+    --mode MODE     Zig's build mode (ReleaseSmall)
+    --debugger      build for an in-circuit debugger on the part (-mdebugger)
+    --name NAME     the program's name (the directory's)
+    --port N        the simulator's port for `sim` (3333)
+    -- FLAGS        more options for the compiler
+
+What is not given is taken from the project's Makefile, if it has one
+(its DEVICE, OPT, MODE and NAME), so that this and `make` build the same
+program. It is for systems without make (Windows) and for editors: the
+VS Code extension builds with it.
+"""
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
+C_SOURCES = ("*.c", "*.cpp", "*.cc", "*.cxx", "*.S", "*.s")
+
+
+def fail(message):
+    sys.exit("pic16f1-build: " + message)
+
+
+def tool(name):
+    """A program of the toolchain: a script beside this one (run by the
+    Python that runs this), or a compiled program here or in a checkout."""
+    path = os.path.join(HERE, name)
+    if name in ("pic16f1-cc", "pic16f1-zig", "pic16f1-forth", "pic16f1-rust-ld"):
+        return [sys.executable, path]
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    for c in (os.environ.get("PIC16F1_SIM") if name == "pic16f1-sim" else None,
+              path + EXE,
+              os.path.join(repo, "sim", "target", "release", name + EXE) if name == "pic16f1-sim" else None,
+              os.path.join(repo, "build", "llvm-build", "bin", name + EXE)):
+        if c and os.path.exists(c):
+            return [c]
+    fail(f"cannot find {name}")
+
+
+def makefile_values(directory):
+    """NAME = value lines of the project's Makefile (any of =, :=, ?=)."""
+    values = {}
+    try:
+        with open(os.path.join(directory, "Makefile"), encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"([A-Z_]+)\s*[:?]?=\s*(\S*)\s*$", line)
+                if m and "$" not in m.group(2) and "@" not in m.group(2):
+                    values.setdefault(m.group(1), m.group(2))
+    except OSError:
+        pass
+    return values
+
+
+def language_of(directory):
+    if os.path.exists(os.path.join(directory, "Cargo.toml")):
+        return "rust"
+    if os.path.exists(os.path.join(directory, "main.zig")):
+        return "zig"
+    if glob.glob(os.path.join(directory, "*.fth")):
+        return "forth"
+    return "c"
+
+
+def run(cmd, **kw):
+    try:
+        r = subprocess.run(cmd, **kw)
+    except FileNotFoundError:
+        fail(f"cannot run {cmd[0]}: it is not installed, or not on the PATH")
+    if r.returncode != 0:
+        sys.exit(r.returncode if r.returncode > 0 else 1)
+    return r
+
+
+def sources(patterns):
+    found = []
+    for p in patterns:
+        found += sorted(glob.glob(p))
+    # (A file system that ignores case gives *.s and *.S the same files.)
+    return list(dict.fromkeys(found))
+
+
+def build_rust(o):
+    rust = None
+    for c in (os.path.join(HERE, "..", "share", "pic16f1", "rust"), os.path.join(HERE, "..", "rust")):
+        if os.path.exists(os.path.join(c, "pic16f1.json")):
+            rust = os.path.normpath(c)
+            break
+    if not rust:
+        fail("cannot find the Rust target description (pic16f1.json)")
+    link = [f"-mcpu={o.device}", o.opt or "-Os", "-g", "-mstack-report"] + (["-mdebugger"] if o.debugger else []) + o.extra
+    env = dict(os.environ)
+    # cargo runs the linker as a program: the launcher on Windows, the
+    # script itself elsewhere.
+    env["CARGO_TARGET_PIC16F1_LINKER"] = os.path.join(HERE, "pic16f1-rust-ld" + EXE)
+    env["CARGO_TARGET_PIC16F1_RUSTFLAGS"] = " ".join(["-C", "linker-plugin-lto"] + [f"-C link-arg={a}" for a in link])
+    run(["cargo", "build", "--release", "-Zbuild-std=core", "--target", os.path.join(rust, "pic16f1.json")], env=env)
+    out = os.path.join("target", "pic16f1", "release")
+    elf = os.path.join(out, o.name + ".elf")
+    if not os.path.exists(elf):
+        made = sorted(glob.glob(os.path.join(out, "*.elf")), key=os.path.getmtime)
+        if not made:
+            fail(f"cargo made no program in {out}")
+        elf = made[-1]
+    shutil.copyfile(elf, o.elf)
+    notes = sorted(glob.glob(os.path.join(out, "deps", "*.link.txt")), key=os.path.getmtime)
+    if notes:
+        shutil.copyfile(notes[-1], os.path.join("build", o.name + ".link.txt"))
+        with open(notes[-1], encoding="utf-8", errors="replace") as f:
+            sys.stdout.write(f.read())
+    run(tool("pic16f1-sim") + ["elf2hex", o.elf, o.hex])
+
+
+def build(o):
+    os.makedirs("build", exist_ok=True)
+    flags = ["-g"] + ([o.opt] if o.opt else []) + [f"-mcpu={o.device}"] + (["-mdebugger"] if o.debugger else [])
+    sys.stdout.flush()
+    if o.language == "rust":
+        build_rust(o)
+    elif o.language == "zig":
+        run(tool("pic16f1-zig") + ["-g", "-O", o.mode] + flags[1:] + o.extra + ["-o", o.hex, "main.zig"] + sources(["*.c"]))
+    elif o.language == "forth":
+        main = "main.fth" if os.path.exists("main.fth") else sources(["*.fth"])[0]
+        run(tool("pic16f1-forth") + flags + o.extra + ["-o", o.hex, main])
+    else:
+        found = sources(C_SOURCES)
+        if not found:
+            fail(f"no sources in {os.getcwd()} (C, C++ or assembly files, Cargo.toml, main.zig or a .fth file)")
+        if not o.opt:
+            flags.insert(1, "-O1")
+        run(tool("pic16f1-cc") + flags + ["-Wall"] + o.extra + ["-o", o.hex] + found)
+    size(o)
+
+
+def size(o):
+    r = run(tool("pic16f1-sim") + ["size", "--device", o.device, o.elf], capture_output=True, text=True)
+    print(f"{r.stdout.strip()} words of flash used")
+    sys.stdout.flush()
+
+
+class Options:
+    pass
+
+
+def main():
+    args = sys.argv[1:]
+    o = Options()
+    o.device = o.opt = o.mode = o.name = None
+    o.debugger = False
+    o.extra = []
+    port = "3333"
+    command, directory = None, None
+    while args:
+        a = args.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "--":
+            o.extra = args
+            break
+        if a in ("--device", "--opt", "--mode", "--name", "--port") and args:
+            value = args.pop(0)
+            if a == "--port":
+                port = value
+            else:
+                setattr(o, a[2:], value)
+        elif a == "--debugger":
+            o.debugger = True
+        elif a in ("build", "clean", "size", "list", "sim", "debug") and command is None and directory is None:
+            command = a
+        elif a.startswith("-") or directory is not None:
+            fail(f"unexpected argument {a}; see --help")
+        else:
+            directory = a
+    command = command or "build"
+    directory = os.path.abspath(directory or ".")
+    if not os.path.isdir(directory):
+        fail(f"no directory {directory}")
+    os.chdir(directory)
+
+    made = makefile_values(directory)
+    o.language = language_of(directory)
+    o.device = (o.device or made.get("DEVICE") or "pic16f1937").lower()
+    if not o.device.startswith("pic"):
+        o.device = "pic" + o.device
+    o.opt = o.opt or made.get("OPT")
+    o.mode = o.mode or made.get("MODE") or "ReleaseSmall"
+    o.name = o.name or made.get("NAME") or re.sub(r"[^A-Za-z0-9_-]", "-", os.path.basename(directory)) or "program"
+    o.hex = os.path.join("build", o.name + ".hex")
+    o.elf = os.path.join("build", o.name + ".elf")
+
+    if command == "clean":
+        for d in ("build", "target") if o.language == "rust" else ("build",):
+            shutil.rmtree(d, ignore_errors=True)
+        return 0
+    if command in ("size", "list"):
+        if not os.path.exists(o.elf):
+            fail(f"no {o.elf}; build first")
+        if command == "size":
+            size(o)
+        else:
+            run(tool("pic16f1-sim") + ["disasm", "--device", o.device, o.elf])
+        return 0
+    build(o)
+    if command == "sim":
+        return subprocess.run(tool("pic16f1-sim") + ["gdb", "--device", o.device, "--port", port, o.elf]).returncode
+    if command == "debug":
+        sim = subprocess.Popen(tool("pic16f1-sim") + ["gdb", "--device", o.device, "--port", port, o.elf])
+        try:
+            import time
+            time.sleep(0.3)
+            return subprocess.run(tool("lldb") + ["-O", "settings set target.process.memory-cache-line-size 32", o.elf,
+                                                  "-o", f"gdb-remote {port}",
+                                                  "-o", "breakpoint set --one-shot true --name main",
+                                                  "-o", "continue"]).returncode
+        finally:
+            sim.terminate()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

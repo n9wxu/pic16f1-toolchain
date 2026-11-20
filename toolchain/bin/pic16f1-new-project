@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Start a project for a PIC16F1 device.
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Start a project for a PIC16F1 device.
 
     pic16f1-new-project [--language c|c++|rust|zig] [--device pic16f1937]
                         [--openocd DIR] <directory>
@@ -16,6 +24,8 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
 
 
 def first_dir(candidates, what):
@@ -62,7 +72,7 @@ def main():
     svd_dir = first_dir([os.path.join(HERE, "..", "share", "pic16f1", "svd"),
                          os.path.join(HERE, "..", "svd")], "the register descriptions")
     clang_inc = ""
-    for lib in (os.path.join(HERE, "..", "lib", "clang"), os.path.join(repo, "build", "llvm-build", "lib", "clang")):
+    for lib in (os.path.join(HERE, "..", "lib", "clang" + EXE), os.path.join(repo, "build", "llvm-build", "lib", "clang" + EXE)):
         if os.path.isdir(lib):
             versions = sorted(os.listdir(lib))
             if versions:

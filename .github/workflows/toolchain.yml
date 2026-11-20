@@ -1,9 +1,19 @@
 name: Toolchain
 
-# Builds clang and lld with the PIC16F1 target, builds every test program
-# with them, and runs the results on the simulator next to the XC8 reference
-# binaries. An LLVM build takes a long time, so this runs on request and for
-# release tags rather than on every push.
+# Builds the toolchain for Linux and for Windows and tests each.
+#
+# The Linux job builds clang, lld and the debugger with the PIC16F1 target,
+# the runtime library, picolibc and the C++ library, builds every test
+# program with them and runs the results on the simulator next to the XC8
+# reference binaries, then packages the release tree. The Windows job
+# builds the programs that run on Windows and packages them with the Linux
+# job's files for the PIC16F1, which are the same on every system.
+#
+# (The macOS packages are built on a Mac with scripts/release-macos.sh:
+# hosted macOS runners cost ten times a Linux one.)
+#
+# An LLVM build takes a long time, so this runs on request and for release
+# tags rather than on every push.
 
 on:
   workflow_dispatch:
@@ -13,9 +23,11 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  linux:
     name: Build and test (linux-x86_64)
-    runs-on: ubuntu-latest
+    # The oldest hosted Ubuntu: the programs run where the C library is
+    # this one's (2.35) or newer.
+    runs-on: ubuntu-22.04
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
@@ -39,11 +51,19 @@ jobs:
       - name: Fetch LLVM and apply the PIC16F1 changes
         run: scripts/llvm-setup.sh
 
+      - name: Build libxml2 for the debugger
+        run: CMAKE_EXTRA="-DCMAKE_C_COMPILER_LAUNCHER=ccache" scripts/build-libxml2.sh "$PWD/build/libxml2"
+
       - name: Build toolchain
-        env:
-          CMAKE_EXTRA: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
         run: |
           ccache --max-size=3G
+          # The C++ library is linked in and the debugger uses the libxml2
+          # built above and no line editor, so that the programs need
+          # nothing of the system but its C library.
+          export CMAKE_EXTRA="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ \
+            -DLIBXML2_INCLUDE_DIR=$PWD/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$PWD/build/libxml2/lib/libxml2.a \
+            -DLLDB_ENABLE_LIBEDIT=OFF"
           scripts/build-llvm.sh
           ccache --show-stats
 
@@ -78,6 +98,11 @@ jobs:
           scripts/build-picolibc.sh build/toolchain/bin
           scripts/test-libc.sh
 
+      - name: Build the C++ library and test it
+        run: |
+          scripts/build-cxx.sh
+          scripts/test-cxx.sh
+
       - name: Compiler tests
         env:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc
@@ -90,15 +115,128 @@ jobs:
 
       - name: Package
         run: |
-          name=pic16f1-toolchain-linux-x86_64
-          mv build/toolchain "$name"
-          strip "$name"/bin/clang-* "$name"/bin/lld "$name"/bin/llvm-* || true
-          tar czf "$name.tar.gz" "$name"
+          python=$(scripts/fetch-python.sh linux-x86_64 build/release/dl)
+          python3 tools/package_release.py --platform linux-x86_64 --version "$(cat VERSION)" \
+            --llvm-build build/llvm-build --sim sim/target/release/pic16f1-sim \
+            --target-tree build/toolchain --python "$python" --out dist \
+            --target-files-out dist/pic16f1-target-files.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain-linux-x86_64
           path: |
-            pic16f1-toolchain-linux-x86_64.tar.gz
+            dist/pic16f1-toolchain-*-linux-x86_64.tar.gz
             toolchain-report.md
             toolchain-report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: target-files
+          path: dist/pic16f1-target-files.tar.gz
+
+      - name: The package works with nothing else installed
+        run: |
+          ldd dist/linux-x86_64/pic16f1-toolchain/bin/lldb-dap dist/linux-x86_64/pic16f1-toolchain/bin/clang
+          tools/test_package.sh dist/linux-x86_64/pic16f1-toolchain
+
+  windows:
+    name: Build and test (windows-x86_64)
+    needs: linux
+    runs-on: windows-2022
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash
+    env:
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+    steps:
+      - name: Keep line endings as they are in the repository
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install build tools
+        run: choco install ninja ccache -y --no-progress
+
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-
+
+      - name: Build simulator
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --locked --manifest-path sim/Cargo.toml
+          cargo test --release --locked --manifest-path sim/Cargo.toml
+
+      - name: Build the launcher of the Python drivers
+        run: |
+          mkdir -p build
+          cl -nologo -O2 -MT -W3 toolchain/windows/launcher.c -Fo:build/launcher.obj -Fe:build/launcher.exe
+
+      - name: Fetch LLVM and apply the PIC16F1 changes
+        run: scripts/llvm-setup.sh
+
+      - name: Build libxml2 for the debugger
+        run: |
+          CMAKE_EXTRA="-DCMAKE_C_COMPILER=cl -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" \
+            scripts/build-libxml2.sh "$(cygpath -m "$PWD")/build/libxml2"
+          ls build/libxml2/lib
+
+      - name: Build toolchain
+        env:
+          # libxml2 is linked in, not a DLL: its headers must be told, and
+          # its use of the system's random numbers needs bcrypt.
+          CL: /DLIBXML_STATIC
+          LINK: bcrypt.lib
+        run: |
+          here=$(cygpath -m "$PWD")
+          xml=$(ls build/libxml2/lib/*.lib | head -1)
+          ccache --max-size=3G
+          export HOST_ONLY=1
+          # The C run-time library is linked in (MultiThreaded), so that
+          # the programs need no Visual C++ redistributable.
+          export CMAKE_EXTRA="-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DLIBXML2_INCLUDE_DIR=$here/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$here/$xml"
+          scripts/build-llvm.sh
+          ccache --show-stats
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: target-files
+          path: build/target
+
+      - name: Package
+        run: |
+          tar -xzf build/target/pic16f1-target-files.tar.gz -C build/target
+          python=$(scripts/fetch-python.sh windows-x86_64 build/release/dl)
+          python tools/package_release.py --platform windows-x86_64 --version "$(cat VERSION)" \
+            --llvm-build build/llvm-build --sim sim/target/release/pic16f1-sim.exe \
+            --target-tree build/target/pic16f1-target-files --python "$python" \
+            --launcher build/launcher.exe --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-windows-x86_64
+          path: dist/pic16f1-toolchain-*-windows-x86_64.zip
+
+      - name: The package works with nothing else installed
+        run: tools/test_package.sh dist/windows-x86_64/pic16f1-toolchain
+
+      - name: The benchmarks, built on Windows, run as they do built on Linux
+        env:
+          PIC16F1_CC: dist/windows-x86_64/pic16f1-toolchain/bin/pic16f1-cc.exe
+          PIC16F1_LLVM_BIN: dist/windows-x86_64/pic16f1-toolchain/bin
+        run: |
+          scripts/build-llvm-tests.sh build/out/llvm-pic16f1
+          python tools/bench.py --markdown toolchain-report.md --json toolchain-report.json \
+            reference/xc8-v4.00 build/out/llvm-pic16f1
+          cat toolchain-report.md >> "$GITHUB_STEP_SUMMARY"

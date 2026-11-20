@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Compile a Zig program for the PIC16F1.
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Compile a Zig program for the PIC16F1.
 
     pic16f1-zig -mcpu=pic16f1937 -o blink.hex main.zig [more.c ...]
 
@@ -32,6 +40,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
 MODES = {"ReleaseSmall": "-Os", "ReleaseFast": "-O2", "ReleaseSafe": "-Os", "Debug": "-O1"}
 
 
@@ -45,8 +55,8 @@ def load(name):
 
 def find_zig():
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
-    for c in (os.environ.get("PIC16F1_ZIG"), os.path.join(repo, "build", "zig", "zig"),
-              os.path.join(repo, "zig", "zig"),  # beside a packaged toolchain in build/
+    for c in (os.environ.get("PIC16F1_ZIG"), os.path.join(repo, "build", "zig", "zig" + EXE),
+              os.path.join(repo, "zig", "zig" + EXE),  # beside a packaged toolchain in build/
               shutil.which("zig")):
         if c and os.path.exists(c):
             return c
@@ -55,8 +65,8 @@ def find_zig():
 
 def find_library():
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
-    for c in (os.environ.get("PIC16F1_ZIG_LIB"), os.path.join(HERE, "..", "share", "pic16f1", "zig"),
-              os.path.join(repo, "toolchain", "zig")):
+    for c in (os.environ.get("PIC16F1_ZIG_LIB"), os.path.join(HERE, "..", "share", "pic16f1", "zig" + EXE),
+              os.path.join(repo, "toolchain", "zig" + EXE)):
         if c and os.path.exists(os.path.join(c, "pic.zig")):
             return c
     sys.exit("pic16f1-zig: cannot find the library (pic.zig)")

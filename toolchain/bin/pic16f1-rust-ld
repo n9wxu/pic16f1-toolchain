@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""The linker cargo and rustc call for a PIC16F1 program.
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """The linker cargo and rustc call for a PIC16F1 program.
 
 rustc is run for a stand-in target (see pic16f1-retarget) with
 -C linker-plugin-lto, so what it hands the linker is LLVM bitcode, not
@@ -30,6 +38,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
 BITCODE = (b"BC\xc0\xde", b"\xde\xc0\x17\x0b")
 
 
@@ -84,7 +94,7 @@ def main():
                  "is -C linker-plugin-lto in rustflags?")
     if not any(a.startswith("-O") or a == "-munoptimized" for a in passed):
         passed.append("-Os")
-    clang = os.path.join(bin_dir, "clang")
+    clang = os.path.join(bin_dir, "clang" + EXE)
     with tempfile.TemporaryDirectory() as tmp:
         sources = []
         base = output[:-4] if output.endswith(".elf") else output
@@ -99,7 +109,7 @@ def main():
         for n, rlib in enumerate(archives):
             d = os.path.join(tmp, f"rlib{n}")
             os.mkdir(d)
-            subprocess.run([os.path.join(bin_dir, "llvm-ar"), "x", os.path.abspath(rlib)],
+            subprocess.run([os.path.join(bin_dir, "llvm-ar" + EXE), "x", os.path.abspath(rlib)],
                            cwd=d, check=True)
             members = []
             for k, name in enumerate(sorted(os.listdir(d))):
@@ -118,7 +128,7 @@ def main():
                 members.append(obj)
             if members:
                 lib = os.path.join(tmp, f"librust{n}.a")
-                subprocess.run([os.path.join(bin_dir, "llvm-ar"), "rcs", lib] + members,
+                subprocess.run([os.path.join(bin_dir, "llvm-ar" + EXE), "rcs", lib] + members,
                                check=True)
                 passed.append(lib)
         # An ELF file where rustc wants it, and a HEX file beside it.

@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Compiler driver for the PIC16F1 LLVM toolchain.
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Compiler driver for the PIC16F1 LLVM toolchain.
 
     pic16f1-cc -mcpu=pic16f1937 -Os -o prog.hex main.c other.c
 
@@ -56,6 +64,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# Programs are NAME.exe on Windows.
+EXE = ".exe" if os.name == "nt" else ""
 
 # C++ sources. They are compiled without exceptions, run-time type
 # information, locks around the first use of a local static, and
@@ -80,7 +90,7 @@ def locate():
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
     llvm_bin = first_existing([
         os.environ.get("PIC16F1_LLVM_BIN"),
-        HERE if os.path.exists(os.path.join(HERE, "clang")) else None,
+        HERE if os.path.exists(os.path.join(HERE, "clang" + EXE)) else None,
         os.path.join(repo, "build", "llvm-build", "bin"),
     ], "the LLVM tools (clang, ld.lld)")
     lib = first_existing([
@@ -95,8 +105,8 @@ def locate():
     ], "the device header directory")
     sim = first_existing([
         os.environ.get("PIC16F1_SIM"),
-        os.path.join(HERE, "pic16f1-sim"),
-        os.path.join(repo, "sim", "target", "release", "pic16f1-sim"),
+        os.path.join(HERE, "pic16f1-sim" + EXE),
+        os.path.join(repo, "sim", "target", "release", "pic16f1-sim" + EXE),
         shutil.which("pic16f1-sim"),
     ], "pic16f1-sim")
     return llvm_bin, lib, inc, sim
@@ -178,7 +188,7 @@ def main():
     if not sources and not objects:
         sys.exit("pic16f1-cc: no input files")
 
-    clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
+    clang = [os.path.join(llvm_bin, "clang" + EXE), "--target=pic16f1", f"-mcpu={cpu}",
              "-ffunction-sections", "-fdata-sections",
              # A #pragma the compiler does not know is otherwise ignored
              # without a word.
@@ -329,7 +339,7 @@ def main():
             # of a function it did not choose, among others) gets an address
             # no code has, where the default, 0, is the reset vector.
             table = os.path.join(lib, cpu + ".cfg")
-            link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
+            link = [os.path.join(llvm_bin, "ld.lld" + EXE), "-T", script, "--gc-sections",
                     "-z", "dead-reloc-in-nonalloc=.debug_*=0xffffffff",
                     crt0] + objs + objects + rt + ["-o", elf] + ldflags
             # What the settings of #pragma config mean on this device.
