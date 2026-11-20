@@ -12,7 +12,7 @@ first, with the simplest design that works.
 | LLVM target `pic16f1` | `llvm/new-files/llvm/lib/Target/PIC16F1` | Assembler, object writer, code generator |
 | Clang target | `llvm/new-files/clang`, `llvm/existing-files.patch` | Type sizes, ABI, `interrupt` attribute |
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
-| Runtime | `toolchain/runtime` | Startup code; multiply, divide and shifts in assembly, built from the register-independent macros of `toolchain/include/picmath.inc` (64-bit multiply and divide in C); `memcpy` family; soft float from LLVM's compiler-rt |
+| Runtime | `toolchain/runtime` | Startup code; multiply, divide and shifts in assembly, built from the register-independent macros of `toolchain/include/picmath.inc` (64-bit multiply and divide in C); `memcpy` family; single-precision floating point (`float.c`), with only the 64-bit conversions from LLVM's compiler-rt; delays; `setjmp` |
 | Device files | `toolchain/include`, `toolchain/lib` | Generated from the device database |
 | C library | `toolchain/picolibc` | picolibc at a pinned commit, with a small patch; built for 32- and 64-bank devices |
 | Driver | `toolchain/bin/pic16f1-cc` | Compile, link, convert to HEX |
@@ -905,6 +905,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |
 | XC8 source forms (`scripts/test-xc8.sh`) | pass: configuration, user ID and EEPROM words at 4 settings; wrong settings refused |
 | Switches (`scripts/test-switch.sh`) | pass on 2 devices: 5 levels, both code models, both selectors, tables on and off |
+| Floating point (`scripts/test-float.sh`) | pass: bit for bit against a host's arithmetic (47 million checks by default, 282 million run), and on 2 devices at 3 levels |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
@@ -1021,10 +1022,18 @@ has most to find:
   `pic16f1-cc --libc`. `printf` handles integers only by default, and a
   program using it is about 3,600 words.
   `malloc` works; the heap sits between the data and the stack.
-- Floating point works (single precision; `double` is the same type) and
-  matches IEEE results bit for bit in the tests, but uses LLVM's generic
-  compiler-rt routines. Each of add, multiply and divide is 1,500 to 2,100
-  words, so a program using all three nearly fills an 8K-word part.
+- Floating point is single precision (`double` is the same type), IEEE
+  with subnormals, round to nearest. The arithmetic, comparisons and
+  conversions to and from 32-bit integers are the runtime library's own
+  (`toolchain/runtime/float.c`), written for an 8-bit machine: about 550
+  words for addition and subtraction, 430 for multiplication, 390 for
+  division, and 280 for the rounding they share; a program that uses all
+  of them and the conversions is about 2,800 words. (LLVM's generic
+  routines, used before, were 1,500 to 2,000 words each, and division took
+  thirteen times as long.) Results are the same bit for bit:
+  `scripts/test-float.sh` compares them with a host's arithmetic over
+  hundreds of millions of operands. Conversions to and from 64-bit
+  integers are still the generic ones.
 - No variable-length arrays or `alloca` in an interrupt handler; the compiler
   says so.
 - `byval` struct arguments from front ends other than Clang are rejected.

@@ -40,11 +40,14 @@ build "$rt/muldiv.S"
 build "$rt/muldiv64.c"
 build "$rt/mem.c"
 
-# Single-precision floating point comes from LLVM's compiler-rt. float and
-# double are both 32 bits on this target, so no double routines are needed.
+# Single-precision floating point (float and double are both 32 bits on
+# this target): float.c has the arithmetic, the comparisons and the
+# conversions to and from 32-bit integers, written for an 8-bit machine.
+# Negation and the conversions to and from 64-bit integers come from LLVM's
+# compiler-rt.
+build "$rt/float.c"
 crt=${LLVM_SRC:-$root/build/llvm-project}/compiler-rt/lib/builtins
-for f in addsf3 subsf3 mulsf3 divsf3 negsf2 comparesf2 fixsfsi fixunssfsi \
-         fixsfdi fixunssfdi floatsisf floatunsisf floatdisf floatundisf fp_mode; do
+for f in negsf2 fixsfdi fixunssfdi floatdisf floatundisf; do
     build "$crt/$f.c"
 done
 
