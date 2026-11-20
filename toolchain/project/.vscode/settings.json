@@ -1,8 +1,7 @@
 {
-    // Where the toolchain's programs are, the device, and how the program
-    // is optimized (-munoptimized, -O1, -O2, -O3 or -Os). The tasks and the
-    // debug configurations read these.
-    "pic16f1.toolchain": "@TOOLCHAIN@",
+    // The device, and how the program is optimized (-munoptimized, -O1,
+    // -O2, -O3 or -Os). The PIC16F1 Toolchain extension reads these; the
+    // status bar shows them, and a click there changes the device.
     "pic16f1.device": "@DEVICE@",
     "pic16f1.optimization": "-O1",
     // For debugging on the part itself: the OpenOCD of the PICkit 2 probe
@@ -12,7 +11,7 @@
     "pic16f1.vdd": "3300",
     // Let the MEMORY view of the Memory View extension follow these
     // debug sessions.
-    "memory-view.trackDebuggers": [ "lldb-dap" ],
+    "memory-view.trackDebuggers": [ "pic16f1" ],
     "files.associations": { "*.h": "c" },
     "C_Cpp.errorSquiggles": "disabled"
 }

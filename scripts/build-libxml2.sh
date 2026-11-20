@@ -20,7 +20,9 @@ archive=$work/libxml2-$version.tar.xz
     "https://download.gnome.org/sources/libxml2/${version%.*}/libxml2-$version.tar.xz"
 if command -v sha256sum >/dev/null; then got=$(sha256sum "$archive"); else got=$(shasum -a 256 "$archive"); fi
 [ "${got%% *}" = "$sha256" ] || { echo "libxml2-$version.tar.xz: wrong checksum" >&2; exit 1; }
-[ -d "$work/libxml2-$version" ] || tar -xf "$archive" -C "$work"
+# (By relative names: a tar that takes "D:" in a path for a host, as Git's
+# on Windows does, is not confused.)
+[ -d "$work/libxml2-$version" ] || (cd "$work" && tar -xf "libxml2-$version.tar.xz")
 # shellcheck disable=SC2086
 cmake -G Ninja -S "$work/libxml2-$version" -B "$work/build" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \

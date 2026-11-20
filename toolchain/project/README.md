@@ -5,14 +5,16 @@ at `@TOOLCHAIN@`.
 
 ## In VS Code
 
-Open this folder. The **LLDB DAP** extension
-(`llvm-vs-code-extensions.lldb-dap`) is needed for debugging.
+Open this folder. The **PIC16F1 Toolchain** extension does the work; it
+is what installed the toolchain, or is installed from the release's
+`.vsix` file (Extensions view > ... > Install from VSIX).
 
 | | |
 |---|---|
-| Build | Terminal > Run Build Task (Cmd-Shift-B). Errors and warnings appear in the Problems panel |
+| Build | F7, or Terminal > Run Build Task (Cmd-Shift-B). Errors and warnings appear in the Problems panel; the status bar shows the flash words used |
 | Debug on the simulator | Run > Start Debugging (F5), with "Debug on the simulator" chosen in the Run and Debug view. It builds, starts the simulator and stops at `main` |
-| Debug on the part | Choose "Debug on the part (PICkit 2 probe)" and press F5. It builds for the in-circuit debugger, programs the part through the probe's OpenOCD and stops at `main` |
+| Debug on the part | Choose "Debug on the part (probe)" and press F5. It builds for the in-circuit debugger, programs the part through the probe's OpenOCD and stops at `main` |
+| Another device | Click the device in the status bar, or **PIC16F1: Select Device...** in the Command Palette |
 
 Breakpoints, stepping, the call stack, variables, watch expressions and
 registers work in both. On the part there is one breakpoint, it stops one
@@ -20,13 +22,14 @@ instruction past the start of its line, there are no data breakpoints, and
 pins RB6 and RB7 belong to the debugger. A part that has executed `SLEEP`
 cannot be halted.
 
-The device, the optimization level, the toolchain's location and the
-probe's are in `.vscode/settings.json`.
+The device, the optimization level and the probe's OpenOCD are in
+`.vscode/settings.json`. The terminals of this window have the toolchain's
+programs on their PATH.
 
 ## From a terminal
 
 ```sh
-make            # build/@NAME@.hex and .elf
+make            # build/@NAME@.hex and .elf (pic16f1-build does the same without make)
 make debug      # LLDB on the simulator
 make size
 make list       # disassembly

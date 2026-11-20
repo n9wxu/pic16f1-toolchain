@@ -17,6 +17,11 @@ name: Toolchain
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build the Windows programs only (to try a change to that build)
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -28,6 +33,7 @@ jobs:
     # The oldest hosted Ubuntu: the programs run where the C library is
     # this one's (2.35) or newer.
     runs-on: ubuntu-22.04
+    if: ${{ !inputs.windows_only }}
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4

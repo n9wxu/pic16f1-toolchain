@@ -18,7 +18,8 @@ const path = require('path');
 
 const WINDOWS = process.platform === 'win32';
 const EXE = WINDOWS ? '.exe' : '';
-const HOME = path.join(os.homedir(), '.pic16f1');
+// (PIC16F1_HOME puts it somewhere else: the extension's tests do.)
+const HOME = process.env.PIC16F1_HOME || path.join(os.homedir(), '.pic16f1');
 const INSTALLED = path.join(HOME, 'toolchain');
 const LANGUAGES = [
     { label: 'C', id: 'c', description: 'the compiler\'s first language' },

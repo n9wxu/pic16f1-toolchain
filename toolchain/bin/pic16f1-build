@@ -35,8 +35,8 @@ debug information.
     -- FLAGS        more options for the compiler
 
 What is not given is taken from the project's Makefile, if it has one
-(its DEVICE, OPT, MODE and NAME), so that this and `make` build the same
-program. It is for systems without make (Windows) and for editors: the
+(its DEVICE, OPT, MODE, NAME and CFLAGS), so that this and `make` build
+the same program. It is for systems without make (Windows) and for editors: the
 VS Code extension builds with it.
 """
 import glob
@@ -78,8 +78,8 @@ def makefile_values(directory):
     try:
         with open(os.path.join(directory, "Makefile"), encoding="utf-8") as f:
             for line in f:
-                m = re.match(r"([A-Z_]+)\s*[:?]?=\s*(\S*)\s*$", line)
-                if m and "$" not in m.group(2) and "@" not in m.group(2):
+                m = re.match(r"([A-Z_]+)\s*[:?]?=\s*(.*?)\s*$", line)
+                if m and "$" not in m.group(2):
                     values.setdefault(m.group(1), m.group(2))
     except OSError:
         pass
@@ -220,6 +220,9 @@ def main():
     o.opt = o.opt or made.get("OPT")
     o.mode = o.mode or made.get("MODE") or "ReleaseSmall"
     o.name = o.name or made.get("NAME") or re.sub(r"[^A-Za-z0-9_-]", "-", os.path.basename(directory)) or "program"
+    if made.get("CFLAGS") and o.language != "rust":
+        import shlex
+        o.extra = shlex.split(made["CFLAGS"]) + o.extra
     o.hex = os.path.join("build", o.name + ".hex")
     o.elf = os.path.join("build", o.name + ".elf")
 

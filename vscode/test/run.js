@@ -7,7 +7,7 @@
 // toolchain/bin of a checkout). The extension is this directory unless
 // another is named (an unpacked VSIX, to test what will be installed; with
 // no --toolchain it then installs the toolchain it carries, into
-// $PIC16F1_TEST_HOME/.pic16f1 if that is set). VS Code is $VSCODE_EXECUTABLE,
+// $PIC16F1_HOME if that is set, else .pic16f1 of the home directory). VS Code is $VSCODE_EXECUTABLE,
 // or the one installed (macOS), or one that @vscode/test-electron
 // downloads (CI: npm install --no-save @vscode/test-electron first).
 'use strict';
@@ -35,10 +35,6 @@ async function main() {
     const project = path.join(work, 'project');
     const log = path.join(work, 'test.log');
     const env = Object.assign({}, process.env, { PIC16F1_TEST_LOG: log, PIC16F1_TEST_LANGUAGE: language });
-    if (process.env.PIC16F1_TEST_HOME) {
-        env.HOME = process.env.PIC16F1_TEST_HOME;
-        env.USERPROFILE = process.env.PIC16F1_TEST_HOME;
-    }
     let bin = toolchain;
     if (toolchain) {
         env.PIC16F1_TOOLCHAIN_BIN = toolchain;
@@ -64,7 +60,7 @@ async function main() {
         `--extensions-dir=${path.join(work, 'extensions')}`,
         '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-updates', '--no-sandbox',
         '--disable-gpu',
-    ], { env, stdio: 'inherit' });
+    ], { env, stdio: 'inherit', timeout: 240000, killSignal: 'SIGKILL' });
     if (fs.existsSync(log)) process.stdout.write(fs.readFileSync(log, 'utf8'));
     const ok = run.status === 0 && fs.existsSync(log) && /extension ok/.test(fs.readFileSync(log, 'utf8'));
     if (!ok) console.error(`extension test failed (VS Code exit status ${run.status}); files kept in ${work}`);

@@ -1,42 +1,23 @@
 {
+    // Needs the "PIC16F1 Toolchain" extension, which builds the project,
+    // starts the simulator (or OpenOCD for the probe) and debugs with the
+    // toolchain's own LLDB.
     "version": "0.2.0",
     "configurations": [
         {
-            // Needs the "LLDB DAP" extension (llvm-vs-code-extensions.lldb-dap).
-            // The debugger itself is the toolchain's own build of LLDB.
             "name": "Debug on the simulator",
-            "type": "lldb-dap",
-            "request": "attach",
-            "program": "${workspaceFolder}/build/@NAME@.elf",
-            "debugAdapterExecutable": "${config:pic16f1.toolchain}/pic16f1-lldb-dap",
-            "gdb-remote-hostname": "127.0.0.1",
-            "gdb-remote-port": 3333,
-            "preLaunchTask": "pic16f1: simulator",
-            // The device's registers, for the XPERIPHERALS view of the
-            // Peripheral Viewer extension (mcu-debug.peripheral-viewer).
-            "svdPath": "@SVD@",
-            "initCommands": [ "settings set target.process.memory-cache-line-size 32" ],
-            // Run to main: the debugger continues from the reset vector once it
-            // is set up, and this stops it there.
-            "postRunCommands": [ "breakpoint set --one-shot true --name main" ]
+            "type": "pic16f1",
+            "request": "launch",
+            "target": "simulator"
         },
         {
-            // Programs the part through the PICkit 2 probe and debugs it
-            // there. The part has one breakpoint; see the README.
-            "name": "Debug on the part (PICkit 2 probe)",
-            "type": "lldb-dap",
-            "request": "attach",
-            "program": "${workspaceFolder}/build/@NAME@.elf",
-            "debugAdapterExecutable": "${config:pic16f1.toolchain}/pic16f1-lldb-dap",
-            "gdb-remote-hostname": "127.0.0.1",
-            "gdb-remote-port": 3333,
-            "preLaunchTask": "pic16f1: probe",
-            "svdPath": "@SVD@",
-            // Programming the part comes first; allow for it.
-            "timeout": 60,
-            // Small reads: every byte read from the part takes time.
-            "initCommands": [ "settings set target.process.memory-cache-line-size 32" ],
-            "postRunCommands": [ "breakpoint set --one-shot true --name main" ]
+            // Programs the part through a probe's OpenOCD and debugs it
+            // there (the pic16f1.openocd setting says where that is). The
+            // part has one breakpoint; see the README.
+            "name": "Debug on the part (probe)",
+            "type": "pic16f1",
+            "request": "launch",
+            "target": "probe"
         }
     ]
 }
