@@ -139,9 +139,8 @@ jobs:
           ldd dist/linux-x86_64/pic16f1-toolchain/bin/lldb-dap dist/linux-x86_64/pic16f1-toolchain/bin/clang
           tools/test_package.sh dist/linux-x86_64/pic16f1-toolchain
 
-  windows:
-    name: Build and test (windows-x86_64)
-    needs: linux
+  windows-build:
+    name: Build (windows-x86_64)
     runs-on: windows-2022
     timeout-minutes: 350
     defaults:
@@ -208,6 +207,47 @@ jobs:
             -DLIBXML2_INCLUDE_DIR=$here/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$here/$xml"
           scripts/build-llvm.sh
           ccache --show-stats
+
+      # The programs only; the next job puts them with the Linux job's
+      # files for the PIC16F1. (Apart, so that this long build does not
+      # wait for that one.)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-programs
+          retention-days: 3
+          path: |
+            build/llvm-build/bin/clang.exe
+            build/llvm-build/bin/ld.lld.exe
+            build/llvm-build/bin/llvm-mc.exe
+            build/llvm-build/bin/llvm-objdump.exe
+            build/llvm-build/bin/llvm-readelf.exe
+            build/llvm-build/bin/llvm-objcopy.exe
+            build/llvm-build/bin/llvm-ar.exe
+            build/llvm-build/bin/llvm-nm.exe
+            build/llvm-build/bin/llvm-size.exe
+            build/llvm-build/bin/lldb.exe
+            build/llvm-build/bin/lldb-dap.exe
+            build/llvm-build/bin/liblldb.dll
+            sim/target/release/pic16f1-sim.exe
+            build/launcher.exe
+
+  windows:
+    name: Package and test (windows-x86_64)
+    needs: [linux, windows-build]
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as they are in the repository
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-programs
 
       - uses: actions/download-artifact@v4
         with:
