@@ -481,7 +481,7 @@ index e22897c27..3ae60e1f1 100644
    Arch/PPC64.cpp
    Arch/RISCV.cpp
 diff --git a/lld/ELF/Driver.cpp b/lld/ELF/Driver.cpp
-index 51d9e3241..e3bcfed2a 100644
+index 51d9e3241..7b4b9b6e1 100644
 --- a/lld/ELF/Driver.cpp
 +++ b/lld/ELF/Driver.cpp
 @@ -174,6 +174,7 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
@@ -512,7 +512,7 @@ index 51d9e3241..e3bcfed2a 100644
    for (auto *arg : args.filtered(OPT_z))
      if (!arg->isClaimed())
        Warn(ctx) << "unknown -z value: " << StringRef(arg->getValue());
-@@ -3524,6 +3529,23 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
+@@ -3524,6 +3529,24 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
    // Split SHF_MERGE and .eh_frame sections into pieces in preparation for garbage collection.
    splitSections<ELFT>(ctx);
  
@@ -531,7 +531,8 @@ index 51d9e3241..e3bcfed2a 100644
 +  if (ctx.arg.emachine == EM_PIC16F1)
 +    pic16f1SelectFrames(ctx,
 +                        hasZOption(args, "pic16f1-interrupt-copies"),
-+                        hasZOption(args, "pic16f1-stack-report"));
++                        hasZOption(args, "pic16f1-stack-report"),
++                        !hasZOption(args, "pic16f1-no-frame-overlay"));
 +
    // Garbage collection and removal of shared symbols from unused shared objects.
    markLive<ELFT>(ctx);
@@ -550,7 +551,7 @@ index 05c0f3f1c..111e5d729 100644
    case Triple::ppcle:
      return EM_PPC;
 diff --git a/lld/ELF/LinkerScript.cpp b/lld/ELF/LinkerScript.cpp
-index 64fb717e1..48add0086 100644
+index 64fb717e1..1ea6f3e54 100644
 --- a/lld/ELF/LinkerScript.cpp
 +++ b/lld/ELF/LinkerScript.cpp
 @@ -180,6 +180,25 @@ static void expandMemoryRegion(MemoryRegion *memRegion, uint64_t size,
@@ -566,7 +567,7 @@ index 64fb717e1..48add0086 100644
 +// section of its own. "Small" is up to 16 bytes, which covers scalars and
 +// small structures and wastes at most 15 bytes at a bank boundary; the
 +// compiler (PIC16F1ExpandPseudo.cpp) uses the same limit.
-+static uint64_t pic16f1KeepInBank(uint64_t dot, uint64_t size) {
++uint64_t elf::pic16f1KeepInBank(uint64_t dot, uint64_t size) {
 +  const uint64_t base = 0x802000, end = 0x802FF0, bank = 80, small = 16;
 +  if (dot < base || dot >= end || size <= 1 || size > small)
 +    return dot;
@@ -579,10 +580,20 @@ index 64fb717e1..48add0086 100644
  void LinkerScript::expandMemoryRegions(uint64_t size) {
    if (state->memRegion)
      expandMemoryRegion(state->memRegion, size, state->outSec->name);
-@@ -1297,6 +1316,8 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
+@@ -1297,6 +1316,18 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
        // disable the default handling if the return value is true.
        if (!(synthesizeAlign && ctx.target->synthesizeAlign(dot, isec)))
          dot = alignToPowerOf2(dot, isec->addralign);
++      uint64_t frameAddress;
++      if (ctx.arg.emachine == EM_PIC16F1 &&
++          pic16f1PlaceFrame(ctx, isec, dot, frameAddress)) {
++        // The static frame of a function: it shares its place with the
++        // frames of functions that are never active when it is.
++        isec->outSecOff = frameAddress - sec->addr;
++        if (dot > pos)
++          expandOutputSection(dot - pos);
++        continue;
++      }
 +      if (ctx.arg.emachine == EM_PIC16F1)
 +        dot = pic16f1KeepInBank(dot, isec->getSize());
        isec->outSecOff = dot - sec->addr;
@@ -614,17 +625,24 @@ index 89e4dbeed..e2739024a 100644
      return setPPCTargetInfo(ctx);
    case EM_PPC64:
 diff --git a/lld/ELF/Target.h b/lld/ELF/Target.h
-index 50f0cd8a9..8d6fb139d 100644
+index 50f0cd8a9..8a4fe98b6 100644
 --- a/lld/ELF/Target.h
 +++ b/lld/ELF/Target.h
-@@ -212,6 +212,10 @@ void setAVRTargetInfo(Ctx &);
+@@ -212,6 +212,17 @@ void setAVRTargetInfo(Ctx &);
  void setHexagonTargetInfo(Ctx &);
  void setLoongArchTargetInfo(Ctx &);
  void setMSP430TargetInfo(Ctx &);
 +void setPIC16F1TargetInfo(Ctx &);
 +// Choose between the stack-frame and static-frame versions of functions.
-+void pic16f1SelectFrames(Ctx &, bool copiesWanted, bool stackReport);
++void pic16f1SelectFrames(Ctx &, bool copiesWanted, bool stackReport,
++                         bool overlay);
 +void pic16f1ConfigWords(Ctx &, StringRef tablePath);
++uint64_t pic16f1KeepInBank(uint64_t dot, uint64_t size);
++/// If \p isec is the static frame of a function, part of the overlay of
++/// such frames: where it goes, given that the next free address is \p dot,
++/// which is moved past the whole overlay.
++bool pic16f1PlaceFrame(Ctx &, InputSection *isec, uint64_t &dot,
++                       uint64_t &address);
  void setMipsTargetInfo(Ctx &);
  void setPPC64TargetInfo(Ctx &);
  void setPPCTargetInfo(Ctx &);

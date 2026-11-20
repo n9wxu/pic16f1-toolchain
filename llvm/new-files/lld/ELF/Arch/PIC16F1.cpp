@@ -26,6 +26,7 @@
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "Target.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -225,7 +226,117 @@ struct FrameNode {
 };
 } // namespace
 
-void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport) {
+//===----------------------------------------------------------------------===//
+// Static frames that share memory.
+//
+// A function with a static frame keeps its variables in sections of its own
+// (.noinit.<function>.frame, .saved). Two functions that are never active
+// at once can have theirs at the same addresses. With every call in view:
+// a function's frame starts where the frames of all that can call it have
+// ended, so along any chain of calls the frames follow one another, and
+// functions on different chains share. What runs in an interrupt handler
+// comes after everything the main program has, since a handler can start
+// between any two instructions.
+//
+// The frames are worked out here (pic16f1SelectFrames) and given their
+// addresses when the output section they are in is laid out
+// (pic16f1PlaceFrame, from LinkerScript.cpp), where the first of them marks
+// the start of the overlay.
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct OverlayFrame {
+  SmallVector<InputSection *, 2> sections;
+  SmallVector<unsigned, 4> callers;
+  bool inHandler = false;
+  uint64_t end = 0;
+};
+struct FrameOverlay {
+  std::vector<OverlayFrame> frames;
+  DenseMap<const InputSection *, uint64_t> address;
+  DenseSet<const InputSection *> members;
+  const InputSection *first = nullptr;
+  uint64_t end = 0;
+  bool failed = false;
+};
+} // namespace
+
+static FrameOverlay frameOverlay;
+
+// Lay the frames out from \p base. False if the calls do not settle, which
+// would mean a cycle of calls through a function with a static frame.
+static bool layOutFrames(uint64_t base) {
+  FrameOverlay &o = frameOverlay;
+  o.address.clear();
+  for (OverlayFrame &f : o.frames)
+    f.end = base;
+  auto pass = [&](bool inHandler, uint64_t from) {
+    bool changed = false;
+    for (OverlayFrame &f : o.frames) {
+      if (f.inHandler != inHandler)
+        continue;
+      uint64_t at = from;
+      for (unsigned caller : f.callers)
+        at = std::max(at, o.frames[caller].end);
+      for (InputSection *sec : f.sections) {
+        if (!sec->isLive())
+          continue;
+        at = pic16f1KeepInBank(alignToPowerOf2(at, sec->addralign),
+                               sec->getSize());
+        o.address[sec] = at;
+        at += sec->getSize();
+      }
+      if (at != f.end) {
+        f.end = at;
+        changed = true;
+      }
+    }
+    return changed;
+  };
+  uint64_t top = base;
+  for (bool inHandler : {false, true}) {
+    unsigned rounds = 0;
+    while (pass(inHandler, top))
+      if (++rounds > o.frames.size() + 2)
+        return false;
+    for (const OverlayFrame &f : o.frames)
+      if (f.inHandler == inHandler)
+        top = std::max(top, f.end);
+  }
+  o.end = top;
+  return true;
+}
+
+bool elf::pic16f1PlaceFrame(Ctx &ctx, InputSection *isec, uint64_t &dot,
+                            uint64_t &address) {
+  FrameOverlay &o = frameOverlay;
+  if (o.failed || !o.members.count(isec))
+    return false;
+  if (!o.first)
+    o.first = isec;
+  // Frames in another output section than the first are placed as any
+  // other section is. (Their place in the overlay stays empty.)
+  if (isec->getParent() != o.first->getParent())
+    return false;
+  if (isec == o.first) {
+    // A new round of address assignment.
+    if (!layOutFrames(dot)) {
+      o.failed = true;
+      return false;
+    }
+    dot = std::max(dot, o.end);
+  }
+  auto it = o.address.find(isec);
+  if (it == o.address.end())
+    return false;
+  address = it->second;
+  dot = std::max(dot, o.end);
+  return true;
+}
+
+void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport,
+                              bool overlay) {
+  frameOverlay = FrameOverlay();
   MapVector<Symbol *, FrameNode> nodes;
   // The files that describe their calls: a function of one of these that
   // has no record calls nothing.
@@ -470,6 +581,90 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport) {
     Log(ctx) << "static frame for " << sym->getName()
              << (twice.count(sym) ? ", and a copy for interrupt handlers" : "");
     pointAt(sym, node.staticVersion);
+  }
+
+  // The frames that can share memory: see above.
+  if (overlay) {
+    FrameOverlay &o = frameOverlay;
+    // A function in one of its two settings: the main program, a handler.
+    DenseMap<std::pair<Symbol *, unsigned>, unsigned> ids;
+    auto idOf = [&](Symbol *sym, bool inHandler) {
+      auto [it, isNew] =
+          ids.try_emplace({sym, unsigned(inHandler)}, o.frames.size());
+      if (isNew)
+        o.frames.emplace_back().inHandler = inHandler;
+      return it->second;
+    };
+    auto handlerSet = runsInHandler();
+    for (auto &[sym, node] : nodes) {
+      SmallVector<Symbol *, 8> viaPointer;
+      if (node.callsThroughPointer)
+        viaPointer.append(addressTaken.begin(), addressTaken.end());
+      if (inMain.count(sym)) {
+        unsigned from = idOf(sym, false);
+        for (const FrameNode::Call &call : node.calls)
+          if (!call.inInterruptVersion)
+            o.frames[idOf(call.callee, false)].callers.push_back(from);
+        for (Symbol *callee : viaPointer)
+          o.frames[idOf(callee, false)].callers.push_back(from);
+      }
+      if (handlerSet.count(sym)) {
+        unsigned from = idOf(sym, true);
+        bool viaCopy = usesInterruptVersion(sym, node) && !node.isInterrupt;
+        for (const FrameNode::Call &call : node.calls)
+          if (!viaCopy || call.inInterruptVersion)
+            o.frames[idOf(call.callee, true)].callers.push_back(from);
+        for (Symbol *callee : viaPointer)
+          o.frames[idOf(callee, true)].callers.push_back(from);
+      }
+    }
+    // The version of a function that a frame section belongs to, by name,
+    // and from that the function and the setting it runs in.
+    DenseMap<Symbol *, std::pair<Symbol *, bool>> versions;
+    for (auto &[sym, node] : nodes) {
+      versions[sym] = {sym, false};
+      if (node.staticVersion)
+        versions[node.staticVersion] = {sym, false};
+      if (node.interruptVersion)
+        versions[node.interruptVersion] = {sym, true};
+    }
+    for (ELFFileBase *file : ctx.objectFiles) {
+      StringMap<Symbol *> locals;
+      bool haveLocals = false;
+      for (InputSectionBase *base : file->getSections()) {
+        auto *sec = dyn_cast_or_null<InputSection>(base);
+        if (!sec || sec == &InputSection::discarded)
+          continue;
+        StringRef name = sec->name;
+        if (!name.consume_front(".noinit."))
+          continue;
+        // <function>.frame, <function>.frame.<n> or <function>.saved
+        size_t dot = name.rfind('.');
+        if (dot != StringRef::npos && dot + 1 < name.size() &&
+            llvm::all_of(name.substr(dot + 1), llvm::isDigit))
+          name = name.substr(0, dot);
+        if (!name.consume_back(".frame") && !name.consume_back(".saved"))
+          continue;
+        if (!haveLocals) {
+          haveLocals = true;
+          for (Symbol *sym : file->getLocalSymbols())
+            if (sym->isDefined() && !sym->getName().empty())
+              locals[sym->getName()] = sym;
+        }
+        auto local = locals.find(name);
+        Symbol *version =
+            local != locals.end() ? local->second : ctx.symtab->find(name);
+        auto it = versions.find(version);
+        if (!version || it == versions.end())
+          continue;
+        auto [function, forHandler] = it->second;
+        // A version that is not the handlers' own runs in a handler if
+        // that is the only place its function runs.
+        bool inHandler = forHandler || !inMain.count(function);
+        o.frames[idOf(function, inHandler)].sections.push_back(sec);
+        o.members.insert(sec);
+      }
+    }
   }
 
   //===--------------------------------------------------------------------===//

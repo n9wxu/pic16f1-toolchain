@@ -345,11 +345,23 @@ value back at the end. No call preserves FSR1.
 
 `-mllvm -pic16f1-static-frames=0` turns static frames off altogether.
 
-Not done yet: the fixed variables of functions that are never active
-together do not share memory, so a deep program can use more RAM than it
-would on the stack (which is why a function with a large variable keeps
-its stack frame); and a function that passes arguments on the stack cannot
-have a static frame, though only the call needs the stack.
+**Frames that share memory.** Two functions that are never active at the
+same time do not need their variables at different addresses. With every
+call in view the linker places each static frame where the frames of all
+the functions that can call it have ended: along any chain of calls the
+frames follow one another, and functions on different chains share. What
+runs in an interrupt handler comes after everything the main program has,
+since a handler can start between any two instructions; a call through a
+pointer is taken to reach every function whose address is taken. This is
+what XC8 calls its compiled stack. `-Wl,-z,pic16f1-no-frame-overlay` turns
+it off. `scripts/test-overlay.sh` runs a program whose functions each keep
+a pattern in their variables across the calls they make, with a handler
+running meanwhile; its frames take 30 bytes where they took 44.
+
+Not done yet: a function with a variable of more than 64 bytes keeps its
+stack frame, which sharing has made less necessary; and a function that
+passes arguments on the stack cannot have a static frame, though only the
+call needs the stack.
 
 ### Variable-length arrays and `alloca`
 
@@ -906,6 +918,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | XC8 source forms (`scripts/test-xc8.sh`) | pass: configuration, user ID and EEPROM words at 4 settings; wrong settings refused |
 | Switches (`scripts/test-switch.sh`) | pass on 2 devices: 5 levels, both code models, both selectors, tables on and off |
 | Floating point (`scripts/test-float.sh`) | pass: bit for bit against a host's arithmetic (47 million checks by default, 282 million run), and on 2 devices at 3 levels |
+| Static frames that share memory (`scripts/test-overlay.sh`) | pass on 2 devices at 5 settings: no frame overwritten, 30 bytes where there were 44 |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
