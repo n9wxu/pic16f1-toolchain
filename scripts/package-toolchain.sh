@@ -1,6 +1,9 @@
 #!/bin/sh
 # Assemble a self-contained toolchain tree in build/toolchain:
-#   bin/      clang, ld.lld, LLVM tools, pic16f1-cc, pic16f1-sim
+#   bin/      clang, ld.lld, LLVM tools, pic16f1-cc, pic16f1-sim,
+#             lldb and lldb-dap with their pic16f1- wrappers,
+#             pic16f1-new-project
+#   share/pic16f1/project             the template pic16f1-new-project copies
 #   include/  device headers          lib/pic16f1/  runtime and linker scripts
 #   lib/clang/<ver>/include           compiler-provided headers (stdint.h ...)
 set -eu
@@ -33,6 +36,29 @@ if [ "$out/lib/pic16f1" != "$rt" ]; then
 fi
 if [ -x "$root/sim/target/release/pic16f1-sim" ]; then
     cp "$root/sim/target/release/pic16f1-sim" "$out/bin/"
+fi
+# The debugger, if it was built (scripts/build-llvm.sh builds it unless
+# NO_LLDB is set), with the library it loads from ../lib.
+if [ -x "$bld/bin/lldb-dap" ]; then
+    mkdir -p "$out/lib"
+    cp "$bld/bin/lldb" "$bld/bin/lldb-dap" "$out/bin/"
+    lib=$(cd "$bld/lib" && ls liblldb.*.*.*.dylib liblldb.so.*.*.* 2>/dev/null | head -1)
+    cp "$bld/lib/$lib" "$out/lib/"
+    for link in "$bld"/lib/liblldb.*; do
+        [ -L "$link" ] && ln -sf "$(readlink "$link")" "$out/lib/$(basename "$link")"
+    done
+    cp "$root/toolchain/bin/pic16f1-lldb" "$root/toolchain/bin/pic16f1-lldb-dap" "$out/bin/"
+fi
+cp "$root/toolchain/bin/pic16f1-new-project" "$out/bin/"
+rm -rf "$out/share/pic16f1/project"
+mkdir -p "$out/share/pic16f1"
+cp -R "$root/toolchain/project" "$out/share/pic16f1/project"
+mkdir -p "$out/share/pic16f1/svd"
+cp "$root"/toolchain/svd/*.svd "$out/share/pic16f1/svd/"
+# The C library, if it was built somewhere else than in this tree.
+if [ -d "$root/build/toolchain/picolibc" ] && [ "$out" != "$root/build/toolchain" ]; then
+    rm -rf "$out/picolibc"
+    cp -R "$root/build/toolchain/picolibc" "$out/picolibc"
 fi
 cp "$root/LICENSE" "$out/"
 echo "toolchain tree: $out"

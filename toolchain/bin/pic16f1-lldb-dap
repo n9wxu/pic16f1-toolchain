@@ -1,5 +1,9 @@
 #!/bin/sh
-# Runs LLDB's lldb-dap, built with PIC16F1 support from this checkout, wherever it is
-# called from (an editor's debug configuration, for one).
+# Runs the toolchain's lldb-dap, which is LLDB's built with PIC16F1 support,
+# from wherever it is called (an editor's debug configuration, for one): the
+# one beside this script in an installed toolchain, the one in
+# build/llvm-build in a checkout.
 here=$(cd "$(dirname "$0")" && pwd)
-exec "${PIC16F1_LLVM_BIN:-$here/../../build/llvm-build/bin}/lldb-dap" "$@"
+bin=${PIC16F1_LLVM_BIN:-$here}
+[ -x "$bin/lldb-dap" ] || bin=$here/../../build/llvm-build/bin
+exec "$bin/lldb-dap" "$@"

@@ -1,9 +1,12 @@
 #!/bin/sh
-# Runs LLDB's lldb, built with PIC16F1 support from this checkout, wherever it is
-# called from (an editor's debug configuration, for one).
+# Runs the toolchain's lldb, which is LLDB built with PIC16F1 support, from
+# wherever it is called (an editor's debug configuration, for one): the one
+# beside this script in an installed toolchain, the one in build/llvm-build
+# in a checkout.
 here=$(cd "$(dirname "$0")" && pwd)
+bin=${PIC16F1_LLVM_BIN:-$here}
+[ -x "$bin/lldb" ] || bin=$here/../../build/llvm-build/bin
 # LLDB reads memory in blocks and keeps them. Its 512 bytes cost seconds
 # through a probe, where every byte read from a running part takes time,
 # and nothing is 512 bytes long here (the return stack is 32).
-exec "${PIC16F1_LLVM_BIN:-$here/../../build/llvm-build/bin}/lldb" \
-    -O "settings set target.process.memory-cache-line-size 32" "$@"
+exec "$bin/lldb" -O "settings set target.process.memory-cache-line-size 32" "$@"

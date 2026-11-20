@@ -26,6 +26,18 @@
 #define CLRWDT() __asm__ volatile("clrwdt")
 #define RESET() __asm__ volatile("reset")
 
+/* Delays, as in XC8. _delay(n) takes at least n instruction cycles and up
+ * to a dozen more (and never fewer than 16); __delay_ms and __delay_us need
+ * _XTAL_FREQ, the oscillator frequency in Hz, defined first. The argument
+ * must be a constant for the arithmetic to be done by the compiler.
+ * Interrupts lengthen a delay. */
+void __delay_loops(unsigned long loops);
+#define _delay(cycles)                                                         \
+    __delay_loops((unsigned long)(cycles) > 16UL                               \
+                      ? ((unsigned long)(cycles) - 7UL) / 10UL : 0UL)
+#define __delay_ms(ms) _delay((unsigned long)((ms) * (_XTAL_FREQ / 4000.0)))
+#define __delay_us(us) _delay((unsigned long)((us) * (_XTAL_FREQ / 4000000.0)))
+
 /* Place the two configuration words in the image. Use once per program. */
 #define PIC_CONFIG_WORDS(word1, word2)                                         \
     __attribute__((section(".config"), used))                                  \

@@ -1,0 +1,66 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "pic16f1: build",
+            "type": "shell",
+            "command": "make",
+            "args": [ "TOOLCHAIN=${config:pic16f1.toolchain}", "DEVICE=${config:pic16f1.device}", "OPT=${config:pic16f1.optimization}" ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "pic16f1: clean",
+            "type": "shell",
+            "command": "make clean",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            // Builds, then starts the simulator and leaves it waiting for
+            // the debugger. It ends when the debug session does.
+            "label": "pic16f1: simulator",
+            "type": "shell",
+            "command": "make",
+            "args": [ "sim", "TOOLCHAIN=${config:pic16f1.toolchain}", "DEVICE=${config:pic16f1.device}", "OPT=${config:pic16f1.optimization}" ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "isBackground": true,
+            "presentation": { "reveal": "silent", "panel": "dedicated" },
+            "problemMatcher": {
+                "owner": "pic16f1",
+                "fileLocation": [ "relative", "${workspaceFolder}" ],
+                "pattern": { "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$", "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "pic16f1-cc",
+                    "endsPattern": "waiting for a debugger|Error \\d+|\\*\\*\\*"
+                }
+            }
+        },
+        {
+            // Builds for the in-circuit debugger, then has the probe's
+            // OpenOCD program the part with it and wait for the debugger.
+            // This drives the probe and the board.
+            // OpenOCD ends when the debugger leaves, so that the next
+            // session programs and resets the part afresh.
+            "label": "pic16f1: probe",
+            "type": "shell",
+            "command": "make clean && make DEBUGGER=1 TOOLCHAIN=${config:pic16f1.toolchain} DEVICE=${config:pic16f1.device} OPT=${config:pic16f1.optimization} && cd ${config:pic16f1.openocd} && src/openocd -s tcl -f interface/pk2icsp.cfg -c 'pk2icsp vdd ${config:pic16f1.vdd}' -c 'pk2icsp hvp on' -f target/pic16f193x.cfg -c 'pic16f193x.cpu configure -event gdb-detach { shutdown }' -c 'init; pic16f1 load_debug ${workspaceFolder}/build/@NAME@.elf; echo \"pic16f1: ready for the debugger\"'",
+            "options": { "cwd": "${workspaceFolder}" },
+            "isBackground": true,
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "problemMatcher": {
+                "owner": "pic16f1",
+                "pattern": { "regexp": "^(Error): (.*)$", "severity": 1, "message": 2 },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "pic16f1-cc",
+                    // OpenOCD opens its port before it has programmed
+                    // the part; the debugger must wait for the end of that.
+                    "endsPattern": "ready for the debugger|\\*\\*\\*"
+                }
+            }
+        }
+    ]
+}

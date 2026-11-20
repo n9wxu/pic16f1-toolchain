@@ -1,0 +1,3 @@
+{
+    "recommendations": [ "llvm-vs-code-extensions.lldb-dap", "ms-vscode.cpptools", "mcu-debug.peripheral-viewer", "mcu-debug.memory-view" ]
+}

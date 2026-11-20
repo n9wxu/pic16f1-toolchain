@@ -14,8 +14,9 @@
             "preLaunchTask": "pic16f1: simulator",
             // Small reads: LLDB's 512-byte blocks are slow through a probe.
             "initCommands": [ "settings set target.process.memory-cache-line-size 32" ],
-            // Run to main: the program is otherwise stopped at the reset vector.
-            "postRunCommands": [ "breakpoint set --one-shot true --name main", "process continue" ]
+            // Run to main: the debugger continues from the reset vector once it
+            // is set up, and this stops it there.
+            "postRunCommands": [ "breakpoint set --one-shot true --name main" ]
         }
     ]
 }

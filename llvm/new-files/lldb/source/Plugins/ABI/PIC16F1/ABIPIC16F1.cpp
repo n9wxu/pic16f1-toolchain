@@ -78,10 +78,54 @@ void ABIPIC16F1::AugmentRegisterInfo(
     if (auto *r = find(name))
       r->regnum_dwarf = num;
 
-  // The compiler keeps 16-bit values in pairs of its byte registers:
-  // rp0 is r1:r0, with DWARF number 16, and so on to rp6.
   if (find("rp0"))
     return;
+
+  // Show the core's registers under the names the data sheet gives them.
+  // (Names are matched without regard to case, and W keeps its short one.)
+  // What the compiler calls r0-r13, tmp0 and tmp1 is, to the data sheet,
+  // the common RAM at 0x70-0x7F: they stay registers, because the debug
+  // information places variables in them, but in a group that says so.
+  const ConstString core("Core registers");
+  const ConstString common("Common RAM 0x70-0x7F (the compiler's registers)");
+  const std::pair<const char *, const char *> Names[] = {
+      {"pc", "PC"},         {"w", "WREG"},     {"status", "STATUS"},
+      {"bsr", "BSR"},       {"pclath", "PCLATH"}, {"fsr0", "FSR0"},
+      {"fsr1", "FSR1"},     {"stkptr", "STKPTR"},
+  };
+  for (const auto &[from, to] : Names)
+    if (auto *r = find(from)) {
+      r->alt_name = ConstString(from);
+      r->name = ConstString(to);
+      r->set_name = core;
+    }
+  for (auto &r : regs)
+    if (r.set_name != core)
+      r.set_name = common;
+  // The halves of the pointer registers, which the data sheet lists.
+  for (const char *fsr : {"FSR0", "FSR1"}) {
+    auto *whole = find(fsr);
+    if (!whole || whole->regnum_remote == LLDB_INVALID_REGNUM)
+      continue;
+    const uint32_t whole_num = whole->regnum_remote;
+    const bool first = llvm::StringRef(fsr) == "FSR0";
+    for (unsigned half = 0; half != 2; ++half) {
+      DynamicRegisterInfo::Register part;
+      part.name = ConstString((llvm::Twine(fsr) + (half ? "H" : "L")).str());
+      part.set_name = core;
+      part.byte_size = 1;
+      part.encoding = eEncodingUint;
+      part.format = eFormatHex;
+      part.regnum_dwarf = (first ? 27 : 29) + half;
+      part.value_regs = {whole_num};
+      part.invalidate_regs = {whole_num};
+      part.value_reg_offset = half;
+      regs.push_back(part);
+    }
+  }
+
+  // The compiler keeps 16-bit values in pairs of its byte registers:
+  // rp0 is r1:r0, with DWARF number 16, and so on to rp6.
   for (unsigned pair = 0; pair != 7; ++pair) {
     auto *lo = find(("r" + llvm::Twine(2 * pair)).str());
     auto *hi = find(("r" + llvm::Twine(2 * pair + 1)).str());
@@ -90,7 +134,7 @@ void ABIPIC16F1::AugmentRegisterInfo(
       return;
     DynamicRegisterInfo::Register rp;
     rp.name = ConstString(("rp" + llvm::Twine(pair)).str());
-    rp.set_name = ConstString("compiler pairs");
+    rp.set_name = ConstString("Compiler 16-bit pairs (rp0 is r1:r0)");
     rp.byte_size = 2;
     rp.encoding = eEncodingUint;
     rp.format = eFormatHex;
@@ -200,7 +244,7 @@ bool ABIPIC16F1::RegisterIsVolatile(const RegisterInfo *reg_info) {
   llvm::StringRef name(reg_info->name);
   for (const char *saved : {"r8", "r9", "r10", "r11", "r12", "r13", "rp4",
                             "rp5", "rp6", "stkptr", "pc"})
-    if (name == saved)
+    if (name.equals_insensitive(saved))
       return false;
   return true;
 }

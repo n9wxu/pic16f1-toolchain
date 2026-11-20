@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Start a C project for a PIC16F1 device.
+
+    pic16f1-new-project [--device pic16f1937] [--openocd DIR] <directory>
+
+Makes the directory with a small program (main.c), a Makefile, and a VS Code
+setup that builds it and debugs it on the simulator or, through a gdb-remote
+probe, on the part. The project uses the toolchain this command belongs to.
+"""
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def first_dir(candidates, what):
+    for c in candidates:
+        if os.path.isdir(c):
+            return os.path.normpath(c)
+    sys.exit(f"pic16f1-new-project: cannot find {what}")
+
+
+def main():
+    args = sys.argv[1:]
+    device, openocd, target = "pic16f1937", None, None
+    while args:
+        a = args.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "--device" and args:
+            device = args.pop(0).lower()
+        elif a == "--openocd" and args:
+            openocd = os.path.abspath(args.pop(0))
+        elif a.startswith("-") or target:
+            sys.exit(f"pic16f1-new-project: unexpected argument {a}; see --help")
+        else:
+            target = a
+    if not target:
+        sys.exit("pic16f1-new-project: name the directory to make; see --help")
+    if not device.startswith("pic"):
+        device = "pic" + device
+    target = os.path.abspath(target)
+    name = re.sub(r"[^A-Za-z0-9_-]", "-", os.path.basename(target)) or "program"
+
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    template = first_dir([os.path.join(HERE, "..", "share", "pic16f1", "project"),
+                          os.path.join(HERE, "..", "project")], "the project template")
+    include = first_dir([os.path.join(HERE, "..", "include", "pic16f1"),
+                         os.path.join(HERE, "..", "include")], "the device headers")
+    if not os.path.exists(os.path.join(include, device + ".h")):
+        sys.exit(f"pic16f1-new-project: no device {device}")
+    svd_dir = first_dir([os.path.join(HERE, "..", "share", "pic16f1", "svd"),
+                         os.path.join(HERE, "..", "svd")], "the register descriptions")
+    clang_inc = ""
+    for lib in (os.path.join(HERE, "..", "lib", "clang"), os.path.join(repo, "build", "llvm-build", "lib", "clang")):
+        if os.path.isdir(lib):
+            versions = sorted(os.listdir(lib))
+            if versions:
+                clang_inc = os.path.normpath(os.path.join(lib, versions[-1], "include"))
+                break
+    if openocd is None:
+        # Where the PICkit 2 probe firmware's OpenOCD is, if it is there.
+        guess = os.path.expanduser("~/Documents/pickit_2_fw/openocd/openocd-src")
+        openocd = guess if os.path.isdir(guess) else "/path/to/openocd"
+
+    if os.path.exists(target) and os.listdir(target):
+        sys.exit(f"pic16f1-new-project: {target} exists and is not empty")
+    values = {"NAME": name, "DEVICE": device, "DEVICE_UPPER": device.upper(), "TOOLCHAIN": HERE,
+              "INCLUDE": include, "CLANG_INCLUDE": clang_inc, "OPENOCD": openocd,
+              "SVD": os.path.join(svd_dir, device + ".svd")}
+    for folder, _, files in os.walk(template):
+        out = os.path.join(target, os.path.relpath(folder, template))
+        os.makedirs(out, exist_ok=True)
+        for f in files:
+            text = open(os.path.join(folder, f)).read()
+            text = re.sub(r"@([A-Z_]+)@", lambda m: values.get(m.group(1), m.group(0)), text)
+            # (Stored as "gitignore" so that it does not act on the template.)
+            with open(os.path.join(out, ".gitignore" if f == "gitignore" else f), "w") as o:
+                o.write(text)
+    print(f"{target}: a project for the {device.upper()}.\n"
+          f"  cd {target} && make          build\n"
+          f"  code {target}                open it in VS Code; F5 debugs on the simulator")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
