@@ -63,6 +63,9 @@ levels. Not started: the verifier, skip predication.
 the call stack, variables in every frame, registers named as in the data
 sheet, and VS Code projects for both.
 
-**C++ and Rust** are not started.
+**C++** works: the language without exceptions and run-time type
+information, the header part of the standard library, and a device library,
+tested on the simulator and on the part ([languages.md](languages.md)).
+**Rust** is not started.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.

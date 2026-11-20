@@ -41,8 +41,11 @@ SECTIONS
   .text :
   {
     KEEP(*(.init0)) KEEP(*(.init4)) KEEP(*(.init5)) KEEP(*(.init6))
-    KEEP(*(.init9))
-    *(.text .text.*)
+    KEEP(*(.init7)) KEEP(*(.init9))
+    /* Functions in the order of their names, not the order the compiler
+     * happened to emit them in: that order can depend on whether debug
+     * information was asked for, and -g must not change the program. */
+    *(.text) *(SORT_BY_NAME(.text.*))
   } > flash
   __text_end = .;
 
@@ -51,6 +54,12 @@ SECTIONS
   .rodata (ORIGIN(flashdat) + (__text_end + 1) / 2) :
   {
     *(.rodata .rodata.*)
+    /* The constructors of global objects, as pointers to functions, in
+     * the order they run in (runctors.c in the runtime library). */
+    __init_array_start = .;
+    KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+    KEEP(*(.init_array))
+    __init_array_end = .;
   } > flashdat
 
   /* Variables that have a fixed address in place of a stack frame, and

@@ -9,10 +9,11 @@ first, with the simplest design that works.
 
 | Component | Where | Notes |
 |---|---|---|
+| Languages other than C | [languages.md](languages.md) | C++ today |
 | LLVM target `pic16f1` | `llvm/new-files/llvm/lib/Target/PIC16F1` | Assembler, object writer, code generator |
 | Clang target | `llvm/new-files/clang`, `llvm/existing-files.patch` | Type sizes, ABI, `interrupt` attribute |
 | LLD port | `llvm/new-files/lld/ELF/Arch/PIC16F1.cpp` | Relocations, banked-address conversion |
-| Runtime | `toolchain/runtime` | Startup code; multiply, divide and shifts in assembly, built from the register-independent macros of `toolchain/include/picmath.inc` (64-bit multiply and divide in C); `memcpy` family; single-precision floating point (`float.c`), with only the 64-bit conversions from LLVM's compiler-rt; delays; `setjmp` |
+| Runtime | `toolchain/runtime` | Startup code, with the constructors of global objects; multiply, divide and shifts in assembly, built from the register-independent macros of `toolchain/include/picmath.inc` (64-bit multiply and divide in C); `memcpy` family; single-precision floating point (`float.c`), with only the 64-bit conversions from LLVM's compiler-rt; delays; `setjmp` |
 | Device files | `toolchain/include`, `toolchain/lib` | Generated from the device database |
 | C library | `toolchain/picolibc` | picolibc at a pinned commit, with a small patch; built for 32- and 64-bank devices |
 | Driver | `toolchain/bin/pic16f1-cc` | Compile, link, convert to HEX |
@@ -957,11 +958,12 @@ All run on the simulator, except the one row that says otherwise.
 | Benchmark programs (`tests/programs`, 15 programs, `-O0` `-O1` `-O2` `-O3` `-Os`) | 75 of 75 pass; the four default levels also with the SelectionDAG selector |
 | Compiler tests (`tests/compiler`, 18 programs) | 72 of 72 builds pass, with either instruction selector; 14 of 14 with `-munoptimized` (four are too big for the device that way) |
 | Regression tests (`tests/lit`) | 24 of 24 pass |
+| C++ (`scripts/test-cxx.sh`; see [languages.md](languages.md)) | 47 of 47 builds pass: the language, the standard library's headers, dynamic memory, the device library |
 | One program on all seven devices (`scripts/test-devices.sh`) | 14 of 14 builds pass |
-| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,490 of the 1,511 that build pass (98.6%) |
-| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,494 of 1,514 (98.7%) |
-| GCC C torture, `execute` at `-Os` | 1,495 of 1,515 (98.7%) |
-| The same on the imaginary PIC16F1032 (32 banks) | the same results, test for test |
+| GCC C torture, `execute` (1,701 tests) on the imaginary PIC16F1064, at `-O0` | 1,488 of the 1,511 that build pass (98.5%) |
+| GCC C torture, `execute` at `-O1`, `-O2` and `-O3` | 1,491 or 1,492 of 1,514 (98.5%) |
+| GCC C torture, `execute` at `-Os` | 1,493 of 1,515 (98.5%) |
+| The same on the imaginary PIC16F1032 (32 banks) | the same results, test for test (before the last three were reclassified; not rerun since) |
 | The same on the PIC16F1937 (496 bytes of RAM, 8K words) | 1,458 to 1,465 of the 1,489 to 1,497 that build (98%); the 34 tests that differ from the large device need its RAM or flash |
 | The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
 | Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
@@ -985,12 +987,13 @@ All run on the simulator, except the one row that says otherwise.
 About 195 torture tests do not build even on the large device: they need
 `malloc`, `printf`, a 32-bit `int` or nested functions.
 
-The 22 that build and do not pass at one level or another have each been examined; none is wrong
+The 25 that build and do not pass at one level or another have each been examined; none is wrong
 code from the compiler:
 
 | Reason | Tests |
 |---|---|
 | The test assumes a 32-bit `int` | `divmod-1`, `20071211-1`, `pr53645` |
+| Undefined with a 16-bit `int` (a shift by its width, an index that does not fit, an uninitialized argument), so that the compiler makes `main` empty. These counted as passing while the empty `main` happened to be laid out just ahead of `exit` | `20180131-1`, `pr79286`, `vector-div-neg-pow2` (at `-O1`) |
 | GCC behaviour Clang has on no target: the storage-order and `optimize` attributes, arithmetic at the width of a bit-field, inlining a function that takes a label's address | `20230630-2`, `20230630-4`, `alias-1`, `pr79043`, `bitfld-3`, `bitfld-5`, `pr32244-1`, `pr34971`, `990208-1` |
 | `-O0` here optimizes without inlining, and the test expects `__builtin_constant_p` to fold after inlining | `bcp-1` (at `-O0` only) |
 | Type-based aliasing across a call in a whole-program build; the test says itself that it may not be conforming, and passes with `-fno-lto` | `20000603-1` (at `-O0` only) |

@@ -31,6 +31,9 @@
  * _XTAL_FREQ, the oscillator frequency in Hz, defined first. The argument
  * must be a constant for the arithmetic to be done by the compiler.
  * Interrupts lengthen a delay. */
+#ifdef __cplusplus
+extern "C"
+#endif
 void __delay_loops(unsigned long loops);
 #define _delay(cycles)                                                         \
     __delay_loops((unsigned long)(cycles) > 16UL                               \
@@ -46,7 +49,11 @@ void __delay_loops(unsigned long loops);
 #define __reentrant
 #define __near
 #define __far
+#ifdef __cplusplus
+typedef bool __bit;
+#else
 typedef _Bool __bit;
+#endif
 #define __nop() NOP()
 #define ei() (INTCONbits.GIE = 1)
 #define di() (INTCONbits.GIE = 0)

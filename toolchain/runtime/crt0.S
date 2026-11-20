@@ -26,6 +26,7 @@
 ;   .init4  copy initialised data to RAM      (copydata.S, in libpicrt.a)
 ;   .init5  set the stack pointer cell         (stack.S, in libpicrt.a)
 ;   .init6  clear .bss                        (clearbss.S, in libpicrt.a)
+;   .init7  run the constructors of globals    (ctors.S, in libpicrt.a)
 ;   .init9  set the stack pointer, call main, call exit
 ; The compiler refers to __do_copy_data from every module that defines
 ; initialised data and to __do_clear_bss from every module that defines

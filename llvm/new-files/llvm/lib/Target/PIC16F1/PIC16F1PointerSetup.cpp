@@ -118,6 +118,10 @@ static bool sinkIncrements(MachineBasicBlock &MBB, MachineRegisterInfo &MRI,
     MachineInstr *Last = nullptr;
     bool SawAccess = false;
     for (auto J = std::next(Add.getIterator()); J != MBB.end(); ++J) {
+      // What only describes a variable to a debugger decides nothing:
+      // the code must come out the same with and without -g.
+      if (J->isDebugInstr())
+        continue;
       if (J->isTerminator() || J->readsRegister(P2, &TRI) ||
           J->readsRegister(PIC16F1::CARRY, &TRI))
         break;
@@ -132,6 +136,8 @@ static bool sinkIncrements(MachineBasicBlock &MBB, MachineRegisterInfo &MRI,
     auto After = std::next(Last->getIterator());
     bool CarryLive = false;
     for (auto J = After; J != MBB.end(); ++J) {
+      if (J->isDebugInstr())
+        continue;
       if (J->readsRegister(PIC16F1::CARRY, &TRI)) {
         CarryLive = true;
         break;
@@ -143,6 +149,13 @@ static bool sinkIncrements(MachineBasicBlock &MBB, MachineRegisterInfo &MRI,
       continue;
     if (It == After)
       ++It;
+    // A description of a variable as p2, now ahead of where p2 gets its
+    // value: the variable is unknown until then.
+    for (auto J = std::next(Add.getIterator()); J != After; ++J)
+      if (J->isDebugValue())
+        for (MachineOperand &MO : J->debug_operands())
+          if (MO.isReg() && MO.getReg() == P2)
+            MO.setReg(Register());
     MBB.splice(After, &MBB, Add.getIterator());
     MRI.clearKillFlags(P);
     Changed = true;

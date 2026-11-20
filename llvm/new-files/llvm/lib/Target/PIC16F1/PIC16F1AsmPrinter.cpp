@@ -281,6 +281,14 @@ void PIC16F1AsmPrinter::emitEndOfAsmFile(Module &M) {
   if (NeedsClear)
     OutStreamer->emitSymbolAttribute(
         OutContext.getOrCreateSymbol("__do_clear_bss"), MCSA_Global);
+  // Likewise the piece that runs the constructors of global objects (C++,
+  // and __attribute__((constructor))), listed in .init_array.
+  if (const GlobalVariable *Ctors = M.getGlobalVariable("llvm.global_ctors"))
+    if (Ctors->hasInitializer() &&
+        isa<ConstantArray>(Ctors->getInitializer()) &&
+        Ctors->getInitializer()->getNumOperands() != 0)
+      OutStreamer->emitSymbolAttribute(
+          OutContext.getOrCreateSymbol("__do_global_ctors"), MCSA_Global);
 }
 
 const MCExpr *PIC16F1AsmPrinter::lowerConstant(const Constant *CV,

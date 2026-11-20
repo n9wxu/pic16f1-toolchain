@@ -63,6 +63,10 @@ public:
     Int16Type = SignedInt;
     Char32Type = UnsignedLong;
     SigAtomicType = SignedChar;
+    // The Itanium C++ ABI, but a pointer to a member function keeps its
+    // "virtual" flag in the adjustment, not in the low bit of the function's
+    // address: an address here is a word address and may be odd.
+    TheCXXABI.set(TargetCXXABI::GenericMIPS);
     resetDataLayout();
   }
 
@@ -74,6 +78,9 @@ public:
   }
 
   bool allowsLargerPreferedTypeAlignment() const override { return false; }
+
+  /// _BitInt, which the C++ library's headers name.
+  bool hasBitIntType() const override { return true; }
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::CharPtrBuiltinVaList;

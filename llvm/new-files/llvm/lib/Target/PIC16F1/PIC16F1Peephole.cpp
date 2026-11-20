@@ -584,6 +584,14 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
   using namespace PIC16F1;
   bool Changed = false;
   uint32_t Live = LiveOut[&MBB];
+  // The first real instruction at or above a position: what only describes
+  // a variable to a debugger must not stand between two instructions that
+  // would otherwise be seen together, or -g would change the code.
+  auto Real = [&](MachineBasicBlock::reverse_iterator I) {
+    while (I != MBB.rend() && !isReal(*I))
+      ++I;
+    return I;
+  };
   for (MachineBasicBlock::reverse_iterator It = MBB.rbegin();
        It != MBB.rend();) {
     MachineInstr &MI = *It++;
@@ -599,14 +607,15 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
         E.File >= 0 &&
         !(Live & ((1u << E.File) | WBit | ZBit))) {
       MachineInstr *Store = nullptr, *Load = nullptr;
-      if (It != MBB.rend() && It->getOpcode() == MOVWF &&
-          It->getOperand(0).isImm() &&
-          indexOfFile(It->getOperand(0).getImm()) == E.File)
-        Store = &*It;
-      if (Store && std::next(It) != MBB.rend() &&
-          std::next(It)->getOpcode() == MOVF &&
-          std::next(It)->getOperand(1).getImm() == 0)
-        Load = &*std::next(It);
+      auto SI = Real(It);
+      if (SI != MBB.rend() && SI->getOpcode() == MOVWF &&
+          SI->getOperand(0).isImm() &&
+          indexOfFile(SI->getOperand(0).getImm()) == E.File)
+        Store = &*SI;
+      auto LI = Store ? Real(std::next(SI)) : MBB.rend();
+      if (Store && LI != MBB.rend() && LI->getOpcode() == MOVF &&
+          LI->getOperand(1).getImm() == 0)
+        Load = &*LI;
       if (Load && !isConditional(*Load) && !effectOf(*Load).Barrier &&
           (Load->getOperand(0).isImm() || Load->getOperand(0).isGlobal())) {
         const MachineOperand &Src = Load->getOperand(0);
@@ -615,7 +624,7 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
         else
           MI.getOperand(0).ChangeToGA(Src.getGlobal(), Src.getOffset(),
                                       Src.getTargetFlags());
-        It = std::next(std::next(It));
+        It = std::next(LI);
         Store->eraseFromParent();
         Load->eraseFromParent();
         Changed = true;
@@ -633,7 +642,7 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
          MI.getOpcode() == IORWF || MI.getOpcode() == XORWF ||
          MI.getOpcode() == SUBWF) &&
         !(Live & (1u << E.File))) {
-      auto Other = It;
+      auto Other = Real(It);
       MachineInstr *Load = nullptr, *Store = nullptr;
       if (Other != MBB.rend() &&
           (Other->getOpcode() == MOVLW ||
@@ -641,12 +650,12 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
             Other->getOperand(1).getImm() == 0 &&
             indexOfFile(Other->getOperand(0).getImm()) >= 0 &&
             indexOfFile(Other->getOperand(0).getImm()) != E.File))) {
-        auto S = std::next(Other);
+        auto S = Real(std::next(Other));
         if (S != MBB.rend() && S->getOpcode() == MOVWF &&
             S->getOperand(0).isImm() &&
             indexOfFile(S->getOperand(0).getImm()) == E.File) {
           Store = &*S;
-          auto L = std::next(S);
+          auto L = Real(std::next(S));
           if (L != MBB.rend() && L->getOpcode() == MOVF &&
               L->getOperand(1).getImm() == 0 &&
               (L->getOperand(0).isGlobal() ||
@@ -677,12 +686,13 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
     if ((Steps & 256) && MI.getOpcode() == BTFSS && MI.getOperand(0).isImm() &&
         (MI.getOperand(0).getImm() & 0x7F) == STATUS_ADDR &&
         MI.getOperand(1).getImm() == STATUS_Z && !(Live & ZBit) &&
-        It != MBB.rend() &&
-        (It->getOpcode() == DECF || It->getOpcode() == INCF) &&
-        It->getOperand(1).getImm() == 1 && !isConditional(*It)) {
+        Real(It) != MBB.rend() &&
+        (Real(It)->getOpcode() == DECF || Real(It)->getOpcode() == INCF) &&
+        Real(It)->getOperand(1).getImm() == 1 && !isConditional(*Real(It))) {
       const PIC16F1InstrInfo &TII =
           *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
-      It->setDesc(TII.get(It->getOpcode() == DECF ? DECFSZ : INCFSZ));
+      auto Count = Real(It);
+      Count->setDesc(TII.get(Count->getOpcode() == DECF ? DECFSZ : INCFSZ));
       MI.eraseFromParent();
       Changed = true;
       continue;
@@ -696,13 +706,14 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
         MI.getOperand(0).isImm() &&
         (MI.getOperand(0).getImm() & 0x7F) == STATUS_ADDR &&
         MI.getOperand(1).getImm() == STATUS_Z && !(Live & (ZBit | WBit)) &&
-        It != MBB.rend() && It->getOpcode() == MOVF &&
-        It->getOperand(0).isImm() && It->getOperand(1).getImm() == 0 &&
-        !isConditional(*It)) {
-      int Idx = indexOfFile(It->getOperand(0).getImm());
+        Real(It) != MBB.rend() && Real(It)->getOpcode() == MOVF &&
+        Real(It)->getOperand(0).isImm() &&
+        Real(It)->getOperand(1).getImm() == 0 && !isConditional(*Real(It))) {
+      auto LoadIt = Real(It);
+      int Idx = indexOfFile(LoadIt->getOperand(0).getImm());
       MachineInstr *Dec = nullptr;
-      if (Idx >= 0 && Idx < 16 && fileBits(It->getOperand(0)) != ~0u) {
-        for (auto J = std::next(It); J != MBB.rend(); ++J) {
+      if (Idx >= 0 && Idx < 16 && fileBits(LoadIt->getOperand(0)) != ~0u) {
+        for (auto J = std::next(LoadIt); J != MBB.rend(); ++J) {
           if (!isReal(*J))
             continue;
           bool IsDec = (J->getOpcode() == DECF || J->getOpcode() == INCF) &&
@@ -724,13 +735,13 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
       if (Dec) {
         const PIC16F1InstrInfo &TII =
             *MBB.getParent()->getSubtarget<PIC16F1Subtarget>().getInstrInfo();
-        MachineInstr *Load = &*It;
+        MachineInstr *Load = &*LoadIt;
         MI.setDesc(TII.get(Dec->getOpcode() == DECF ? DECFSZ : INCFSZ));
         MI.getOperand(0).setImm(Load->getOperand(0).getImm());
         MI.getOperand(1).setImm(1);
-        ++It;
-        if (It != MBB.rend() && &*It == Dec)
-          ++It;
+        It = std::next(LoadIt);
+        if (Real(It) != MBB.rend() && &*Real(It) == Dec)
+          It = std::next(Real(It));
         Load->eraseFromParent();
         Dec->eraseFromParent();
         Changed = true;
@@ -744,11 +755,12 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
     // the operations that leave it alone; then it must not be read.
     if ((Steps & 256) && MI.getOpcode() == MOVF && E.File >= 0 && !Cond &&
         MI.getOperand(1).getImm() == 0 && !(Live & (1u << E.File)) &&
-        It != MBB.rend() && It->getNumExplicitOperands() == 2 &&
-        It->getOperand(0).isImm() && It->getOperand(1).isImm() &&
-        It->getOperand(1).getImm() == 1 && !isConditional(*It)) {
+        Real(It) != MBB.rend() && Real(It)->getNumExplicitOperands() == 2 &&
+        Real(It)->getOperand(0).isImm() && Real(It)->getOperand(1).isImm() &&
+        Real(It)->getOperand(1).getImm() == 1 && !isConditional(*Real(It))) {
+      auto Op = Real(It);
       bool SetsZ = false, Fits = false;
-      switch (It->getOpcode()) {
+      switch (Op->getOpcode()) {
       case ADDWF: case ADDWFC: case ANDWF: case IORWF: case XORWF: case SUBWF:
       case SUBWFB: case ASRF: case LSLF: case LSRF: case COMF: case DECF:
       case INCF:
@@ -760,9 +772,9 @@ bool PIC16F1Peephole::removeDead(MachineBasicBlock &MBB) {
       default:
         break;
       }
-      if (Fits && indexOfFile(It->getOperand(0).getImm()) == E.File &&
-          fileBits(It->getOperand(0)) != ~0u && (SetsZ || !(Live & ZBit))) {
-        It->getOperand(1).setImm(0);
+      if (Fits && indexOfFile(Op->getOperand(0).getImm()) == E.File &&
+          fileBits(Op->getOperand(0)) != ~0u && (SetsZ || !(Live & ZBit))) {
+        Op->getOperand(1).setImm(0);
         MI.eraseFromParent();
         Changed = true;
         continue;
@@ -1521,7 +1533,7 @@ private:
 
 char PIC16F1WConventions::ID = 0;
 
-INITIALIZE_PASS(PIC16F1WConventions, "pic16f1-w-conventions",
+INITIALIZE_PASS(PIC16F1WConventions, "pic16f1-w-calls",
                 "PIC16F1 arguments and results in W", false, false)
 
 ModulePass *llvm::createPIC16F1WConventionsPass() {
@@ -1980,9 +1992,27 @@ void PIC16F1WConventions::fixDebugValues(MachineFunction &MF) const {
 }
 
 bool PIC16F1WConventions::runOnModule(Module &M) {
-  if (!WConventions || !EnablePeephole)
-    return false;
   MMI = &getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+  // The passes before this one ran function by function in the order of
+  // the call graph, which leaves out a function nothing can reach (one
+  // only this module could call, and does not; an unoptimized
+  // whole-program build keeps such). The passes after this one visit
+  // every function with a body, and would be handed that one with no code
+  // generated for it. It is dead: drop its body.
+  bool Dropped = false;
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    MachineFunction *MF = MMI->getMachineFunction(F);
+    if (MF && MF->getProperties().hasNoVRegs())
+      continue;
+    if (MF)
+      MMI->deleteMachineFunctionFor(F);
+    F.deleteBody();
+    Dropped = true;
+  }
+  if (!WConventions || !EnablePeephole)
+    return Dropped;
   Functions.clear();
   Weight.clear();
   Callers.clear();
@@ -1992,7 +2022,7 @@ bool PIC16F1WConventions::runOnModule(Module &M) {
       Functions.push_back(MF);
   if (Functions.empty() ||
       Functions.front()->getTarget().getOptLevel() == CodeGenOptLevel::None)
-    return false;
+    return Dropped;
   // Code that runs in an interrupt handler calls a function by another
   // name, which the linker may make the function itself.
   for (Function &F : M)
@@ -2020,7 +2050,7 @@ bool PIC16F1WConventions::runOnModule(Module &M) {
       }
   // A function whose first block is the top of a loop gets an empty block
   // above it, where an argument that arrives in W can be stored once.
-  bool Changed = false;
+  bool Changed = Dropped;
   for (MachineFunction *MF : Functions) {
     MachineBasicBlock &Entry = MF->front();
     if (Entry.pred_empty() || !isPrivate(&MF->getFunction()))

@@ -48,6 +48,27 @@ index 892715a6d..43bd91119 100644
  
    /// Initialize all pragma handlers.
    void initializePragmaHandlers();
+diff --git a/clang/lib/AST/Decl.cpp b/clang/lib/AST/Decl.cpp
+index 5a76a726c..2cb0d89aa 100644
+--- a/clang/lib/AST/Decl.cpp
++++ b/clang/lib/AST/Decl.cpp
+@@ -3346,7 +3346,15 @@ bool FunctionDecl::isImmediateFunction() const {
+ }
+ 
+ bool FunctionDecl::isMain() const {
+-  return isNamed(this, "main") && !getLangOpts().Freestanding &&
++  // A freestanding program has no main as far as the language goes. On the
++  // PIC16F1 every program is freestanding, and its startup code calls
++  // main: in C++ the name must then not be mangled.
++  bool Freestanding = getLangOpts().Freestanding;
++  if (Freestanding && getLangOpts().CPlusPlus &&
++      getASTContext().getTargetInfo().getTriple().getArch() ==
++          llvm::Triple::pic16f1)
++    Freestanding = false;
++  return isNamed(this, "main") && !Freestanding &&
+          !getLangOpts().HLSL &&
+          (getDeclContext()->getRedeclContext()->isTranslationUnit() ||
+           isExternC());
 diff --git a/clang/lib/Basic/CMakeLists.txt b/clang/lib/Basic/CMakeLists.txt
 index 21851e79b..d30cca396 100644
 --- a/clang/lib/Basic/CMakeLists.txt

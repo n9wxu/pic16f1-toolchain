@@ -3,7 +3,7 @@
 
     pic16f1-cc -mcpu=pic16f1937 -Os -o prog.hex main.c other.c
 
-Compiles C and assembly sources with clang, links them with ld.lld against
+Compiles C, C++ (.cpp, .cc, .cxx) and assembly sources with clang, links them with ld.lld against
 the startup code and runtime library, and converts the result to Intel HEX.
 With -o NAME.hex it also leaves NAME.elf beside it; any other -o name gets
 the ELF file. -c and -S stop after compiling.
@@ -45,6 +45,7 @@ does). Use it with -g. The simulator needs neither.
 
 Tool locations can be overridden with PIC16F1_LLVM_BIN (clang, ld.lld),
 PIC16F1_LIB (crt0.o, libpicrt.a, linker scripts), PIC16F1_INCLUDE,
+PIC16F1_CXX_INCLUDE (the C++ standard headers),
 PIC16F1_LIBC (picolibc's install directory) and PIC16F1_SIM (pic16f1-sim,
 used for the HEX conversion).
 """
@@ -55,6 +56,17 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+
+# C++ sources. They are compiled without exceptions, run-time type
+# information, locks around the first use of a local static, and
+# destructors of global objects (a program here does not end); the option
+# that turns each back on can follow on the command line, but the first two
+# have no support in the runtime library. The standard headers are the
+# headers of libc++, if it has been installed (scripts/build-cxx.sh), with
+# libc++.a for what they leave to compiled code.
+CXX_SUFFIXES = (".cpp", ".cc", ".cxx", ".C", ".c++")
+CXX_FLAGS = ["-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics",
+             "-fno-use-cxa-atexit", "-fno-c++-static-destructors"]
 
 
 def first_existing(candidates, what):
@@ -108,6 +120,7 @@ def main():
     output = None
     cpu = "pic16f1937"
     compile_only = asm_only = use_libc = unoptimized = debugger = False
+    no_libc = False
     model = None
     sources, objects, cflags, ldflags = [], [], [], []
     i = 0
@@ -138,6 +151,8 @@ def main():
             cflags += ["-mllvm", "-pic16f1-main-saves-registers"]
         elif a == "--libc":
             use_libc = True
+        elif a == "--no-libc":
+            no_libc = True
         elif a.startswith(("-mprintf=", "-mscanf=")):
             # picolibc has printf and scanf in several sizes; these names
             # choose among them. (Each option brings its function into the
@@ -151,7 +166,7 @@ def main():
             use_libc = True
         elif a.startswith("-Wl,"):
             ldflags += a[4:].split(",")
-        elif a.endswith((".c", ".S", ".s", ".ll")):
+        elif a.endswith((".c", ".S", ".s", ".ll") + CXX_SUFFIXES):
             sources.append(a)
         elif a.endswith((".o", ".a")):
             objects.append(a)
@@ -168,6 +183,9 @@ def main():
              # A #pragma the compiler does not know is otherwise ignored
              # without a word.
              "-Wunknown-pragmas"]
+    # Where the C++ standard headers go: ahead of the C library's, which
+    # they wrap.
+    pre = len(clang)
     libs = [os.path.join(lib, "libpicrt.a")]
     if debugger:
         # The linker script says what the debugger needs kept clear, for the
@@ -177,11 +195,19 @@ def main():
             sys.exit(f"pic16f1-cc: -mdebugger: it is not known what a debugger uses on the {cpu}")
         clang += ["-D__DEBUG=1"]
         ldflags += ["--defsym=__debugger=1"]
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    candidates = [os.environ.get("PIC16F1_LIBC"),
+                  os.path.join(HERE, "..", "picolibc"),
+                  os.path.join(repo, "build", "toolchain", "picolibc")]
+    # A C++ program gets the C library without asking, if it is installed:
+    # the C++ standard headers are built on the C library's. (Only what
+    # the program uses is linked.) --no-libc says otherwise.
+    is_cxx = any(s.endswith(CXX_SUFFIXES) for s in sources)
+    if is_cxx and not no_libc and any(
+            c and os.path.exists(os.path.join(c, "banks32", "lib", "libc.a"))
+            for c in candidates):
+        use_libc = True
     if use_libc:
-        repo = os.path.normpath(os.path.join(HERE, "..", ".."))
-        candidates = [os.environ.get("PIC16F1_LIBC"),
-                      os.path.join(HERE, "..", "picolibc"),
-                      os.path.join(repo, "build", "toolchain", "picolibc")]
         # The linker script says whether the device has 32 or 64 banks; the
         # library is built separately for each.
         variant = "banks32"
@@ -208,7 +234,25 @@ def main():
     elif level == "-O3":
         cflags = [f for f in cflags if not f.startswith("-O")]
         cflags += ["-Os"] + ([] if "-moutline" in cflags else ["-mno-outline"])
-    clang += ["-isystem", inc] + cflags
+    # What a C++ source gets, before the user's own options.
+    cxx = list(CXX_FLAGS) + ["-nostdinc++"]
+    cxx_include = []
+    for c in (os.environ.get("PIC16F1_CXX_INCLUDE"),
+              os.path.join(HERE, "..", "include", "c++"),
+              os.path.join(os.path.normpath(os.path.join(HERE, "..", "..")),
+                           "build", "toolchain", "include", "c++")):
+        if c and os.path.exists(os.path.join(c, "__config_site")):
+            cxx_include = ["-isystem", c]
+            break
+    clang += ["-isystem", inc]
+    base = len(clang)
+    clang += cflags
+
+    def compiler(srcs):
+        """The compile command for these sources."""
+        if any(s.endswith(CXX_SUFFIXES) for s in srcs):
+            return clang[:pre] + cxx_include + clang[pre:base] + cxx + clang[base:]
+        return clang
     # LLVM's defaults assume a machine where a call costs several
     # instructions, a function of ten or so is small, and memory is there to
     # be spent on speed. Here a call is one or two words and flash is a few
@@ -248,7 +292,7 @@ def main():
                         "-mllvm", "-unroll-partial-threshold=0"]
 
     if compile_only or asm_only:
-        cmd = clang + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
+        cmd = compiler(sources) + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
         if output:
             cmd += ["-o", output]
         run(cmd)
@@ -269,12 +313,17 @@ def main():
             objs = []
             for n, src in enumerate(sources):
                 obj = os.path.join(tmp, f"{n}-{os.path.splitext(os.path.basename(src))[0]}.o")
-                run(clang + [f"-mcmodel={model}"] + (["-DONE_PAGE"] if small and src.endswith(".S") else [])
+                run(compiler([src]) + [f"-mcmodel={model}"] + (["-DONE_PAGE"] if small and src.endswith(".S") else [])
                     + ["-c", src, "-o", obj])
                 objs.append(obj)
             # The runtime library exists for each model. picolibc is built
             # for medium only, which is also correct in a small program.
             rt = [l.replace("libpicrt.a", "libpicrt-small.a") if small else l for l in libs]
+            # The compiled part of the C++ standard library, ahead of the C
+            # library it calls.
+            cxxlib = os.path.join(lib, "libc++-small.a" if small else "libc++.a")
+            if is_cxx and os.path.exists(cxxlib):
+                rt = [cxxlib] + rt
             crt0 = os.path.join(lib, "crt0-small.o" if small else "crt0.o")
             # Debug information about code the linker left out (the versions
             # of a function it did not choose, among others) gets an address

@@ -24,6 +24,7 @@ gates G0 to G2.
 | 4 | LLVM backend, C working | done: 98.7% of the GCC C torture tests that build pass, picolibc builds and its tests pass |
 | 5 | Optimization | every benchmark no larger and no slower than XC8 at each of its levels; in total 0.73 of XC8's size at `-Os` |
 | 6 | Debugging | LLDB with a PIC16F1 plugin, on the simulator and on the part; VS Code projects (`pic16f1-new-project`) |
+| 7 | Other languages | C++ ([docs/languages.md](docs/languages.md)) |
 
 ## Layout
 
@@ -38,6 +39,8 @@ gates G0 to G2.
 | `tests/assembler/` | Instruction encodings checked against Microchip `pic-as`, and a round-trip test |
 | `tests/lit/` | Regression tests for the assembler, linker and code generator (LLVM lit) |
 | `tests/libc/` | A `printf` program using picolibc |
+| `tests/cxx/` | C++: the language, the standard library, the device library (`scripts/test-cxx.sh`) |
+| `tests/hardware/` | Programs that check themselves on a real part, run by `tools/hwtest.py` |
 | `tests/debug/`, `tests/float/`, `tests/overlay/`, `tests/stack/`, `tests/switch/`, `tests/wcall/`, `tests/xc8/`, `tests/vla/`, `tests/setjmp/`, `tests/frames/`, `tests/builtins/`, `tests/inject/` | One feature each, run by the `scripts/test-*.sh` of the same name |
 | `tests/devices/` | A program that must build and run on every device in the database |
 | `tests/torture/` | Harness for third-party conformance tests, run by `tools/torture.py` |
@@ -66,6 +69,7 @@ python3 tools/bench.py          # every reference binary, as a table
 scripts/llvm-setup.sh     # fetch the pinned LLVM release and apply the changes
 scripts/build-llvm.sh     # build clang, lld and the runtime into build/toolchain
 scripts/build-picolibc.sh # optional: the C library (printf, string.h, malloc)
+scripts/build-cxx.sh      # optional: the C++ standard library's headers
 build/toolchain/bin/pic16f1-cc -mcpu=pic16f1937 -Os -I tests/common \
     -o hello.hex tests/programs/hello/main.c tests/common/bench.c
 build/toolchain/bin/pic16f1-sim run hello.hex

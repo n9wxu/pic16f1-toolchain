@@ -39,6 +39,13 @@ build "$rt/shift.S"
 build "$rt/muldiv.S"
 build "$rt/muldiv64.c"
 build "$rt/mem.c"
+# C++: the constructors of global objects, and what compiled code refers to.
+build "$rt/ctors.S"
+build "$rt/runctors.c"
+build "$rt/cxxabi.c"
+build "$rt/newdel.c"
+build "$rt/delete.c"
+build "$rt/abort.c"
 
 # Single-precision floating point (float and double are both 32 bits on
 # this target): float.c has the arithmetic, the comparisons and the
