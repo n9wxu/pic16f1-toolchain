@@ -319,7 +319,7 @@ index e22897c27..3ae60e1f1 100644
    Arch/PPC64.cpp
    Arch/RISCV.cpp
 diff --git a/lld/ELF/Driver.cpp b/lld/ELF/Driver.cpp
-index 51d9e3241..15b6719e2 100644
+index 51d9e3241..7ee446b5c 100644
 --- a/lld/ELF/Driver.cpp
 +++ b/lld/ELF/Driver.cpp
 @@ -174,6 +174,7 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
@@ -339,7 +339,18 @@ index 51d9e3241..15b6719e2 100644
      osabi = ELFOSABI_STANDALONE;
    else if (ret.second == EM_AMDGPU)
      osabi = ELFOSABI_AMDGPU_HSA;
-@@ -3524,6 +3525,12 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
+@@ -614,6 +615,10 @@ static void checkZOptions(Ctx &ctx, opt::InputArgList &args) {
+   args::getZOptionValue(args, OPT_z, "common-page-size", 0);
+   getZFlag(args, "rel", "rela", false);
+   getZFlag(args, "dynamic-undefined-weak", "nodynamic-undefined-weak", false);
++  // PIC16F1's are read when the frames are chosen, later.
++  for (auto *arg : args.filtered(OPT_z))
++    if (StringRef(arg->getValue()).starts_with("pic16f1-"))
++      arg->claim();
+   for (auto *arg : args.filtered(OPT_z))
+     if (!arg->isClaimed())
+       Warn(ctx) << "unknown -z value: " << StringRef(arg->getValue());
+@@ -3524,6 +3529,13 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
    // Split SHF_MERGE and .eh_frame sections into pieces in preparation for garbage collection.
    splitSections<ELFT>(ctx);
  
@@ -347,7 +358,8 @@ index 51d9e3241..15b6719e2 100644
 +  // not chosen are collected.
 +  if (ctx.arg.emachine == EM_PIC16F1)
 +    pic16f1SelectFrames(ctx,
-+                        hasZOption(args, "pic16f1-interrupt-copies"));
++                        hasZOption(args, "pic16f1-interrupt-copies"),
++                        hasZOption(args, "pic16f1-stack-report"));
 +
    // Garbage collection and removal of shared symbols from unused shared objects.
    markLive<ELFT>(ctx);
@@ -430,7 +442,7 @@ index 89e4dbeed..e2739024a 100644
      return setPPCTargetInfo(ctx);
    case EM_PPC64:
 diff --git a/lld/ELF/Target.h b/lld/ELF/Target.h
-index 50f0cd8a9..b1b42ff24 100644
+index 50f0cd8a9..16351281f 100644
 --- a/lld/ELF/Target.h
 +++ b/lld/ELF/Target.h
 @@ -212,6 +212,9 @@ void setAVRTargetInfo(Ctx &);
@@ -439,7 +451,7 @@ index 50f0cd8a9..b1b42ff24 100644
  void setMSP430TargetInfo(Ctx &);
 +void setPIC16F1TargetInfo(Ctx &);
 +// Choose between the stack-frame and static-frame versions of functions.
-+void pic16f1SelectFrames(Ctx &, bool copiesWanted);
++void pic16f1SelectFrames(Ctx &, bool copiesWanted, bool stackReport);
  void setMipsTargetInfo(Ctx &);
  void setPPC64TargetInfo(Ctx &);
  void setPPCTargetInfo(Ctx &);

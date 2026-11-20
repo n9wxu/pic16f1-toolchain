@@ -244,6 +244,27 @@ taken. The versions not chosen are unreferenced and `--gc-sections` drops
 them, so they cost compile time and nothing else. `-Wl,--verbose` prints
 each decision and the reason.
 
+**The hardware stack.** Return addresses go on a stack of 16 levels that
+a program cannot extend; a call too many loses a return address or resets
+the part. With every call in view the linker counts the levels the deepest
+chain of calls takes: one for a call, none for a jump to a function that
+returns in the caller's place (the records distinguish them: `C` and `J`),
+one more for an interrupt, wherever it arrives, and its handler's calls on
+top. If that is more than 16 it warns and names the chain:
+
+```
+ld.lld: warning: hardware stack: 18 of 16 levels used at most; 17 by
+_start > main > f15 > ... > f0 -> __udivqi3; 1 by an interrupt and 0 by isr
+```
+
+`-mstack-report` prints the count for any program, and `-Wl,--fatal-warnings`
+makes the warning an error. A recursive program has no bound, nor has one
+with code that does not describe its calls; the report says so and names
+where. Over the benchmark and compiler test programs at every level the
+count is never less than the depth the simulator measures, and equal to it
+in 133 of 139 that have a bound (`scripts/test-stack.sh` checks a chain of
+known depth).
+
 Callers are compiled against `F` and may know exactly which registers it
 changes; `F.sf` and `F.isr` are held to changing no others.
 
@@ -538,7 +559,7 @@ in. Use it around anything that runs a freshly changed compiler many times.
 | Variadic functions | All arguments on the stack |
 | Structs | Passed as a pointer to a copy made by the caller |
 | Data stack | Only for functions with stack frames. Grows down; the pointer is in the cell `__sp` between functions and in FSR1 inside one, pointing at the lowest byte in use. At a call with stack arguments FSR1 points at them as well |
-| Return addresses | Hardware stack (16 levels); depth is not yet checked. A call that is the last thing a function does is a jump and uses no level; an outlined sequence uses one while it runs |
+| Return addresses | Hardware stack (16 levels); the linker counts the levels the program needs (see "The hardware stack"). A call that is the last thing a function does is a jump and uses no level; an outlined sequence uses one while it runs |
 | `PCLATH` | Not preserved. Every `CALL` and `GOTO` is preceded by `MOVLP` |
 | `BSR` | Not preserved across calls |
 
@@ -823,6 +844,7 @@ PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 | Debugging with LLDB on the simulator (`scripts/test-debug.sh`) | pass on 2 devices at `-munoptimized`, `-O1`, `-Os` |
 | The same against the simulator behaving as the part's debug hardware (one breakpoint, stopping late) | pass at `-munoptimized` and `-O1` |
 | Delays (`scripts/test-delay.sh`) | pass on 2 devices at 3 levels: never short, at most 12 cycles long |
+| Hardware stack count (`scripts/test-stack.sh`) | pass at 3 levels: equal to the measured depth, warns only past 16 |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |
@@ -973,6 +995,8 @@ has most to find:
   counter is added to the array's address, 16 bits, for each access.
   Static frames are a first stage: see what is not done yet under
   "Static frames".
-- Hardware stack depth is not analysed; the simulator stops on overflow.
+- The count of hardware stack levels cannot bound a recursive program, and
+  takes a call through a pointer to reach every function whose address is
+  taken. The simulator stops on an overflow.
 - On silicon only the debugger has been tried (by hand, on a
   PIC16LF1937); the test suites run on the simulator.

@@ -138,6 +138,9 @@ void PIC16F1AsmPrinter::emitInstruction(const MachineInstr *MI) {
 ///                  a pointer, - none
 ///   V name static  the static version of the function "name"
 ///   C name         a call from the function of the last F or V line
+///   J name         a jump from it to a function that returns in its place:
+///                  a call for every purpose but the hardware stack, of
+///                  which it takes no level
 ///   A name         a function whose address is taken (anywhere)
 ///   I alias name   "alias" stands for the function "name" when called from
 ///                  code that runs in an interrupt handler
@@ -170,11 +173,11 @@ void PIC16F1AsmPrinter::emitFunctionBodyEnd() {
             MO.getTargetFlags() == PIC16F1II::MO_PAGE)
           continue;
         if (MO.isGlobal() && isa<Function>(MO.getGlobal()))
-          OS << (Calls ? "C " : "A ") << getSymbol(MO.getGlobal())->getName()
-             << '\n';
+          OS << (!Calls ? "A " : MI.isCall() ? "C " : "J ")
+             << getSymbol(MO.getGlobal())->getName() << '\n';
         else if (MO.isSymbol() && Calls)
-          OS << "C " << GetExternalSymbolSymbol(MO.getSymbolName())->getName()
-             << '\n';
+          OS << (MI.isCall() ? "C " : "J ")
+             << GetExternalSymbolSymbol(MO.getSymbolName())->getName() << '\n';
       }
     }
   }

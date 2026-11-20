@@ -32,6 +32,8 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
 
+#include <functional>
+
 using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
@@ -215,13 +217,19 @@ struct FrameNode {
     Symbol *callee;
     bool byInterruptName;
     bool inInterruptVersion;
+    // A jump to a function that returns in this one's place: no level of
+    // the hardware stack.
+    bool jump;
   };
   SmallVector<Call, 4> calls;
 };
 } // namespace
 
-void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted) {
+void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted, bool stackReport) {
   MapVector<Symbol *, FrameNode> nodes;
+  // The files that describe their calls: a function of one of these that
+  // has no record calls nothing.
+  SmallPtrSet<InputFile *, 16> describes;
   SmallPtrSet<Symbol *, 16> addressTaken, fromUnknown;
   // "G$isr" names and the functions they stand for.
   MapVector<Symbol *, Symbol *> interruptNames;
@@ -241,6 +249,7 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted) {
           fromUnknown.insert(sym);
       continue;
     }
+    describes.insert(file);
     StringMap<Symbol *> locals;
     for (Symbol *sym : file->getLocalSymbols())
       if (sym->isDefined() && !sym->getName().empty())
@@ -289,12 +298,14 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted) {
           current->interruptVersion = version;
         else
           current->staticVersion = version;
-      } else if (words[0] == "C" && current) {
+      } else if ((words[0] == "C" || words[0] == "J") && current) {
+        bool jump = words[0] == "J";
         auto it = standsFor.find(sym);
         if (it != standsFor.end())
-          current->calls.push_back({it->second, true, inInterruptVersion});
+          current->calls.push_back(
+              {it->second, true, inInterruptVersion, jump});
         else
-          current->calls.push_back({sym, false, inInterruptVersion});
+          current->calls.push_back({sym, false, inInterruptVersion, jump});
       } else if (words[0] == "A") {
         addressTaken.insert(sym);
       }
@@ -457,6 +468,151 @@ void elf::pic16f1SelectFrames(Ctx &ctx, bool copiesWanted) {
     Log(ctx) << "static frame for " << sym->getName()
              << (twice.count(sym) ? ", and a copy for interrupt handlers" : "");
     pointAt(sym, node.staticVersion);
+  }
+
+  //===--------------------------------------------------------------------===//
+  // The hardware stack. Return addresses are kept on a stack of 16 levels
+  // that the program cannot extend, and a call too many loses one (or
+  // resets the part). With every call in view, count the levels the
+  // deepest chain of calls takes: one for each call, none for a jump to a
+  // function that returns in the caller's place; an interrupt takes a
+  // level wherever it arrives, and its handler's calls come on top.
+  // Recursion has no bound, and neither has code that does not describe
+  // its calls: then nothing is said, unless the report is asked for.
+  //===--------------------------------------------------------------------===//
+  {
+    const unsigned levels = 16;
+    struct Depth {
+      unsigned levels = 0;
+      bool unbounded = false; // recursion, or code that tells nothing
+      Symbol *next = nullptr; // the call that the deepest chain makes
+      bool nextIsJump = false;
+      uint8_t state = 0; // 1 while being worked out, 2 when known
+      const char *why = nullptr;
+    };
+    DenseMap<Symbol *, Depth> depths;
+    std::function<Depth &(Symbol *)> depthOf = [&](Symbol *sym) -> Depth & {
+      Depth &d = depths[sym];
+      if (d.state == 2)
+        return d;
+      if (d.state == 1) {
+        d.unbounded = true;
+        d.why = "recursion";
+        return d;
+      }
+      d.state = 1;
+      auto it = nodes.find(sym);
+      if (it == nodes.end()) {
+        // No record: nothing called, if its file describes its calls.
+        Depth &r = depths[sym];
+        if (!describes.count(sym->file)) {
+          r.unbounded = true;
+          r.why = "code that does not describe its calls";
+        }
+        r.state = 2;
+        return r;
+      }
+      unsigned best = 0;
+      bool unbounded = false, nextIsJump = false;
+      Symbol *next = nullptr;
+      const char *why = nullptr;
+      auto consider = [&](Symbol *callee, unsigned cost) {
+        // (A reference into the map does not survive the calls below.)
+        Depth c = depthOf(callee);
+        if (unbounded)
+          return;
+        if (c.unbounded) {
+          unbounded = true;
+          why = c.why;
+          next = callee;
+          nextIsJump = cost == 0;
+        } else if (!next || c.levels + cost > best) {
+          best = c.levels + cost;
+          next = callee;
+          nextIsJump = cost == 0;
+        }
+      };
+      const FrameNode &node = it->second;
+      for (const FrameNode::Call &call : node.calls)
+        consider(call.callee, call.jump ? 0 : 1);
+      if (node.callsThroughPointer)
+        for (Symbol *callee : addressTaken)
+          consider(callee, 1);
+      Depth &r = depths[sym];
+      // Reached again while being worked out: it is on a cycle.
+      if (r.unbounded) {
+        unbounded = true;
+        why = r.why;
+      }
+      r.levels = best;
+      r.unbounded = unbounded;
+      r.next = next;
+      r.nextIsJump = nextIsJump;
+      r.why = why;
+      r.state = 2;
+      return r;
+    };
+    auto chain = [&](Symbol *from) {
+      std::string text = from->getName().str();
+      SmallPtrSet<Symbol *, 16> seen;
+      for (Symbol *sym = from; sym && seen.insert(sym).second;) {
+        auto it = depths.find(sym);
+        if (it == depths.end() || !it->second.next)
+          break;
+        text += it->second.nextIsJump ? " -> " : " > ";
+        sym = it->second.next;
+        text += sym->getName().str();
+      }
+      return text;
+    };
+
+    Symbol *entry = ctx.symtab->find(ctx.arg.entry);
+    Depth mainDepth, handlerDepth;
+    Symbol *handler = nullptr;
+    if (entry)
+      mainDepth = depthOf(entry);
+    for (Symbol *sym : interruptRoots) {
+      Depth d = depthOf(sym);
+      if (!handler || d.unbounded || d.levels > handlerDepth.levels) {
+        handler = sym;
+        handlerDepth = d;
+      }
+      if (d.unbounded)
+        break;
+    }
+    bool unbounded = mainDepth.unbounded || handlerDepth.unbounded;
+    unsigned total =
+        mainDepth.levels + (handler ? 1 + handlerDepth.levels : 0);
+    auto describe = [&] {
+      std::string text;
+      if (unbounded) {
+        const Depth &d = mainDepth.unbounded ? mainDepth : handlerDepth;
+        text = "hardware stack: no bound on the levels used (" +
+               std::string(d.why ? d.why : "unknown") + "): " +
+               chain(mainDepth.unbounded ? entry : handler);
+      } else {
+        text = "hardware stack: " + std::to_string(total) + " of " +
+               std::to_string(levels) + " levels used at most";
+        if (entry && mainDepth.levels)
+          text += "; " + std::to_string(mainDepth.levels) + " by " +
+                  chain(entry);
+        if (handler)
+          text += "; 1 by an interrupt and " +
+                  std::to_string(handlerDepth.levels) + " by " +
+                  chain(handler);
+        text += " (>: a call, ->: a jump)";
+      }
+      return text;
+    };
+    if (entry) {
+      if (!unbounded && total > levels)
+        Warn(ctx) << describe()
+                  << ". The program needs more levels than the part has";
+      else if (stackReport)
+        Msg(ctx) << describe();
+      else
+        Log(ctx) << describe();
+    }
   }
 
   // G$isr is the interrupt copy of G where there is one, and G otherwise.

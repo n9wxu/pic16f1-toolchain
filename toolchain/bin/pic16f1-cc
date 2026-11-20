@@ -32,6 +32,10 @@ does not have.)
 if it has been built (scripts/build-picolibc.sh). The program must supply
 `stdout` for printf; see docs/toolchain.md.
 
+The linker counts the levels of the hardware return stack that the deepest
+chain of calls takes, and warns if they are more than the part's 16.
+-mstack-report prints the count and the chain.
+
 -mdebugger builds for an in-circuit debugger on the part itself: the
 program keeps out of the RAM the debugger uses and may not name the two port
 pins that are its clock and data lines (it also defines __DEBUG, as XC8
@@ -124,6 +128,8 @@ def main():
             unoptimized = True
         elif a == "-mdebugger":
             debugger = True
+        elif a == "-mstack-report":
+            ldflags += ["-z", "pic16f1-stack-report"]
         elif a == "-minterrupt-copies":
             ldflags += ["-z", "pic16f1-interrupt-copies"]
         elif a == "-mmain-saves-registers":
@@ -269,7 +275,15 @@ def main():
                 if unoptimized:
                     link += ["--lto-O0"]
             if quiet:
-                return subprocess.run(link, capture_output=True).returncode == 0
+                # Say nothing of a failure (the caller tries the other
+                # model), but pass on what a successful link had to say.
+                r = subprocess.run(link, capture_output=True)
+                if r.returncode == 0:
+                    sys.stdout.buffer.write(r.stdout)
+                    sys.stderr.buffer.write(r.stderr)
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                return r.returncode == 0
             run(link)
             return True
 

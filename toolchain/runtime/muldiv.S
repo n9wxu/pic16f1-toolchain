@@ -308,4 +308,19 @@ __modsi3:
 ; frames" in docs/toolchain.md): what this file's code calls. An object
 ; file without this section is taken to call everything it refers to.
     .section .pic16f1.frames,"",@progbits
+; A routine that calls nothing needs no line. C is a call, which takes a
+; level of the hardware stack; J is a jump to a routine that returns for
+; this one, which takes none. The linker's count of stack levels goes by
+; these.
     .ascii  "F __mulhi3 -\n"
+    .ascii  "F __umodqi3 -\nC __udivqi3\n"
+    .ascii  "F __divqi3 -\nC __pic_absqi2\nC __udivqi3\n"
+    .ascii  "F __modqi3 -\nC __pic_absqi2\nC __udivqi3\n"
+    .ascii  "F __umodhi3 -\nC __udivhi3\n"
+    .ascii  "F __divhi3 -\nC __pic_abshi2\nC __udivhi3\nJ __pic_neghi\n"
+    .ascii  "F __modhi3 -\nC __pic_abshi2\nC __umodhi3\nJ __pic_neghi\n"
+    .ascii  "F __mulsi3 -\nJ __pic_movsi\n"
+    .ascii  "F __udivsi3 -\nC __umodsi3\nJ __pic_movsi\n"
+    .ascii  "F __udivmodsi4 -\nC __umodsi3\nJ __pic_movsi\n"
+    .ascii  "F __divsi3 -\nC __pic_abssi2\nC __udivsi3\nJ __pic_negsi\n"
+    .ascii  "F __modsi3 -\nC __pic_abssi2\nC __umodsi3\nJ __pic_negsi\n"
