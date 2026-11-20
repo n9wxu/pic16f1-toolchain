@@ -585,7 +585,7 @@ index 97a20364a..58bbfa534 100644
      add_subdirectory(${target})
    endif()
 diff --git a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
-index c80e7e48b..8763ac9a7 100644
+index c80e7e48b..6e5cbc762 100644
 --- a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
 +++ b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
 @@ -2142,7 +2142,22 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
@@ -612,7 +612,7 @@ index c80e7e48b..8763ac9a7 100644
                thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithSignal(
                    *thread_sp, signo, description.c_str()));
            }
-@@ -3431,7 +3446,89 @@ size_t ProcessGDBRemote::PutSTDIN(const char *src, size_t src_len,
+@@ -3431,7 +3446,102 @@ size_t ProcessGDBRemote::PutSTDIN(const char *src, size_t src_len,
  
  /// Enable a single breakpoint site by trying Z0 (software), then Z1
  /// (hardware), then manual memory write as a last resort.
@@ -662,8 +662,21 @@ index c80e7e48b..8763ac9a7 100644
 +          site->GetType() != BreakpointSite::eSoftware)
 +        holder = site;
 +    });
-+    if (!holder)
-+      return error;
++    if (!holder) {
++      // Say what the matter is: the reply is only an error number.
++      unsigned armed = 0;
++      GetBreakpointSiteList().ForEach([&](BreakpointSite *site) {
++        if (site != &bp_site && IsBreakpointSitePhysicallyEnabled(*site))
++          ++armed;
++      });
++      if (armed == 0)
++        return error;
++      llvm::consumeError(std::move(error));
++      return llvm::createStringErrorV(
++          "the target has no breakpoint left ({0} in use; a PIC16F1 part has "
++          "one, some have three). Disable another breakpoint first",
++          armed);
++    }
 +    llvm::consumeError(std::move(error));
 +    bp_site.SetType(holder->GetType());
 +    SetBreakpointSiteEnabled(bp_site);
@@ -702,7 +715,7 @@ index c80e7e48b..8763ac9a7 100644
    Log *log = GetLog(GDBRLog::Breakpoints);
    const addr_t addr = bp_site.GetLoadAddress();
    const size_t bp_op_size = GetSoftwareBreakpointTrapOpcode(&bp_site);
-@@ -3493,6 +3590,24 @@ llvm::Error ProcessGDBRemote::DoDisableBreakpointSite(BreakpointSite &bp_site) {
+@@ -3493,6 +3603,24 @@ llvm::Error ProcessGDBRemote::DoDisableBreakpointSite(BreakpointSite &bp_site) {
    const size_t bp_op_size = GetSoftwareBreakpointTrapOpcode(&bp_site);
    auto &gdb_comm = GetGDBRemote();
  

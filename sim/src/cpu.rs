@@ -310,6 +310,12 @@ impl Cpu {
             if a == PCL {
                 return self.pc as u8;
             }
+            // A port reads to the debugger as it does to the program.
+            for port in &self.p.ports {
+                if a == port.port {
+                    return self.ram[port.lat as usize] & !self.ram[port.tris as usize];
+                }
+            }
             self.ram[a as usize] & self.impl_mask[a as usize]
         } else if fsr >= FLASH_VIEW {
             self.flash_word(fsr & 0x7FFF) as u8

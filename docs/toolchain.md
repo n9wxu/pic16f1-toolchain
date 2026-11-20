@@ -689,6 +689,11 @@ How it is done:
 - **Whole-program builds at `-munoptimized`** are linked without the
   link-time optimizer too, which would otherwise fold away variables.
 
+Debug information records the column of each instruction as well as its
+line, so a stop or a breakpoint has a position within the line (VS Code
+marks it there). `-gno-column-info` leaves columns out; the code is the
+same.
+
 Limits: a variable the optimizer keeps in a register is shown only where
 the debug information can say where it is ("not available" elsewhere);
 inside a prologue or epilogue a stack frame's variables are not yet right;
@@ -767,7 +772,8 @@ instruction at its address. LLDB allows for both:
 - a stop is shown as its breakpoint, one instruction past the line's
   start; a breakpoint on a line that begins with a call stops at the start
   of the called function;
-- a second breakpoint is refused, with a warning;
+- a second breakpoint is refused, with a warning that says the part has
+  none left;
 - stepping over or out of a call borrows the breakpoint from the user's
   and gives it back afterwards, so a breakpoint inside a function being
   stepped over is not hit;

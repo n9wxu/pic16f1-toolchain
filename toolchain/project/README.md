@@ -44,4 +44,7 @@ make list       # disassembly
 - An interrupt handler is `void __attribute__((interrupt)) isr(void)`.
 - `pic16f1-cc --libc` adds the C library (`printf`, `string.h`, `math.h`);
   add `--libc` to `CFLAGS` in the Makefile.
+- The debugger stops at a position within a line (VS Code marks it in the
+  line) because the compiler records columns. `CFLAGS = -gno-column-info`
+  in the Makefile makes it go by lines only.
 - The toolchain's guide is `docs/toolchain.md` in its repository.
