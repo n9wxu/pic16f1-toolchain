@@ -56,7 +56,8 @@ fi
 cp "$root/toolchain/bin/pic16f1-new-project" "$out/bin/"
 # Other languages: the tools that bring a front end's LLVM IR to this
 # target, the Rust crate and target description, the Zig device files.
-cp "$root/toolchain/bin/pic16f1-retarget" "$root/toolchain/bin/pic16f1-rust-ld" "$out/bin/"
+cp "$root/toolchain/bin/pic16f1-retarget" "$root/toolchain/bin/pic16f1-rust-ld" \
+    "$root/toolchain/bin/pic16f1-zig" "$out/bin/"
 rm -rf "$out/share/pic16f1/rust" "$out/share/pic16f1/zig"
 mkdir -p "$out/share/pic16f1/rust" "$out/share/pic16f1/zig"
 cp "$root/toolchain/rust/pic16f1.json" "$out/share/pic16f1/rust/"

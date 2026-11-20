@@ -47,21 +47,31 @@ def llvm_bin():
 
 def retarget_text(text):
     """The rewriting itself, on the text of a module that already has the
-    PIC16F1's triple and data layout. Returns the new text and the names of
-    the interrupt handlers in it, which nothing calls: whoever links the
-    module must ask for them to be kept (ld.lld --undefined=NAME)."""
+    PIC16F1's triple and data layout. What nothing in a program refers to
+    and the program still needs (its interrupt handlers, and data placed
+    in the sections the linker makes configuration words, user ID and
+    EEPROM content from) is marked as used, as Clang marks the same things
+    in C, so that whole-program optimization keeps it. Returns the new
+    text and the names of the interrupt handlers."""
     out = []
     handlers = []
+    used = []
     for line in text.split("\n"):
         # Interrupt handlers: the calling convention becomes the attribute.
         if line.startswith("define ") and re.search(r"\bavr_(intr|signal)cc\b", line):
             name = re.search(r'@("[^"]+"|[\w.$]+)\(', line)
             if name:
                 handlers.append(name.group(1).strip('"'))
+                used.append(name.group(1))
             line = re.sub(r"\bavr_(intr|signal)cc ", "", line)
             line = re.sub(r"(\) (?:local_unnamed_addr|unnamed_addr)?) ?",
                           lambda m: m.group(1).rstrip() + ' "interrupt" ', line, count=1)
         line = re.sub(r"\bavr_(intr|signal)cc ", "", line)
+        if line.startswith("@") and re.search(
+                r'section "\.(pic16f1\.config|config|eeprom|userid)"', line):
+            name = re.match(r'@("[^"]+"|[\w.$]+) = ', line)
+            if name:
+                used.append(name.group(1))
         line = line.replace(" addrspace(1)", "")
         # Intrinsics are named after their pointer arguments' address spaces.
         if "@llvm." in line:
@@ -70,7 +80,23 @@ def retarget_text(text):
                 line = re.sub(r"(@llvm\.[\w.]*)\.p1\b", r"\1.p0", line)
         if line.startswith("attributes #"):
             line = re.sub(r' "target-(cpu|features)"="[^"]*"', "", line)
+            # Unwind tables are for a stack this processor does not have.
+            line = re.sub(r" uwtable(\([a-z]+\))?", "", line)
         out.append(line)
+    if used:
+        # Into llvm.compiler.used (kept by the optimizer; the linker may still
+        # drop or consume it), which the module may have already.
+        for n, line in enumerate(out):
+            m = re.match(r"@llvm\.compiler\.used = appending global \[(\d+) x ptr\] \[(.*)\], section", line)
+            if m:
+                have = [e.strip() for e in m.group(2).split(",") if e.strip()]
+                have += [f"ptr @{u}" for u in used if f"ptr @{u}" not in have]
+                out[n] = (f"@llvm.compiler.used = appending global [{len(have)} x ptr] "
+                          f"[{', '.join(have)}], section \"llvm.metadata\"")
+                break
+        else:
+            out.append(f"@llvm.compiler.used = appending global [{len(used)} x ptr] "
+                       f"[{', '.join('ptr @' + u for u in used)}], section \"llvm.metadata\"")
     return "\n".join(out), handlers
 
 
@@ -104,7 +130,7 @@ def main():
         return 0 if args else 1
     handlers = retarget(args[0], out or os.path.splitext(args[0])[0] + ".pic16f1.ll")
     for h in handlers:
-        print(f"interrupt handler: {h} (link with -Wl,--undefined={h})")
+        print(f"interrupt handler: {h}")
     return 0
 
 

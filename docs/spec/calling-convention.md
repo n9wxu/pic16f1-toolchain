@@ -106,8 +106,9 @@ routines of compiler-rt; and `memcpy`, `memmove`, `memset`, `memcmp`.
 - Whether to promote narrow arguments for compatibility with code that
   mixes prototyped and unprototyped calls. Today such a mismatch is a bug in
   the program.
-- Rust reaches this target as LLVM IR that `rustc` made for a stand-in
-  target (docs/languages.md). Integer, pointer and `f32` arguments and
+- Rust and Zig reach this target as LLVM IR that their compilers made for a
+  stand-in target (docs/languages.md). Integer, pointer and `f32` arguments and
   results then follow the rules above, because the code generator applies
-  them; a struct passed by value between Rust and C does not, because
-  `rustc` lays that out by the stand-in's C rules before the IR is made.
+  them; a struct passed by value between either and C does not, because
+  the front end lays that out by the stand-in's C rules before the IR is
+  made.

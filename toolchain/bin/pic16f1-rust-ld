@@ -92,9 +92,7 @@ def main():
             # Kept beside the program: this is what the code generator was
             # given, for anyone who wants to see what rustc made.
             ll = base + (f".{n}" if n else "") + ".ll"
-            # An interrupt handler is called by nothing the linker sees.
-            for handler in retarget.retarget(m, ll):
-                passed.append(f"-Wl,--undefined={handler}")
+            retarget.retarget(m, ll)
             sources.append(ll)
         # A crate that was not merged into the program by rustc: an archive
         # of bitcode, of which the linker takes the members it needs.
@@ -109,6 +107,9 @@ def main():
                 if not is_bitcode(path):
                     continue
                 ll = os.path.join(d, f"m{k}.ll")
+                # An interrupt handler in a crate of its own is marked as
+                # used in its module, but the linker takes a member of an
+                # archive only for a name something refers to.
                 for handler in retarget.retarget(path, ll):
                     passed.append(f"-Wl,--undefined={handler}")
                 obj = os.path.join(d, f"m{k}.o")

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Compile a Zig program for the PIC16F1.
+
+    pic16f1-zig -mcpu=pic16f1937 -o blink.hex main.zig [more.c ...]
+
+Zig has no PIC16F1 target, so its compiler is run for a stand-in (the AVR:
+see pic16f1-retarget) and asked for LLVM bitcode instead of machine code.
+This turns the bitcode into IR for the PIC16F1 and has pic16f1-cc compile
+and link it with the startup code and runtime library, and with any C, C++
+or assembly sources and objects also named.
+
+The first .zig file is the program's root. Two modules are there for it to
+import: "pic", the toolchain's library (toolchain/zig/pic.zig), and
+"device", the registers of the device -mcpu= names.
+
+-O MODE is Zig's own: ReleaseSmall (the default), ReleaseFast, ReleaseSafe
+or Debug. The code generator's level follows it (-Os, -O2, -Os, -O1) unless
+one is given. -g keeps debug information. Other options (-mcpu=,
+-mdebugger, -mstack-report, -mcmodel=, --libc, -Wl,...) are pic16f1-cc's.
+The IR that was compiled is left beside the output as NAME.ll.
+
+The Zig compiler is $PIC16F1_ZIG, or build/zig/zig in the toolchain's
+checkout, or zig on the PATH. Tested with Zig 0.15.2; its LLVM must not be
+newer than this toolchain's (23).
+"""
+import importlib.machinery
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+MODES = {"ReleaseSmall": "-Os", "ReleaseFast": "-O2", "ReleaseSafe": "-Os", "Debug": "-O1"}
+
+
+def load(name):
+    loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), os.path.join(HERE, name))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def find_zig():
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    for c in (os.environ.get("PIC16F1_ZIG"), os.path.join(repo, "build", "zig", "zig"),
+              shutil.which("zig")):
+        if c and os.path.exists(c):
+            return c
+    sys.exit("pic16f1-zig: no Zig compiler; set PIC16F1_ZIG or put zig on the PATH")
+
+
+def find_library():
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    for c in (os.environ.get("PIC16F1_ZIG_LIB"), os.path.join(HERE, "..", "share", "pic16f1", "zig"),
+              os.path.join(repo, "toolchain", "zig")):
+        if c and os.path.exists(os.path.join(c, "pic.zig")):
+            return c
+    sys.exit("pic16f1-zig: cannot find the library (pic.zig)")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    output, cpu, mode, debug = "a.hex", "pic16f1937", "ReleaseSmall", False
+    zig_sources, passed = [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-o":
+            output = args[i + 1]
+            i += 1
+        elif a == "-O" and i + 1 < len(args):
+            mode = args[i + 1]
+            if mode not in MODES:
+                sys.exit("pic16f1-zig: -O must be " + ", ".join(MODES))
+            i += 1
+        elif a.endswith(".zig"):
+            zig_sources.append(a)
+        else:
+            if a.startswith("-mcpu="):
+                cpu = a[len("-mcpu="):].lower()
+                if not cpu.startswith("pic"):
+                    cpu = "pic" + cpu
+            if a == "-g":
+                debug = True
+            passed.append(a)
+        i += 1
+    if len(zig_sources) != 1:
+        sys.exit("pic16f1-zig: name one .zig file, the program's root "
+                 "(it imports the others)")
+    library = find_library()
+    device = os.path.join(library, cpu + ".zig")
+    if not os.path.exists(device):
+        sys.exit(f"pic16f1-zig: no register definitions for {cpu} ({device})")
+    if not any(a.startswith("-O") for a in passed):
+        passed.append(MODES[mode])
+    retarget = load("pic16f1-retarget")
+    base = os.path.splitext(output)[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        bc = os.path.join(tmp, "program.bc")
+        cmd = [find_zig(), "build-obj", "-target", "avr-freestanding-none", "-mcpu", "atmega328p",
+               "-O", mode, "-fno-emit-bin", "-femit-llvm-bc=" + bc,
+               "-fno-strip" if debug else "-fstrip",
+               # One module of code, so that the optimizer sees all of it.
+               "-fsingle-threaded",
+               "--dep", "pic", "--dep", "device", "-Mroot=" + zig_sources[0],
+               "--dep", "device", "-Mpic=" + os.path.join(library, "pic.zig"),
+               "-Mdevice=" + device]
+        r = subprocess.run(cmd)
+        if r.returncode != 0:
+            return r.returncode
+        ll = base + ".ll"
+        retarget.retarget(bc, ll)
+    return subprocess.run([sys.executable, os.path.join(HERE, "pic16f1-cc"),
+                           "-Wno-unused-command-line-argument"]
+                          + passed + [ll, "-o", output]).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

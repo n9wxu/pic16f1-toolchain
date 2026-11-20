@@ -8,6 +8,7 @@ and why, and what is left out. C itself is described in
 |---|---|---|
 | [C++](#c) | Clang's own C++ front end, the same compiler as C | The language except exceptions and run-time type information; the standard library's headers; tested on the simulator and on a PIC16LF1937 |
 | [Rust](#rust) | Stock `rustc` for a stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language with `core`; a register and hardware crate; `cargo build`; tested on the simulator and on a PIC16LF1937 |
+| [Zig](#zig) | The stock Zig compiler for the same stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language in all four build modes; a register and hardware library; tested on the simulator and on a PIC16LF1937 |
 
 All of them end in the same code generator, linker, runtime library and
 debugger as C, so what [toolchain.md](toolchain.md) says about optimization
@@ -361,3 +362,127 @@ Sizes on the PIC16F1937, at `-Os`:
 |---|---|
 | `scripts/test-rust.sh` | 7 builds by cargo, run on the simulator: the two programs at `-Os`, `-O1`, `-O2`; the configuration words the linker made; a build for the debugger with debug information |
 | `tests/rust/hardware`, run by `tools/hwtest.py` on a PIC16LF1937 | Pass: a call through a trait object; `Delay::ms(100)` measured as 48 counts of timer 0 where 49 are expected; four EEPROM bytes written and read back; the 1.024 V reference read as 327 of 1023. LLDB printed the Rust statics |
+
+## Zig
+
+```sh
+pic16f1-zig -mcpu=pic16f1937 -o blink.hex main.zig
+```
+
+### How it is built
+
+The same way as Rust, and for the same reason: Zig has no PIC16F1 target,
+and its compiler is used as it comes. `toolchain/bin/pic16f1-zig` runs
+`zig build-obj` for the AVR and asks for LLVM bitcode instead of machine
+code, turns that into IR for the PIC16F1 with `pic16f1-retarget`, and has
+`pic16f1-cc` compile and link it. C, C++ and assembly sources named on the
+same command line go into the same program.
+
+| Consequence | |
+|---|---|
+| `@import("builtin").cpu.arch` is `.avr` | Code that asks will take its AVR branch |
+| An interrupt handler is `export fn isr() callconv(.avr_interrupt) void` | The stand-in's name shows |
+| No inline assembly | It would be AVR's. `pic.sleep()`, `pic.nop()` and `pic.clearWatchdog()` are calls to one-instruction routines |
+| The Zig compiler's LLVM must not be newer than this toolchain's (23) | Tested with Zig 0.15.2 (LLVM 20). `$PIC16F1_ZIG`, `build/zig/zig` in the checkout, or `zig` on the PATH |
+| It is a command, not a `build.zig` step | A `build.zig` can run it with `addSystemCommand` |
+| Zig's own `compiler_rt` is not linked | Multiplication, division, shifts and `f32` arithmetic come from this toolchain's runtime library |
+
+`-O` is Zig's mode, and the code generator's level follows it unless one
+is given:
+
+| `-O` | Safety checks | Code generator | `features.zig` | `hal.zig` |
+|---|---|---|---|---|
+| `ReleaseSmall` (the default) | no | `-Os` | 4,314 words | 271 |
+| `ReleaseFast` | no | `-O2` | 4,570 | 347 |
+| `ReleaseSafe` | yes | `-Os` | 4,343 | 231 |
+| `Debug` | yes | `-O1` | 5,195 | 402 |
+
+The root file imports two modules the wrapper provides: `pic`, the
+library, and `device`, the registers of the device `-mcpu=` names (also
+`pic.device`).
+
+```zig
+const pic = @import("pic");
+pub const panic = pic.panic;            // for the modes with safety checks
+
+const Led = pic.Pin('E', 0);
+const wait = pic.Delay(500_000);        // the oscillator, in Hz
+
+comptime {
+    pic.config("FOSC=INTOSC, WDTE=OFF, MCLRE=ON, LVP=ON");
+}
+
+export fn main() noreturn {
+    Led.digital();
+    Led.output();
+    while (true) {
+        Led.toggle();                   // one XORWF
+        wait.ms(250);
+    }
+}
+```
+
+### What works
+
+Checked by `tests/zig/features.zig` in all four modes: structs and
+methods; an interface made by hand from a pointer and a function pointer;
+`comptime` type parameters and generic types; tagged unions and `switch`;
+optionals; error unions with `try`, `catch`, `defer` and `errdefer`; a
+table computed at compile time (in flash, no RAM); function pointers and
+`anytype`; slices, `for` over several, labelled blocks, `inline for`;
+enums; packed structs; integer arithmetic of 8 to 64 bits and of odd widths
+(`u24`), with the wrapping, saturating and overflow-reporting forms;
+`f32`; an interrupt handler; and calling a C function in the same program.
+
+Debugging works as for C: breakpoints by line in `.zig` files, the call
+stack, locals (a struct shows its fields), exported variables.
+
+### What does not
+
+| | Why | Instead |
+|---|---|---|
+| The default panic handler | It prints a message and a stack trace through `std.debug`, which needs an operating system and does not compile for a 16-bit `usize` | `pub const panic = pic.panic;` in the root file: a failed check stops the processor |
+| Most of `std` at run time | Written for machines with an operating system and memory; `std.fmt` and `std.sort` are thousands of words. What is computed at compile time costs nothing | The language, `std.mem` and `std.math` in small doses |
+| `f64` and 128-bit integers in arithmetic | Not in the runtime library: the link fails with `__adddf3` and the like undefined | `f32`, 64 bits |
+| A struct passed by value to or from C | Zig lays that call out by the AVR's C rules | A pointer |
+| `-g` leaving the code unchanged | Zig's own optimizer is not held to that | |
+
+A register is written as in C: `dev.LATE.* = 3`, `dev.INTCONbits.GIE = 1`
+(a packed struct at the register's address; setting a one-bit field is one
+`BSF`). A variable shared with an interrupt handler is read and written
+through a volatile pointer, `@as(*volatile u8, &ticks).*`, as the tests do.
+
+### The library, `pic.zig`
+
+`toolchain/zig/pic.zig`, with the device files beside it (generated by
+`tools/devdb/gen_lang.py`).
+
+| | |
+|---|---|
+| `pic.device` | Each register as a pointer (`LATE`, `PORTB`) and its fields as a packed struct (`LATEbits`, `INTCONbits`), named as in the C header |
+| `pic.config("NAME=VALUE, ...")` | In a `comptime` block: configuration settings by the data sheet's names; the linker makes the words and refuses what the device does not have |
+| `pic.panic` | For `pub const panic = pic.panic;` |
+| `enableInterrupts()` `disableInterrupts()` `restoreInterrupts(were)` | `const were = pic.disableInterrupts(); defer pic.restoreInterrupts(were);` |
+| `sleep()` `nop()` `clearWatchdog()` `delayCycles(n)` | |
+| `Pin('E', 0)`, `setClock(.mhz8)`, `Delay(xtal).ms(n)`, `Uart(xtal)` (`begin` `write` `writeAll` `print` `printHex` `flush` `available` `read`), `Adc`, `Eeprom`, `Timer0` | The PIC16F193x, with the same operations as the C++ and Rust libraries |
+
+### Tests
+
+| | |
+|---|---|
+| `scripts/test-zig.sh` | 10 builds, run on the simulator: the two programs in four modes; the configuration words the linker made; Zig calling C; a build for the debugger with debug information |
+| `tests/zig/hardware.zig`, run by `tools/hwtest.py` on a PIC16LF1937 | Pass: a call through a function pointer; `wait.ms(100)` measured as 48 counts of timer 0 where 49 are expected; four EEPROM bytes written and read back; the 1.024 V reference read as 327 of 1023. LLDB printed the Zig variables |
+
+## The three device libraries side by side
+
+The same program (pins, the serial port printing two numbers, a timer
+interrupt counted under a critical section), on the PIC16F1937:
+
+| | Words | Source |
+|---|---|---|
+| C++, `-Os` | 299 | `tests/cxx/hal.cpp` |
+| Rust, `-Os` | 272 | `tests/rust/hal` |
+| Zig, `ReleaseSmall` | 271 | `tests/zig/hal.zig` |
+
+All three run the same delay, EEPROM and A/D checks on the part with the
+same results.

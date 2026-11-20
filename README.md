@@ -24,7 +24,7 @@ gates G0 to G2.
 | 4 | LLVM backend, C working | done: 98.7% of the GCC C torture tests that build pass, picolibc builds and its tests pass |
 | 5 | Optimization | every benchmark no larger and no slower than XC8 at each of its levels; in total 0.73 of XC8's size at `-Os` |
 | 6 | Debugging | LLDB with a PIC16F1 plugin, on the simulator and on the part; VS Code projects (`pic16f1-new-project`) |
-| 7 | Other languages | C++ and Rust ([docs/languages.md](docs/languages.md)) |
+| 7 | Other languages | C++, Rust and Zig ([docs/languages.md](docs/languages.md)) |
 
 ## Layout
 
@@ -41,6 +41,7 @@ gates G0 to G2.
 | `tests/libc/` | A `printf` program using picolibc |
 | `tests/cxx/` | C++: the language, the standard library, the device library (`scripts/test-cxx.sh`) |
 | `tests/rust/` | Rust: the language with `core`, the `pic16f1` crate (`scripts/test-rust.sh`) |
+| `tests/zig/` | Zig: the language, `pic.zig` (`scripts/test-zig.sh`) |
 | `tests/hardware/` | Programs that check themselves on a real part, run by `tools/hwtest.py` |
 | `tests/debug/`, `tests/float/`, `tests/overlay/`, `tests/stack/`, `tests/switch/`, `tests/wcall/`, `tests/xc8/`, `tests/vla/`, `tests/setjmp/`, `tests/frames/`, `tests/builtins/`, `tests/inject/` | One feature each, run by the `scripts/test-*.sh` of the same name |
 | `tests/devices/` | A program that must build and run on every device in the database |

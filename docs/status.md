@@ -66,7 +66,8 @@ sheet, and VS Code projects for both.
 **C++** works: the language without exceptions and run-time type
 information, the header part of the standard library, and a device library,
 tested on the simulator and on the part ([languages.md](languages.md)).
-**Rust** works by way of stock `rustc` and a stand-in target, with `core`
-and a register and hardware crate, tested the same two ways.
+**Rust** and **Zig** work by way of their stock compilers and a stand-in
+target, each with a register and hardware library, tested the same two
+ways.
 
 See [toolchain.md](toolchain.md) for test results in detail and known limits.
