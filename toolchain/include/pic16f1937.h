@@ -1489,4 +1489,11 @@ typedef union {
 #define _CONFIG2_LVP_OFF 0x1FFF
 #define _CONFIG2_LVP_ON 0x3FFF
 
+/* A program built for an in-circuit debugger (-mdebugger) leaves
+ * RB6 and RB7 to it: they are its clock and data lines. Naming
+ * their port, latch or direction bits in such a build is an error. */
+#ifdef __DEBUG
+#pragma GCC poison RB6 LATB6 TRISB6 RB7 LATB7 TRISB7
+#endif
+
 #endif /* __PIC16F1937_H */

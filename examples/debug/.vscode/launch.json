@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // Needs the "LLDB DAP" extension (llvm-vs-code-extensions.lldb-dap).
+            // The debugger itself is the toolchain's own build of LLDB.
+            "name": "PIC16F1: debug on the simulator",
+            "type": "lldb-dap",
+            "request": "attach",
+            "program": "${workspaceFolder}/build/main.elf",
+            "debugAdapterExecutable": "${config:pic16f1.toolchain}/toolchain/bin/pic16f1-lldb-dap",
+            "gdb-remote-hostname": "127.0.0.1",
+            "gdb-remote-port": 3333,
+            "preLaunchTask": "pic16f1: simulator",
+            // Small reads: LLDB's 512-byte blocks are slow through a probe.
+            "initCommands": [ "settings set target.process.memory-cache-line-size 32" ],
+            // Run to main: the program is otherwise stopped at the reset vector.
+            "postRunCommands": [ "breakpoint set --one-shot true --name main", "process continue" ]
+        }
+    ]
+}

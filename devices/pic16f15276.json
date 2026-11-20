@@ -412,6 +412,13 @@
   "end": 128
  },
  "gpr_bytes": 2032,
+ "debug": {
+  "pins": {
+   "clock": "RB6",
+   "data": "RB7"
+  },
+  "breakpoints": 3
+ },
  "core_register_count": 12,
  "sfrs": [
   {

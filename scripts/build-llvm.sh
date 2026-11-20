@@ -12,12 +12,18 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 src=${LLVM_SRC:-$root/build/llvm-project}
 bld=${LLVM_BUILD:-$root/build/llvm-build}
 tools="clang lld llc llvm-mc llvm-objdump llvm-readelf llvm-objcopy llvm-ar llvm-nm llvm-size FileCheck not"
+# The debugger and its adapter for editors (VS Code). They add about 1,300
+# files to the build; NO_LLDB=1 leaves them out.
+[ -n "${NO_LLDB:-}" ] || tools="$tools lldb lldb-dap"
 
 mkdir -p "$bld"
 cmake -G Ninja -S "$src/llvm" -B "$bld" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DLLVM_ENABLE_PROJECTS="clang;lld$([ -n "${NO_LLDB:-}" ] || echo ';lldb')" \
+    -DLLDB_ENABLE_PYTHON=OFF -DLLDB_ENABLE_LUA=OFF -DLLDB_INCLUDE_TESTS=OFF \
+    -DLLDB_USE_SYSTEM_DEBUGSERVER=ON -DLLDB_ENABLE_CURSES=OFF \
+    -DLLDB_ENABLE_LZMA=OFF -DLLDB_ENABLE_LIBXML2=ON \
     -DLLVM_TARGETS_TO_BUILD="" \
     -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="PIC16F1" \
     -DLLVM_DEFAULT_TARGET_TRIPLE="pic16f1" \

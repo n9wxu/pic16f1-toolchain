@@ -293,6 +293,81 @@ impl Cpu {
         }
     }
 
+    // --- Access for a debugger: no side effects, no cycles ------------------
+
+    /// Read data memory as an FSR sees it: banked addresses from 0, the
+    /// linear view from 0x2000, flash (low byte of each word) from 0x8000.
+    pub fn debug_read(&self, fsr: u16) -> u8 {
+        if (fsr as usize) < self.ram.len() {
+            let a = self.canon(fsr);
+            if Some(a) == self.p.stkptr {
+                return self.stkptr;
+            }
+            if self.p.stkptr.is_some() && (a == self.p.tosl || a == self.p.tosh) {
+                let tos = self.stack[(self.stkptr as usize) % self.stack.len()];
+                return if a == self.p.tosl { tos as u8 } else { (tos >> 8) as u8 };
+            }
+            if a == PCL {
+                return self.pc as u8;
+            }
+            self.ram[a as usize] & self.impl_mask[a as usize]
+        } else if fsr >= FLASH_VIEW {
+            self.flash_word(fsr & 0x7FFF) as u8
+        } else if fsr >= LINEAR_BASE {
+            match self.dev.linear_to_traditional(fsr - LINEAR_BASE) {
+                Some(a) => self.ram[a as usize],
+                None => 0,
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Write data memory by the same addresses. Flash is not written.
+    pub fn debug_write(&mut self, fsr: u16, v: u8) {
+        if (fsr as usize) < self.ram.len() {
+            let a = self.canon(fsr);
+            if Some(a) == self.p.stkptr {
+                self.stkptr = v & 0x1F;
+            } else {
+                self.ram[a as usize] = v & self.impl_mask[a as usize];
+            }
+        } else if (LINEAR_BASE..FLASH_VIEW).contains(&fsr) {
+            if let Some(a) = self.dev.linear_to_traditional(fsr - LINEAR_BASE) {
+                self.ram[a as usize] = v;
+            }
+        }
+    }
+
+    /// The hardware stack pointer: 0x1F when the stack is empty.
+    pub fn stkptr(&self) -> u8 {
+        self.stkptr
+    }
+    pub fn set_stkptr(&mut self, v: u8) {
+        self.stkptr = v & 0x1F;
+    }
+    /// An entry of the hardware return stack (a word address).
+    pub fn stack_entry(&self, level: usize) -> u16 {
+        self.stack.get(level).copied().unwrap_or(0)
+    }
+    pub fn set_stack_entry(&mut self, level: usize, v: u16) {
+        if let Some(e) = self.stack.get_mut(level) {
+            *e = v & 0x7FFF;
+        }
+    }
+    pub fn stack_levels(&self) -> usize {
+        self.stack.len()
+    }
+    pub fn set_flash_word(&mut self, addr: u16, w: u16) {
+        if let Some(f) = self.flash.get_mut(addr as usize) {
+            *f = w & 0x3FFF;
+            self.programmed[addr as usize] = true;
+        }
+    }
+    pub fn flash_words(&self) -> usize {
+        self.flash.len()
+    }
+
     /// Read a data-memory byte by traditional address, without side effects.
     pub fn peek(&self, addr: u16) -> u8 {
         let a = self.canon(addr) as usize;

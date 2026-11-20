@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PIC16F1MCTargetDesc.h"
+#include "PIC16F1Dwarf.h"
+#include "llvm/MC/MCDwarf.h"
 #include "PIC16F1InstPrinter.h"
 #include "PIC16F1MCAsmInfo.h"
 #include "TargetInfo/PIC16F1TargetInfo.h"
@@ -36,14 +38,20 @@ static MCInstrInfo *createPIC16F1MCInstrInfo() {
 
 static MCRegisterInfo *createPIC16F1MCRegisterInfo(const Triple &TT) {
   MCRegisterInfo *X = new MCRegisterInfo();
-  InitPIC16F1MCRegisterInfo(X, PIC16F1::NoRegister);
+  InitPIC16F1MCRegisterInfo(X, PIC16F1::PC);
   return X;
 }
 
 static MCAsmInfo *createPIC16F1MCAsmInfo(const MCRegisterInfo &MRI,
                                          const Triple &TT,
                                          const MCTargetOptions &Options) {
-  return new PIC16F1MCAsmInfo(TT, Options);
+  MCAsmInfo *MAI = new PIC16F1MCAsmInfo(TT, Options);
+  // The rules every function starts from when a debugger unwinds it.
+  SmallString<96> Rules;
+  PIC16F1Dwarf::commonRules(Rules);
+  MAI->addInitialFrameState(
+      MCCFIInstruction::createEscape(nullptr, Rules.str()));
+  return MAI;
 }
 
 static MCSubtargetInfo *

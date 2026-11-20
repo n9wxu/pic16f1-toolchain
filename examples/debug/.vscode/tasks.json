@@ -1,0 +1,32 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "pic16f1: build",
+            "type": "shell",
+            "command": "mkdir -p build && ${config:pic16f1.toolchain}/toolchain/bin/pic16f1-cc -g ${config:pic16f1.optimization} -mcpu=${config:pic16f1.device} -o build/main.hex *.c",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            // Builds, then starts the simulator and leaves it waiting for
+            // the debugger. It ends when the debug session does.
+            "label": "pic16f1: simulator",
+            "type": "shell",
+            "command": "${config:pic16f1.toolchain}/toolchain/bin/pic16f1-sim gdb --device ${config:pic16f1.device} --port 3333 build/main.elf",
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "pic16f1: build",
+            "isBackground": true,
+            "presentation": { "reveal": "silent", "panel": "dedicated" },
+            "problemMatcher": {
+                "pattern": { "regexp": "^pic16f1-sim: (.*)$", "message": 1 },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^pic16f1-sim: ",
+                    "endsPattern": "waiting for a debugger"
+                }
+            }
+        }
+    ]
+}

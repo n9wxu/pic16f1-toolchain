@@ -19,6 +19,12 @@ MEMORY
   config   (r)  : ORIGIN = 0x1000e, LENGTH = 4
 }
 
+
+/* An in-circuit debugger keeps its own data in the last 16 bytes of RAM
+ * (0x320-0x32f). A program linked for one (-mdebugger, which defines
+ * __debugger) stays below them. */
+__debugger_ram = DEFINED(__debugger) ? 16 : 0;
+
 /* Bytes of stack for the interrupt handler, if there is one. */
 PROVIDE(__isr_stack_size = 32);
 /* Bytes kept for the main stack when a heap is in use. */
@@ -53,6 +59,9 @@ SECTIONS
    * first 32 banks of a larger one too. */
   .noinit (NOLOAD) :
   {
+    /* The stack pointer cell comes first of all, at a fixed address:
+     * debug information that cannot hold a relocation names it. */
+    *(.noinit.__sp)
     *libpicrt*.a:*(.noinit .noinit.*)
     *(.noinit .noinit.*)
   } > ram
@@ -82,7 +91,8 @@ SECTIONS
   } > ram
 
   /* The main stack grows down from the end of RAM. */
-  __stack_top = ORIGIN(ram) + LENGTH(ram);
+  __stack_top = ORIGIN(ram) + LENGTH(ram) - __debugger_ram;
+  ASSERT(__isr_stack_top <= __stack_top, "the program's variables reach into the RAM kept for the debugger")
 
   /* malloc, if the program uses it, takes the RAM between the data and the
    * space set aside for the stack. Nothing enforces the boundary. */

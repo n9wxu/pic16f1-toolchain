@@ -19,6 +19,7 @@ MEMORY
   config   (r)  : ORIGIN = 0x1000e, LENGTH = 6
 }
 
+
 /* Bytes of stack for the interrupt handler, if there is one. */
 PROVIDE(__isr_stack_size = 32);
 /* Bytes kept for the main stack when a heap is in use. */
@@ -53,6 +54,9 @@ SECTIONS
    * first 32 banks of a larger one too. */
   .noinit (NOLOAD) :
   {
+    /* The stack pointer cell comes first of all, at a fixed address:
+     * debug information that cannot hold a relocation names it. */
+    *(.noinit.__sp)
     *libpicrt*.a:*(.noinit .noinit.*)
     *(.noinit .noinit.*)
   } > ram

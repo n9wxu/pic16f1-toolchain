@@ -443,6 +443,670 @@ index 50f0cd8a9..b1b42ff24 100644
  void setMipsTargetInfo(Ctx &);
  void setPPC64TargetInfo(Ctx &);
  void setPPCTargetInfo(Ctx &);
+diff --git a/lldb/include/lldb/Target/Process.h b/lldb/include/lldb/Target/Process.h
+index 9162158a2..88d8d4232 100644
+--- a/lldb/include/lldb/Target/Process.h
++++ b/lldb/include/lldb/Target/Process.h
+@@ -1098,6 +1098,12 @@ public:
+   /// under some circumstances).
+   virtual bool SupportsReverseDirection() { return false; }
+ 
++  /// True once the target is known to stop for a breakpoint after the
++  /// instruction at the breakpoint's address has run, where others stop
++  /// before it (PIC16F1 silicon). The plans that step place their
++  /// breakpoints to suit.
++  virtual bool BreakpointsStopAfterInstruction() { return false; }
++
+   /// Resumes all of a process's threads as configured using the Thread run
+   /// control functions.
+   ///
+diff --git a/lldb/include/lldb/Target/ThreadPlanStepOut.h b/lldb/include/lldb/Target/ThreadPlanStepOut.h
+index ad4434be1..9baa05fb3 100644
+--- a/lldb/include/lldb/Target/ThreadPlanStepOut.h
++++ b/lldb/include/lldb/Target/ThreadPlanStepOut.h
+@@ -67,6 +67,9 @@ private:
+   StackID m_step_out_to_id;
+   StackID m_immediate_step_from_id;
+   lldb::break_id_t m_return_bp_id;
++  void FollowLateBreakpointIntoCall(StopInfo &stop_info);
++  lldb::addr_t FindOnlyReturnInstruction(StackFrame &frame);
++  bool m_return_bp_on_return_instruction = false;
+   lldb::addr_t m_return_addr;
+   bool m_stop_others;
+   lldb::ThreadPlanSP m_step_out_to_inline_plan_sp; // This plan implements step
+diff --git a/lldb/include/lldb/Target/ThreadPlanStepRange.h b/lldb/include/lldb/Target/ThreadPlanStepRange.h
+index 001f3d9fa..240452afd 100644
+--- a/lldb/include/lldb/Target/ThreadPlanStepRange.h
++++ b/lldb/include/lldb/Target/ThreadPlanStepRange.h
+@@ -58,6 +58,8 @@ protected:
+   // run' plan, then just single step.
+   bool SetNextBranchBreakpoint();
+ 
++  bool ArrivedLateAtAddress(lldb::addr_t addr);
++
+   // Whether the input stop info is caused by the next branch breakpoint.
+   // Note: this does not check if branch breakpoint site is shared by other
+   // breakpoints or not.
+diff --git a/lldb/include/lldb/Utility/ArchSpec.h b/lldb/include/lldb/Utility/ArchSpec.h
+index d38a61e4a..158e450a5 100644
+--- a/lldb/include/lldb/Utility/ArchSpec.h
++++ b/lldb/include/lldb/Utility/ArchSpec.h
+@@ -237,6 +237,7 @@ public:
+     eCore_arc, // little endian ARC
+ 
+     eCore_avr,
++    eCore_pic16f1,
+ 
+     eCore_wasm32,
+ 
+diff --git a/lldb/source/Expression/IRMemoryMap.cpp b/lldb/source/Expression/IRMemoryMap.cpp
+index fd46a4893..9be029bdd 100644
+--- a/lldb/source/Expression/IRMemoryMap.cpp
++++ b/lldb/source/Expression/IRMemoryMap.cpp
+@@ -9,6 +9,7 @@
+ #include "lldb/Expression/IRMemoryMap.h"
+ #include "lldb/Target/MemoryRegionInfo.h"
+ #include "lldb/Target/Process.h"
++#include "lldb/Target/ABI.h"
+ #include "lldb/Target/Target.h"
+ #include "lldb/Utility/DataBufferHeap.h"
+ #include "lldb/Utility/DataExtractor.h"
+@@ -170,6 +171,12 @@ lldb::addr_t IRMemoryMap::FindSpace(size_t size) {
+         switch (address_byte_size) {
+         case 2:
+           ret = 0x8000ull;
++          // On PIC16F1 a pointer from 0x8000 up reads program memory, and
++          // one below 0x3000 data memory; what lies between is no memory
++          // at all, so the debugger's own scratch can have its addresses.
++          if (target_sp->GetArchitecture().GetMachine() ==
++              llvm::Triple::pic16f1)
++            ret = 0x3000ull;
+           break;
+         case 4:
+           ret = 0xee000000ull;
+@@ -190,6 +197,10 @@ lldb::addr_t IRMemoryMap::FindSpace(size_t size) {
+     uint64_t align = target_sp->GetExprAllocAlign();
+     if (align == 0)
+       align = 4096;
++    // There are only 0x5000 addresses to share out there.
++    if (target_sp->GetArchitecture().GetMachine() == llvm::Triple::pic16f1 &&
++        target_sp->GetExprAllocAlign() == 0)
++      align = 64;
+     ret = llvm::alignTo(addr + alloc_size, align);
+   }
+ 
+@@ -541,6 +552,19 @@ bool IRMemoryMap::GetAllocSize(lldb::addr_t address, size_t &size) {
+   return true;
+ }
+ 
++/// An expression is compiled with the target's own pointers, which on
++/// PIC16F1 are 16 bits and name data memory; that is at an offset in the
++/// address space the process is read in.
++static lldb::addr_t ProcessDataAddress(lldb::ProcessSP &process_sp,
++                                       lldb::addr_t address) {
++  if (process_sp->GetTarget().GetArchitecture().GetMachine() !=
++      llvm::Triple::pic16f1)
++    return address;
++  if (lldb::ABISP abi_sp = process_sp->GetABI())
++    return abi_sp->FixDataAddress(address);
++  return address;
++}
++
+ void IRMemoryMap::WriteMemory(lldb::addr_t process_address,
+                               const uint8_t *bytes, size_t size,
+                               Status &error) {
+@@ -552,6 +576,7 @@ void IRMemoryMap::WriteMemory(lldb::addr_t process_address,
+     lldb::ProcessSP process_sp = m_process_wp.lock();
+ 
+     if (process_sp) {
++      process_address = ProcessDataAddress(process_sp, process_address);
+       process_sp->WriteMemory(process_address, bytes, size, error);
+       return;
+     }
+@@ -665,6 +690,7 @@ void IRMemoryMap::ReadMemory(uint8_t *bytes, lldb::addr_t process_address,
+     lldb::ProcessSP process_sp = m_process_wp.lock();
+ 
+     if (process_sp) {
++      process_address = ProcessDataAddress(process_sp, process_address);
+       process_sp->ReadMemory(process_address, bytes, size, error);
+       return;
+     }
+diff --git a/lldb/source/Plugins/ABI/CMakeLists.txt b/lldb/source/Plugins/ABI/CMakeLists.txt
+index 97a20364a..58bbfa534 100644
+--- a/lldb/source/Plugins/ABI/CMakeLists.txt
++++ b/lldb/source/Plugins/ABI/CMakeLists.txt
+@@ -4,7 +4,7 @@ set_property(DIRECTORY PROPERTY LLDB_TOLERATED_PLUGIN_DEPENDENCIES
+   TypeSystem
+ )
+ 
+-foreach(target AArch64 ARM ARC Hexagon LoongArch Mips MSP430 PowerPC RISCV SystemZ X86)
++foreach(target AArch64 ARM ARC Hexagon LoongArch Mips MSP430 PIC16F1 PowerPC RISCV SystemZ X86)
+   if (${target} IN_LIST LLVM_TARGETS_TO_BUILD)
+     add_subdirectory(${target})
+   endif()
+diff --git a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
+index c80e7e48b..8763ac9a7 100644
+--- a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
++++ b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.cpp
+@@ -2142,7 +2142,22 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
+             if (thread_sp->GetTemporaryResumeState() == eStateStepping)
+               thread_sp->SetStopInfo(
+                   StopInfo::CreateStopReasonToTrace(*thread_sp));
+-            else
++            else if (BreakpointSiteSP late_site_sp =
++                         IsPIC16F1() ? GetOnlyArmedBreakpointSite()
++                                     : BreakpointSiteSP()) {
++              // The part's one breakpoint stops the program after the
++              // instruction at its address, so the pc is already past it
++              // (anywhere, if that instruction was a branch). A running
++              // program that stops this way with one breakpoint armed
++              // stopped for that one.
++              m_breakpoints_stop_late = true;
++              if (late_site_sp->ValidForThisThread(*thread_sp))
++                thread_sp->SetStopInfo(
++                    StopInfo::CreateStopReasonWithBreakpointSiteID(
++                        *thread_sp, late_site_sp->GetID()));
++              else
++                thread_sp->SetStopInfo(StopInfoSP());
++            } else
+               thread_sp->SetStopInfo(StopInfo::CreateStopReasonWithSignal(
+                   *thread_sp, signo, description.c_str()));
+           }
+@@ -3431,7 +3446,89 @@ size_t ProcessGDBRemote::PutSTDIN(const char *src, size_t src_len,
+ 
+ /// Enable a single breakpoint site by trying Z0 (software), then Z1
+ /// (hardware), then manual memory write as a last resort.
++bool ProcessGDBRemote::IsPIC16F1() {
++  return GetTarget().GetArchitecture().GetMachine() == llvm::Triple::pic16f1;
++}
++
++bool ProcessGDBRemote::SendBreakpointSitePacket(BreakpointSite &bp_site,
++                                                bool insert) {
++  GDBStoppointType type = bp_site.GetType() == BreakpointSite::eHardware
++                              ? eBreakpointHardware
++                              : eBreakpointSoftware;
++  return GetGDBRemote().SendGDBStoppointTypePacket(
++             type, insert, bp_site.GetLoadAddress(),
++             GetSoftwareBreakpointTrapOpcode(&bp_site),
++             GetInterruptTimeout()) == 0;
++}
++
++BreakpointSiteSP ProcessGDBRemote::GetOnlyArmedBreakpointSite() {
++  lldb::break_id_t found = LLDB_INVALID_BREAK_ID;
++  unsigned count = 0;
++  GetBreakpointSiteList().ForEach([&](BreakpointSite *site) {
++    if (IsBreakpointSitePhysicallyEnabled(*site) &&
++        site->GetID() != m_displaced_site_id) {
++      found = site->GetID();
++      ++count;
++    }
++  });
++  if (count != 1)
++    return BreakpointSiteSP();
++  return GetBreakpointSiteList().FindByID(found);
++}
++
+ llvm::Error ProcessGDBRemote::DoEnableBreakpointSite(BreakpointSite &bp_site) {
++  llvm::Error error = SendEnableBreakpointSite(bp_site);
++  if (!error || !IsPIC16F1() || m_displaced_site_id != LLDB_INVALID_BREAK_ID)
++    return error;
++
++  if (!bp_site.IsInternal()) {
++    // A user's breakpoint coming back (LLDB takes one out to step off its
++    // address) may find that one of LLDB's own has the target's breakpoint
++    // in the meantime. Then it waits for that one to go.
++    BreakpointSite *holder = nullptr;
++    GetBreakpointSiteList().ForEach([&](BreakpointSite *site) {
++      if (!holder && site != &bp_site && site->IsInternal() &&
++          IsBreakpointSitePhysicallyEnabled(*site) &&
++          site->GetType() != BreakpointSite::eSoftware)
++        holder = site;
++    });
++    if (!holder)
++      return error;
++    llvm::consumeError(std::move(error));
++    bp_site.SetType(holder->GetType());
++    SetBreakpointSiteEnabled(bp_site);
++    m_displaced_site_id = bp_site.GetID();
++    m_displacing_site_id = holder->GetID();
++    return llvm::Error::success();
++  }
++
++  // The target has no breakpoint left for one LLDB needs for a moment. Let
++  // it have a user's until it is removed again.
++  BreakpointSite *victim = nullptr;
++  GetBreakpointSiteList().ForEach([&](BreakpointSite *site) {
++    if (!victim && site != &bp_site && !site->IsInternal() &&
++        IsBreakpointSitePhysicallyEnabled(*site) &&
++        site->GetType() != BreakpointSite::eSoftware)
++      victim = site;
++  });
++  if (!victim || !SendBreakpointSitePacket(*victim, false))
++    return error;
++  if (llvm::Error again = SendEnableBreakpointSite(bp_site)) {
++    llvm::consumeError(std::move(again));
++    SendBreakpointSitePacket(*victim, true);
++    return error;
++  }
++  llvm::consumeError(std::move(error));
++  m_displaced_site_id = victim->GetID();
++  m_displacing_site_id = bp_site.GetID();
++  LLDB_LOG(GetLog(GDBRLog::Breakpoints),
++           "breakpoint site {0} takes the place of site {1} for now",
++           m_displacing_site_id, m_displaced_site_id);
++  return llvm::Error::success();
++}
++
++llvm::Error
++ProcessGDBRemote::SendEnableBreakpointSite(BreakpointSite &bp_site) {
+   Log *log = GetLog(GDBRLog::Breakpoints);
+   const addr_t addr = bp_site.GetLoadAddress();
+   const size_t bp_op_size = GetSoftwareBreakpointTrapOpcode(&bp_site);
+@@ -3493,6 +3590,24 @@ llvm::Error ProcessGDBRemote::DoDisableBreakpointSite(BreakpointSite &bp_site) {
+   const size_t bp_op_size = GetSoftwareBreakpointTrapOpcode(&bp_site);
+   auto &gdb_comm = GetGDBRemote();
+ 
++  if (bp_site.GetID() == m_displaced_site_id) {
++    // Not in the target at the moment, and now not to go back.
++    m_displaced_site_id = LLDB_INVALID_BREAK_ID;
++    m_displacing_site_id = LLDB_INVALID_BREAK_ID;
++    SetBreakpointSiteEnabled(bp_site, false);
++    return llvm::Error::success();
++  }
++  // Give the target's breakpoint back to the user's site this one displaced.
++  llvm::scope_exit restore([&] {
++    if (bp_site.GetID() != m_displacing_site_id)
++      return;
++    if (BreakpointSiteSP site_sp =
++            GetBreakpointSiteList().FindByID(m_displaced_site_id))
++      SendBreakpointSitePacket(*site_sp, true);
++    m_displaced_site_id = LLDB_INVALID_BREAK_ID;
++    m_displacing_site_id = LLDB_INVALID_BREAK_ID;
++  });
++
+   switch (bp_site.GetType()) {
+   case BreakpointSite::eSoftware: {
+     Status error = DisableSoftwareBreakpoint(&bp_site);
+diff --git a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.h b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.h
+index 26966b602..037baf423 100644
+--- a/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.h
++++ b/lldb/source/Plugins/Process/gdb-remote/ProcessGDBRemote.h
+@@ -465,6 +465,29 @@ private:
+   /// Enable a single breakpoint site by trying Z0 (software), then Z1
+   /// (hardware), then manual memory write as a last resort.
+   llvm::Error DoEnableBreakpointSite(BreakpointSite &bp_site);
++  llvm::Error SendEnableBreakpointSite(BreakpointSite &bp_site);
++
++  /// PIC16F1 silicon has one hardware breakpoint, and it stops the program
++  /// after the instruction at its address has run.
++  ///
++  /// A breakpoint LLDB sets for its own use (to step over a call, say) while
++  /// the user's breakpoint holds the one there is takes its place: the
++  /// user's is \a m_displaced_site_id and comes back when LLDB removes its
++  /// own, \a m_displacing_site_id.
++  bool IsPIC16F1();
++  bool m_breakpoints_stop_late = false;
++
++public:
++  bool BreakpointsStopAfterInstruction() override {
++    return m_breakpoints_stop_late;
++  }
++
++protected:
++  lldb::break_id_t m_displaced_site_id = LLDB_INVALID_BREAK_ID;
++  lldb::break_id_t m_displacing_site_id = LLDB_INVALID_BREAK_ID;
++  bool SendBreakpointSitePacket(BreakpointSite &bp_site, bool insert);
++  /// The one breakpoint site the target has armed, if it is one.
++  lldb::BreakpointSiteSP GetOnlyArmedBreakpointSite();
+ 
+   /// Disable a single breakpoint site directly by sending the appropriate
+   /// z packet or restoring the original instruction.
+diff --git a/lldb/source/Target/Platform.cpp b/lldb/source/Target/Platform.cpp
+index 70a7d2fbb..c6b3859cf 100644
+--- a/lldb/source/Target/Platform.cpp
++++ b/lldb/source/Target/Platform.cpp
+@@ -2093,6 +2093,14 @@ llvm::ArrayRef<uint8_t> Platform::SoftwareTrapOpcodeBytes(const ArchSpec &arch,
+     trap_opcode = llvm::ArrayRef<uint8_t>(g_hex_opcode, sizeof(g_hex_opcode));
+   } break;
+ 
++  case llvm::Triple::pic16f1: {
++    // Breakpoints are the debug server's business (program memory cannot
++    // be patched while a part runs); this only gives their size.
++    static const uint8_t g_pic16f1_opcode[] = {0x03, 0x00};
++    trap_opcode =
++        llvm::ArrayRef<uint8_t>(g_pic16f1_opcode, sizeof(g_pic16f1_opcode));
++  } break;
++
+   case llvm::Triple::msp430: {
+     static const uint8_t g_msp430_opcode[] = {0x43, 0x43};
+     trap_opcode =
+diff --git a/lldb/source/Target/ThreadPlanRunToAddress.cpp b/lldb/source/Target/ThreadPlanRunToAddress.cpp
+index a2ac8c3d0..01dd9fc2c 100644
+--- a/lldb/source/Target/ThreadPlanRunToAddress.cpp
++++ b/lldb/source/Target/ThreadPlanRunToAddress.cpp
+@@ -8,7 +8,9 @@
+ 
+ #include "lldb/Target/ThreadPlanRunToAddress.h"
+ #include "lldb/Target/Process.h"
++#include "lldb/Breakpoint/BreakpointSite.h"
+ #include "lldb/Target/RegisterContext.h"
++#include "lldb/Target/StopInfo.h"
+ #include "lldb/Target/Target.h"
+ #include "lldb/Target/Thread.h"
+ #include "lldb/Utility/LLDBLog.h"
+@@ -199,5 +201,19 @@ bool ThreadPlanRunToAddress::AtOurAddress() {
+       break;
+     }
+   }
+-  return found_it;
++  if (found_it)
++    return true;
++  // A breakpoint that stops the program after the instruction at its
++  // address (PIC16F1 silicon) leaves the pc past the address asked for.
++  // Stopping for one of this plan's breakpoints is arriving all the same.
++  StopInfoSP stop_info_sp = GetPrivateStopInfo();
++  if (stop_info_sp && stop_info_sp->GetStopReason() == eStopReasonBreakpoint) {
++    BreakpointSiteSP site_sp =
++        m_process.GetBreakpointSiteList().FindByID(stop_info_sp->GetValue());
++    if (site_sp)
++      for (lldb::break_id_t id : m_break_ids)
++        if (id != LLDB_INVALID_BREAK_ID && site_sp->IsBreakpointAtThisSite(id))
++          return true;
++  }
++  return false;
+ }
+diff --git a/lldb/source/Target/ThreadPlanStepOut.cpp b/lldb/source/Target/ThreadPlanStepOut.cpp
+index 7af4de6e7..62f030877 100644
+--- a/lldb/source/Target/ThreadPlanStepOut.cpp
++++ b/lldb/source/Target/ThreadPlanStepOut.cpp
+@@ -138,7 +138,10 @@ void ThreadPlanStepOut::SetupReturnAddress(
+     // FIXME - can we do this more securely if we know first_insn?
+ 
+     Address return_address(return_frame_sp->GetFrameCodeAddress());
+-    if (continue_to_next_branch) {
++    // (Not where a breakpoint stops after its instruction: there the
++    // breakpoint goes on the return instruction, below.)
++    if (continue_to_next_branch &&
++        !m_process.BreakpointsStopAfterInstruction()) {
+       SymbolContext return_address_sc;
+       AddressRange range;
+       Address return_address_decr_pc = return_address;
+@@ -178,8 +181,22 @@ void ThreadPlanStepOut::SetupReturnAddress(
+       return;
+     }
+ 
+-    Breakpoint *return_bp = 
+-        GetTarget().CreateBreakpoint(m_return_addr, true, false).get();
++    // Where a breakpoint stops the program after the instruction at its
++    // address, one on the function's return instruction stops it exactly
++    // at the return address; one at the return address would run an
++    // instruction of the caller first.
++    lldb::addr_t breakpoint_addr = m_return_addr;
++    if (m_process.BreakpointsStopAfterInstruction()) {
++      lldb::addr_t only_return =
++          FindOnlyReturnInstruction(*immediate_return_from_sp);
++      if (only_return != LLDB_INVALID_ADDRESS) {
++        breakpoint_addr = only_return;
++        m_return_bp_on_return_instruction = true;
++      }
++    }
++
++    Breakpoint *return_bp =
++        GetTarget().CreateBreakpoint(breakpoint_addr, true, false).get();
+ 
+     if (return_bp != nullptr) {
+       if (return_bp->IsHardware() && !return_bp->HasResolvedLocations())
+@@ -406,6 +423,8 @@ bool ThreadPlanStepOut::ShouldStop(Event *event_ptr) {
+     if (stop_info_sp && stop_info_sp->GetStopReason() == eStopReasonBreakpoint) {
+       StackID frame_zero_id = GetThread().GetStackFrameAtIndex(0)->GetStackID();
+       done = !(frame_zero_id < m_step_out_to_id);
++      if (!done)
++        FollowLateBreakpointIntoCall(*stop_info_sp);
+     }
+   }
+ 
+@@ -426,6 +445,93 @@ bool ThreadPlanStepOut::ShouldStop(Event *event_ptr) {
+   return done;
+ }
+ 
++// A breakpoint that stops the program after the instruction at its address
++// (PIC16F1 silicon) has, when that instruction is a call, stopped it at the
++// start of another function, and it will not come back through the
++// breakpoint's address: it returns to the instruction after. Move the
++// breakpoint to where this new function returns to.
++// The address of the return instruction of the PIC16F1 function \a frame is
++// in, if it has exactly one and no other way out (a jump to another
++// function, or a computed one).
++lldb::addr_t ThreadPlanStepOut::FindOnlyReturnInstruction(StackFrame &frame) {
++  Target &target = GetTarget();
++  if (target.GetArchitecture().GetMachine() != llvm::Triple::pic16f1)
++    return LLDB_INVALID_ADDRESS;
++  SymbolContext sc = frame.GetSymbolContext(eSymbolContextFunction |
++                                            eSymbolContextSymbol);
++  AddressRange range;
++  if (!sc.GetAddressRange(eSymbolContextFunction | eSymbolContextSymbol, 0,
++                          false, range))
++    return LLDB_INVALID_ADDRESS;
++  const lldb::addr_t start = range.GetBaseAddress().GetLoadAddress(&target);
++  const size_t size = range.GetByteSize();
++  if (start == LLDB_INVALID_ADDRESS || size < 2 || size > 0x4000)
++    return LLDB_INVALID_ADDRESS;
++  std::vector<uint8_t> bytes(size);
++  Status error;
++  if (target.ReadMemory(range.GetBaseAddress(), bytes.data(), size, error) !=
++      size)
++    return LLDB_INVALID_ADDRESS;
++
++  const uint32_t first = start / 2, count = size / 2;
++  lldb::addr_t found = LLDB_INVALID_ADDRESS;
++  for (uint32_t i = 0; i < count; ++i) {
++    const uint16_t word = (bytes[2 * i] | (bytes[2 * i + 1] << 8)) & 0x3FFF;
++    const bool is_return =
++        word == 0x0008 || word == 0x0009 || (word & 0x3F00) == 0x3400;
++    if (is_return) {
++      if (found != LLDB_INVALID_ADDRESS)
++        return LLDB_INVALID_ADDRESS;
++      found = start + 2 * i;
++      continue;
++    }
++    uint32_t target_word;
++    if ((word & 0x3800) == 0x2800) // GOTO, within the page
++      target_word = ((first + i) & ~0x7FFu) | (word & 0x7FF);
++    else if ((word & 0x3E00) == 0x3200) // BRA
++      target_word = first + i + 1 + (word & 0x1FF) - ((word & 0x100) ? 0x200 : 0);
++    else if (word == 0x000B || word == 0x000A || // BRW, CALLW
++             (word & 0x30FF) == 0x0082) // a byte operation that writes PCL
++      return LLDB_INVALID_ADDRESS;
++    else
++      continue;
++    if (target_word < first || target_word >= first + count)
++      return LLDB_INVALID_ADDRESS;
++  }
++  return found;
++}
++
++void ThreadPlanStepOut::FollowLateBreakpointIntoCall(StopInfo &stop_info) {
++  if (m_return_bp_on_return_instruction)
++    return;
++  BreakpointSiteSP site_sp =
++      m_process.GetBreakpointSiteList().FindByID(stop_info.GetValue());
++  if (!site_sp || !site_sp->IsBreakpointAtThisSite(m_return_bp_id))
++    return;
++  Thread &thread = GetThread();
++  if (thread.GetRegisterContext()->GetPC() == m_return_addr)
++    return;
++  StackFrameSP parent_sp = thread.GetStackFrameAtIndex(1);
++  if (!parent_sp)
++    return;
++  lldb::addr_t return_addr = parent_sp->GetRegisterContext()->GetPC();
++  if (return_addr == LLDB_INVALID_ADDRESS || return_addr == m_return_addr)
++    return;
++  GetTarget().RemoveBreakpointByID(m_return_bp_id);
++  m_return_bp_id = LLDB_INVALID_BREAK_ID;
++  m_return_addr = return_addr;
++  if (Breakpoint *return_bp =
++          GetTarget().CreateBreakpoint(m_return_addr, true, false).get()) {
++    return_bp->SetThreadID(m_tid);
++    m_return_bp_id = return_bp->GetID();
++    return_bp->SetBreakpointKind("step-out");
++  }
++  LLDB_LOGF(GetLog(LLDBLog::Step),
++            "ThreadPlanStepOut(%p): the return breakpoint ran a call; now "
++            "at 0x%" PRIx64,
++            static_cast<void *>(this), m_return_addr);
++}
++
+ bool ThreadPlanStepOut::StopOthers() { return m_stop_others; }
+ 
+ StateType ThreadPlanStepOut::GetPlanRunState() { return eStateRunning; }
+diff --git a/lldb/source/Target/ThreadPlanStepRange.cpp b/lldb/source/Target/ThreadPlanStepRange.cpp
+index b57754a18..fb827bb28 100644
+--- a/lldb/source/Target/ThreadPlanStepRange.cpp
++++ b/lldb/source/Target/ThreadPlanStepRange.cpp
+@@ -161,7 +161,10 @@ bool ThreadPlanStepRange::InRange() {
+                       s.GetData());
+           }
+         } else if (new_context.line_entry.range.GetBaseAddress().GetLoadAddress(
+-                       &GetTarget()) != pc_load_addr) {
++                       &GetTarget()) != pc_load_addr &&
++                   !ArrivedLateAtAddress(
++                       new_context.line_entry.range.GetBaseAddress()
++                           .GetLoadAddress(&GetTarget()))) {
+           // Another thing that sometimes happens here is that we step out of
+           // one line into the MIDDLE of another line.  So far I mostly see
+           // this due to bugs in the debug information. But we probably don't
+@@ -194,6 +197,34 @@ bool ThreadPlanStepRange::InRange() {
+   return ret_value;
+ }
+ 
++// Where a breakpoint stops the program after the instruction at its
++// address, a stop for a breakpoint at \a addr, the start of a line, leaves
++// the pc an instruction into the line. That is as near its start as such a
++// target gets, and counts as having arrived there.
++bool ThreadPlanStepRange::ArrivedLateAtAddress(lldb::addr_t addr) {
++  if (!m_process.BreakpointsStopAfterInstruction())
++    return false;
++  StopInfoSP stop_info_sp = GetPrivateStopInfo();
++  if (!stop_info_sp || stop_info_sp->GetStopReason() != eStopReasonBreakpoint)
++    return false;
++  BreakpointSiteSP site_sp =
++      m_process.GetBreakpointSiteList().FindByID(stop_info_sp->GetValue());
++  return site_sp && site_sp->GetLoadAddress() == addr;
++}
++
++// The PIC16F1 instructions that may skip the one after them: BTFSC, BTFSS,
++// DECFSZ and INCFSZ.
++static bool IsPIC16F1Skip(Instruction &inst) {
++  const Opcode &opcode = inst.GetOpcode();
++  if (opcode.GetByteSize() != 2)
++    return false;
++  const uint8_t *bytes = static_cast<const uint8_t *>(opcode.GetOpcodeBytes());
++  if (!bytes)
++    return false;
++  uint8_t high = bytes[1] & 0x3F;
++  return (high & 0x38) == 0x18 || high == 0x0B || high == 0x0F;
++}
++
+ bool ThreadPlanStepRange::InSymbol() {
+   lldb::addr_t cur_pc = GetThread().GetRegisterContext()->GetPC();
+   if (m_addr_context.function != nullptr) {
+@@ -373,6 +404,21 @@ bool ThreadPlanStepRange::SetNextBranchBreakpoint() {
+     if (branch_index == pc_index)
+       LLDB_LOGF(log, "ThreadPlanStepRange::SetNextBranchBreakpoint - skipping "
+                      "because current is branch instruction");
++    // Where a breakpoint stops the program after the instruction at its
++    // address, put it on the instruction before the one to run to. That
++    // instruction is certain to run unless the one before it can skip it.
++    if (run_to_address.IsValid() &&
++        m_process.BreakpointsStopAfterInstruction()) {
++      uint32_t target_index = branch_index == UINT32_MAX
++                                  ? instructions->GetSize()
++                                  : branch_index;
++      InstructionSP before_sp =
++          instructions->GetInstructionAtIndex(target_index - 1);
++      InstructionSP guard_sp =
++          instructions->GetInstructionAtIndex(target_index - 2);
++      if (before_sp && guard_sp && !IsPIC16F1Skip(*guard_sp))
++        run_to_address = before_sp->GetAddress();
++    }
+     if (run_to_address.IsValid()) {
+       const bool is_internal = true;
+       m_next_branch_bp_sp =
+diff --git a/lldb/source/Utility/ArchSpec.cpp b/lldb/source/Utility/ArchSpec.cpp
+index bd3660f90..76cec84d4 100644
+--- a/lldb/source/Utility/ArchSpec.cpp
++++ b/lldb/source/Utility/ArchSpec.cpp
+@@ -268,6 +268,13 @@ static constexpr const CoreDefinition g_core_definitions[] = {
+     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arc, ArchSpec::eCore_arc, "arc"},
+ 
+     {eByteOrderLittle, 2, 2, 4, llvm::Triple::avr, ArchSpec::eCore_avr, "avr"},
++    // The size is that of a C pointer, which is what expressions and
++    // pointer variables are read with. Addresses themselves are those of
++    // the ELF file and go beyond 16 bits (data memory is at 0x800000); the
++    // debug information gives its own address size. An instruction is one
++    // 14-bit word, two bytes in the file.
++    {eByteOrderLittle, 2, 2, 2, llvm::Triple::pic16f1, ArchSpec::eCore_pic16f1,
++     "pic16f1"},
+ 
+     {eByteOrderLittle, 4, 1, 4, llvm::Triple::wasm32, ArchSpec::eCore_wasm32,
+      "wasm32"},
+@@ -519,6 +526,7 @@ static const ArchDefinitionEntry g_elf_arch_entries[] = {
+     {ArchSpec::eCore_hexagon_generic, llvm::ELF::EM_HEXAGON     }, // HEXAGON
+     {ArchSpec::eCore_arc,             llvm::ELF::EM_ARC_COMPACT2}, // ARC
+     {ArchSpec::eCore_avr,             llvm::ELF::EM_AVR         }, // AVR
++    {ArchSpec::eCore_pic16f1,         llvm::ELF::EM_PIC16F1     }, // PIC16F1
+     {ArchSpec::eCore_riscv32,         llvm::ELF::EM_RISCV,      ArchSpec::eRISCVSubType_riscv32}, // riscv32
+     {ArchSpec::eCore_riscv64,         llvm::ELF::EM_RISCV,      ArchSpec::eRISCVSubType_riscv64}, // riscv64
+     {ArchSpec::eCore_loongarch32,     llvm::ELF::EM_LOONGARCH,  ArchSpec::eLoongArchSubType_loongarch32}, // loongarch32
+diff --git a/lldb/source/ValueObject/ValueObject.cpp b/lldb/source/ValueObject/ValueObject.cpp
+index 49fd513c7..81684a1a3 100644
+--- a/lldb/source/ValueObject/ValueObject.cpp
++++ b/lldb/source/ValueObject/ValueObject.cpp
+@@ -1670,6 +1670,25 @@ std::optional<addr_t> ValueObject::GetStrippedPointerValue(addr_t address) {
+   return std::nullopt;
+ }
+ 
++/// On a target whose pointers are not addresses of the debugger's address
++/// space as they stand (PIC16F1: a data pointer is 16 bits and data memory
++/// is at an offset; a function pointer counts words), turn the value of a
++/// pointer variable into the address it points at.
++static addr_t PointerToAddress(ValueObject &valobj, addr_t value) {
++  if (value == LLDB_INVALID_ADDRESS)
++    return value;
++  ExecutionContext exe_ctx(valobj.GetExecutionContextRef());
++  Process *process = exe_ctx.GetProcessPtr();
++  if (!process || process->GetTarget().GetArchitecture().GetMachine() !=
++                      llvm::Triple::pic16f1)
++    return value;
++  if (valobj.GetCompilerType().IsFunctionPointerType())
++    return value * 2;
++  if (ABISP abi_sp = process->GetABI())
++    return abi_sp->FixDataAddress(value);
++  return value;
++}
++
+ ValueObject::AddrAndType ValueObject::GetPointerValue() {
+   if (!UpdateValueIfNeeded(false))
+     return {};
+@@ -1678,14 +1697,16 @@ ValueObject::AddrAndType ValueObject::GetPointerValue() {
+   case Value::ValueType::Invalid:
+     return {};
+   case Value::ValueType::Scalar:
+-    return {m_value.GetScalar().ULongLong(LLDB_INVALID_ADDRESS),
++    return {PointerToAddress(
++                *this, m_value.GetScalar().ULongLong(LLDB_INVALID_ADDRESS)),
+             GetAddressTypeOfChildren()};
+ 
+   case Value::ValueType::HostAddress:
+   case Value::ValueType::LoadAddress:
+   case Value::ValueType::FileAddress: {
+     lldb::offset_t data_offset = 0;
+-    return {m_data.GetAddress(&data_offset), GetAddressTypeOfChildren()};
++    return {PointerToAddress(*this, m_data.GetAddress(&data_offset)),
++            GetAddressTypeOfChildren()};
+   }
+   }
+ 
 diff --git a/llvm/include/llvm/Analysis/TargetLibraryInfo.h b/llvm/include/llvm/Analysis/TargetLibraryInfo.h
 index 629b126db..71c7c1434 100644
 --- a/llvm/include/llvm/Analysis/TargetLibraryInfo.h
@@ -488,6 +1152,21 @@ index 3f1889f23..667e96910 100644
  // ELF Relocation types for MSP430
  enum {
  #include "ELFRelocs/MSP430.def"
+diff --git a/llvm/include/llvm/CodeGen/TargetFrameLowering.h b/llvm/include/llvm/CodeGen/TargetFrameLowering.h
+index 66b1cc137..c2d433ed9 100644
+--- a/llvm/include/llvm/CodeGen/TargetFrameLowering.h
++++ b/llvm/include/llvm/CodeGen/TargetFrameLowering.h
+@@ -61,7 +61,9 @@ public:
+   struct DwarfFrameBase {
+     // The frame base may be either a register (the default), the CFA with an
+     // offset, or a WebAssembly-specific location description.
+-    enum FrameBaseKind { Register, CFA, WasmFrameBase } Kind;
++    // PIC16F1Base: the value of the register in Location.Reg, or of the
++    // stack pointer cell __sp if that is 0, as an address in data memory.
++    enum FrameBaseKind { Register, CFA, WasmFrameBase, PIC16F1Base } Kind;
+     struct WasmFrameBase {
+       unsigned Kind; // Wasm local, global, or value stack
+       unsigned Index;
 diff --git a/llvm/include/llvm/IR/RuntimeLibcalls.td b/llvm/include/llvm/IR/RuntimeLibcalls.td
 index d5f38b967..4d9c7d755 100644
 --- a/llvm/include/llvm/IR/RuntimeLibcalls.td
@@ -575,6 +1254,64 @@ index 4b430bc28..ab2c81373 100644
    case EM_BLACKFIN:
      return "blackfin";
    case EM_SE_C33:
+diff --git a/llvm/lib/CodeGen/AsmPrinter/DwarfCompileUnit.cpp b/llvm/lib/CodeGen/AsmPrinter/DwarfCompileUnit.cpp
+index d336e60b4..da3b3c1a5 100644
+--- a/llvm/lib/CodeGen/AsmPrinter/DwarfCompileUnit.cpp
++++ b/llvm/lib/CodeGen/AsmPrinter/DwarfCompileUnit.cpp
+@@ -350,6 +350,16 @@ void DwarfCompileUnit::addLocationAttribute(
+         addSInt(*Loc, dwarf::DW_FORM_sdata, 0);
+         // Operation
+         addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_plus);
++      } else if (Asm->TM.getTargetTriple().getArch() == Triple::pic16f1 &&
++                 isa_and_nonnull<DILocalScope>(GV->getScope())) {
++        // PIC16F1: a variable of a function with a static frame has a
++        // fixed address, and so does a C static local. Written as an
++        // address (DW_OP_addr), a debugger lists it with the program's
++        // static variables instead of with the function's own; as a
++        // constant that happens to be an address it stays a local.
++        DD->addArangeLabel(SymbolCU(this, Sym));
++        addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_const4u);
++        addLabel(*Loc, dwarf::DW_FORM_data4, Sym);
+       } else {
+         DD->addArangeLabel(SymbolCU(this, Sym));
+         addOpAddress(*Loc, Sym);
+@@ -553,6 +563,36 @@ DIE &DwarfCompileUnit::updateSubprogramScopeDIE(const DISubprogram *SP,
+       addBlock(*SPDie, dwarf::DW_AT_frame_base, Loc);
+       break;
+     }
++    case TargetFrameLowering::DwarfFrameBase::PIC16F1Base: {
++      // A data pointer on this target is 16 bits; in the address space of
++      // the ELF file, which is the one debug information uses, data memory
++      // is at 0x800000.
++      DIELoc *Loc = new (DIEValueAllocator) DIELoc;
++      if (FrameBase.Location.Reg == 0) {
++        // The frame's stack level: the stack pointer cell (the first two
++        // bytes of RAM) in the innermost frame, the unwound FSR1 in a
++        // caller's, which is the one where unwinding has left 0xFF in BSR.
++        // The same expression as stackLevel() in the target's
++        // MCTargetDesc/PIC16F1Dwarf.h.
++        static const uint8_t Level[] = {
++            dwarf::DW_OP_bregx,  34,   0,    dwarf::DW_OP_const1u, 0xFF,
++            dwarf::DW_OP_eq,     dwarf::DW_OP_bra, 11, 0,
++            dwarf::DW_OP_lit0,   dwarf::DW_OP_plus_uconst, 0x80, 0xC0, 0x80,
++            0x04,                dwarf::DW_OP_deref_size, 2,
++            dwarf::DW_OP_skip,   2,    0,    dwarf::DW_OP_breg0 + 23, 0};
++        for (uint8_t Byte : Level)
++          addUInt(*Loc, dwarf::DW_FORM_data1, Byte);
++      } else {
++        int Reg = Asm->MF->getSubtarget().getRegisterInfo()->getDwarfRegNum(
++            FrameBase.Location.Reg, false);
++        addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_breg0 + Reg);
++        addSInt(*Loc, dwarf::DW_FORM_sdata, 0);
++      }
++      addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_plus_uconst);
++      addUInt(*Loc, dwarf::DW_FORM_udata, 0x800000);
++      addBlock(*SPDie, dwarf::DW_AT_frame_base, Loc);
++      break;
++    }
+     case TargetFrameLowering::DwarfFrameBase::WasmFrameBase: {
+       // FIXME: duplicated from Target/WebAssembly/WebAssembly.h
+       const unsigned TI_GLOBAL_RELOC = 3;
 diff --git a/llvm/lib/Object/ELF.cpp b/llvm/lib/Object/ELF.cpp
 index 5dbdecc99..2842dc986 100644
 --- a/llvm/lib/Object/ELF.cpp

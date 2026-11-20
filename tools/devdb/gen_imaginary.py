@@ -28,6 +28,8 @@ def derive(devices, base, name, note, full_ram_banks=None, flash_words=None):
     dev["source"] = dict(dev["source"])
     dev["source"]["imaginary"] = f"{note} Derived from {dev['name']} by tools/devdb/gen_imaginary.py."
     dev["name"] = name
+    # No debugger exists for a part that does not.
+    dev.pop("debug", None)
     if flash_words:
         dev["flash"] = {"pages": [{"begin": b, "end": b + 2048} for b in range(0, flash_words, 2048)],
                         "words": flash_words}

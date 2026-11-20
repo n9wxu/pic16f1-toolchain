@@ -63,6 +63,9 @@ def FSR0L : PICReg<0x04, "FSR0L">, DwarfRegNum<[27]>;
 def FSR0H : PICReg<0x05, "FSR0H">, DwarfRegNum<[28]>;
 def FSR0  : PICPair<0x04, "FSR0", [FSR0L, FSR0H]>, DwarfRegNum<[24]>;
 def W     : PICReg<0x09, "W">, DwarfRegNum<[25]>;
+// Not a register the code generator uses: it gives call frame information
+// its return address column (see MCTargetDesc/PIC16F1Dwarf.h).
+def PC    : PICReg<0x02, "PC">, DwarfRegNum<[32]>;
 // Only the carry flag is modelled. Z and DC are never live between
 // code-generator instructions, so moves and loads may change them freely.
 def CARRY : PICReg<0x03, "C">, DwarfRegNum<[26]>;

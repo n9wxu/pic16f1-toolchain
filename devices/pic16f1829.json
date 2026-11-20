@@ -300,6 +300,13 @@
   "end": 128
  },
  "gpr_bytes": 1008,
+ "debug": {
+  "pins": {
+   "clock": "RA1",
+   "data": "RA0"
+  },
+  "breakpoints": 3
+ },
  "core_register_count": 12,
  "sfrs": [
   {

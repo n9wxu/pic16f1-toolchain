@@ -150,6 +150,32 @@ def main():
     dev["common_ram"] = common
     dev["gpr_bytes"] = sum(r["end"] - r["begin"] for r in gpr)
 
+    # What an in-circuit debugger takes of the device: the RAM its executive
+    # uses (XC8's device file gives it as ICD3RAM, for the parts it gives it
+    # for), the port pins of the debug clock and data lines, and the number
+    # of hardware breakpoints.
+    debug = {}
+    ini = os.path.join(pack, "xc8", "pic", "dat", "ini", device.lower().replace("pic", "", 1) + ".ini")
+    if os.path.exists(ini):
+        for line in open(ini, errors="replace"):
+            if line.startswith("ICD3RAM="):
+                lo, hi = line.split("=")[1].strip().split("-")
+                debug["ram"] = {"begin": int(lo, 16), "end": int(hi, 16) + 1}
+    pins = {}
+    for pin in root.iter(NS + "Pin"):
+        names = [a(v, "name") for v in pin.findall(NS + "VirtualPin")]
+        port = next((n for n in names if n and len(n) == 3 and n[0] == "R" and n[2].isdigit()), None)
+        for key, signal in (("clock", "ICDCLK"), ("data", "ICDDAT")):
+            if signal in names and port:
+                pins[key] = port
+    if pins:
+        debug["pins"] = pins
+    bp = next(root.iter(NS + "Breakpoints"), None)
+    if bp is not None:
+        debug["breakpoints"] = num(a(bp, "hwbpcount"))
+    if debug:
+        dev["debug"] = debug
+
     core_mirror = 0
     for sec in ds.iter(NS + "SFRDataSector"):
         for m in sec.findall(NS + "Mirror"):

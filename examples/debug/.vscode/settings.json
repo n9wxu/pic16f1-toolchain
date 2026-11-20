@@ -1,0 +1,7 @@
+{
+    // Where the toolchain checkout is, and the device to build for and
+    // simulate. The debug configuration and the tasks read these.
+    "pic16f1.toolchain": "${workspaceFolder}/../..",
+    "pic16f1.device": "pic16f1937",
+    "pic16f1.optimization": "-O1"
+}

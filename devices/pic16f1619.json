@@ -362,6 +362,9 @@
   "end": 128
  },
  "gpr_bytes": 1008,
+ "debug": {
+  "breakpoints": 1
+ },
  "core_register_count": 12,
  "sfrs": [
   {

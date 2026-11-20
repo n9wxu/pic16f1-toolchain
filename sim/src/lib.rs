@@ -7,6 +7,7 @@
 pub mod cpu;
 pub mod device;
 pub mod disasm;
+pub mod gdb;
 pub mod image;
 
 pub use cpu::{Cpu, Halt, UartMode};

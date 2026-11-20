@@ -637,6 +637,104 @@ words) and slower, past XC8 at `-O3` and `-Os`.
 
 `scripts/test-builtins.sh` checks all of this on `tests/builtins/main.c`.
 
+## Debugging
+
+`-g` adds debug information (DWARF 5) and changes no code; any
+optimization level can be debugged, and `-munoptimized` keeps every
+variable in memory and every line separate. The debugger is LLDB, built
+from the same tree with a PIC16F1 plugin, and it talks to the simulator
+or to a probe over the gdb-remote protocol.
+[The debug interface specification](spec/debug-interface.md) has the
+conventions.
+
+```sh
+pic16f1-cc -g -O1 -mcpu=pic16f1937 -o main.hex main.c   # leaves main.elf too
+pic16f1-sim gdb --port 3333 main.elf &                  # waits for a debugger
+pic16f1-lldb main.elf -o "gdb-remote 3333"
+(lldb) breakpoint set --name main
+(lldb) continue
+```
+
+What works: breakpoints by function, line or address (any number, on the
+simulator); stepping by line and by instruction, into, over and out; the
+call stack; parameters and local variables in every frame; globals;
+pointers; expressions (`p table[3] + v`, assignments); registers, among
+them the compiler's `r0`–`r13`; memory; watchpoints on writes; the
+program's UART output in the debugger's console and its exit code.
+
+For VS Code, `examples/debug` is a ready project: its
+`.vscode/launch.json` attaches the LLDB DAP extension
+(`llvm-vs-code-extensions.lldb-dap`), running this toolchain's own
+`pic16f1-lldb-dap`, to a simulator that `tasks.json` builds for and
+starts. Press F5.
+
+How it is done:
+
+- **Addresses** are the ELF file's: program memory in bytes from 0, data
+  memory at `0x800000`. Debug information has 4-byte addresses; LLDB adds
+  the offset when it follows a 16-bit C pointer.
+- **The call stack** is read from the hardware return stack, which the
+  debug server shows as memory at `0x810000`.
+- **Variables with fixed addresses** (those of static-frame functions) are
+  described as locals at an address, so they show in every frame with
+  nothing to unwind.
+- **Stack frames** are found from the stack pointer cell `__sp`, not from
+  FSR1, which is stale just after a call; for callers' frames the compiler
+  emits call frame information (`.debug_frame`) that says how each function
+  with a stack frame moves the stack. The cell is fixed at the start of RAM
+  for this.
+- **Unused versions** of a function compiled several ways get the address
+  `0xFFFFFFFF` in the debug information, where the linker's default, 0, is
+  the reset vector.
+- **Whole-program builds at `-munoptimized`** are linked without the
+  link-time optimizer too, which would otherwise fold away variables.
+
+Limits: a variable the optimizer keeps in a register is shown only where
+the debug information can say where it is ("not available" elsewhere);
+inside a prologue or epilogue a stack frame's variables are not yet right;
+`memory read` takes addresses in the debugger's address space, so a C
+pointer's value needs `0x800000` added there. `scripts/test-debug.sh` runs
+a session on two devices at three levels and checks that `-g` leaves the
+code as it is.
+
+### On the part itself
+
+The same LLDB debugs a real part through any gdb-remote server that keeps
+to the [debug interface](spec/debug-interface.md); the PICkit 2 probe
+firmware's OpenOCD target does, and has run this debugger against a
+PIC16LF1937. Build with `-mdebugger` as well as `-g`:
+
+```sh
+pic16f1-cc -g -O1 -mdebugger -mcpu=pic16f1937 -o main.hex main.c
+```
+
+It keeps the program out of the RAM the debugger's executive uses (the
+last 16 bytes, `0x320`–`0x32F`, on the PIC16F1937; the linker says so if
+the variables do not fit below it), defines `__DEBUG`, and makes it an
+error to name the port, latch or direction bits of the debugger's clock
+and data pins (`RB6` and `RB7` there). The driver refuses the option for a
+device whose data does not say what a debugger uses.
+
+The part has one breakpoint, and it stops the program after the
+instruction at its address. LLDB allows for both:
+
+- a stop is shown as its breakpoint, one instruction past the line's
+  start; a breakpoint on a line that begins with a call stops at the start
+  of the called function;
+- a second breakpoint is refused, with a warning;
+- stepping over or out of a call borrows the breakpoint from the user's
+  and gives it back afterwards, so a breakpoint inside a function being
+  stepped over is not hit;
+- steps land exactly: LLDB puts its own breakpoint an instruction early,
+  and for stepping out on the function's return instruction. (A function
+  with several returns, or one that ends by jumping to another, is left by
+  a breakpoint at the return address instead, which runs one instruction
+  of the caller; if that is a call, the step carries on to its return.)
+- there are no watchpoints, and the pc cannot be changed.
+
+`PIC16F1_SIM_SILICON=1 pic16f1-sim gdb ...` makes the simulator behave the
+same way, which is how the test script checks all this without a part.
+
 ## Assembly syntax
 
 Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
@@ -645,7 +743,8 @@ Microchip mnemonics, not case sensitive: `addwf f, W|F`, `moviw ++FSR0`,
 
 ## Test results
 
-All run on the simulator; nothing has run on silicon yet.
+All run on the simulator. (The debugger has also been run against a real
+PIC16LF1937 through the PICkit 2 probe's OpenOCD target, by hand.)
 
 | Suite | Result |
 |---|---|
@@ -660,6 +759,8 @@ All run on the simulator; nothing has run on silicon yet.
 | The same on the PIC16F1937 (8K words, 496 bytes of RAM), before the fixes found on the large device | 1,414 to 1,418 of about 1,452; file by file (`-fno-lto`) 1,404 at `-O2`, 1,408 at `-Os` |
 | Variable-length arrays and `alloca` (`scripts/test-vla.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
 | `setjmp` and `longjmp` (`scripts/test-setjmp.sh`) | pass on 2 devices at 6 levels, whole program and file by file |
+| Debugging with LLDB on the simulator (`scripts/test-debug.sh`) | pass on 2 devices at `-munoptimized`, `-O1`, `-Os` |
+| The same against the simulator behaving as the part's debug hardware (one breakpoint, stopping late) | pass at `-munoptimized` and `-O1` |
 | Memory builtins without the C library (`scripts/test-builtins.sh`) | pass at `-O1`, `-O2`, `-Os` |
 | Frame selection at link time, and calls through constant function pointers (`scripts/test-frames.sh`) | right frames and right output at `-O1`, `-O2`, `-Os`; no indirect call left in `tests/inject` |
 | picolibc's tests on the PIC16F18877 (141 programs, `-Os`) | 103 pass within 2 billion cycles, 3 exceed that, 34 do not build |

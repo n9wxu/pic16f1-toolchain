@@ -18,13 +18,19 @@ void PIC16F1MCAsmInfo::anchor() {}
 PIC16F1MCAsmInfo::PIC16F1MCAsmInfo(const Triple &TT,
                                    const MCTargetOptions &Options)
     : MCAsmInfoELF(Options) {
-  CodePointerSize = 2;
+  // The size of an address in debug information, not of a C pointer (which
+  // is 2). Addresses there are the ELF file's: program memory in bytes, two
+  // to a word, and RAM at 0x802000 up, which do not fit in 16 bits.
+  CodePointerSize = 4;
   CalleeSaveStackSlotSize = 1;
   MinInstAlignment = 2;
   MaxInstLength = 2;
   CommentString = ";";
   UsesELFSectionDirectiveForBSS = true;
-  SupportsDebugInformation = false;
+  SupportsDebugInformation = true;
+  // Call frame information goes with the debug information (.debug_frame);
+  // there is no exception handling to want it otherwise.
+  UsesCFIWithoutEH = true;
 }
 
 namespace {

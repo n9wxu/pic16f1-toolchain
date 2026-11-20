@@ -32,6 +32,11 @@ does not have.)
 if it has been built (scripts/build-picolibc.sh). The program must supply
 `stdout` for printf; see docs/toolchain.md.
 
+-mdebugger builds for an in-circuit debugger on the part itself: the
+program keeps out of the RAM the debugger uses and may not name the two port
+pins that are its clock and data lines (it also defines __DEBUG, as XC8
+does). Use it with -g. The simulator needs neither.
+
 Tool locations can be overridden with PIC16F1_LLVM_BIN (clang, ld.lld),
 PIC16F1_LIB (crt0.o, libpicrt.a, linker scripts), PIC16F1_INCLUDE,
 PIC16F1_LIBC (picolibc's install directory) and PIC16F1_SIM (pic16f1-sim,
@@ -96,7 +101,7 @@ def main():
 
     output = None
     cpu = "pic16f1937"
-    compile_only = asm_only = use_libc = unoptimized = False
+    compile_only = asm_only = use_libc = unoptimized = debugger = False
     model = None
     sources, objects, cflags, ldflags = [], [], [], []
     i = 0
@@ -117,6 +122,8 @@ def main():
                 sys.exit("pic16f1-cc: -mcmodel must be small or medium")
         elif a == "-munoptimized":
             unoptimized = True
+        elif a == "-mdebugger":
+            debugger = True
         elif a == "-minterrupt-copies":
             ldflags += ["-z", "pic16f1-interrupt-copies"]
         elif a == "-mmain-saves-registers":
@@ -138,8 +145,20 @@ def main():
         sys.exit("pic16f1-cc: no input files")
 
     clang = [os.path.join(llvm_bin, "clang"), "--target=pic16f1", f"-mcpu={cpu}",
-             "-ffunction-sections", "-fdata-sections"]
+             "-ffunction-sections", "-fdata-sections",
+             # A #pragma the compiler does not know (XC8's #pragma config,
+             # for one: use PIC_CONFIG_WORDS from <xc.h>) is otherwise
+             # ignored without a word.
+             "-Wunknown-pragmas"]
     libs = [os.path.join(lib, "libpicrt.a")]
+    if debugger:
+        # The linker script says what the debugger needs kept clear, for the
+        # devices whose data gives it.
+        ld = os.path.join(lib, cpu + ".ld")
+        if not os.path.exists(ld) or "__debugger" not in open(ld).read():
+            sys.exit(f"pic16f1-cc: -mdebugger: it is not known what a debugger uses on the {cpu}")
+        clang += ["-D__DEBUG=1"]
+        ldflags += ["--defsym=__debugger=1"]
     if use_libc:
         repo = os.path.normpath(os.path.join(HERE, "..", ".."))
         candidates = [os.environ.get("PIC16F1_LIBC"),
@@ -235,11 +254,20 @@ def main():
             # for medium only, which is also correct in a small program.
             rt = [l.replace("libpicrt.a", "libpicrt-small.a") if small else l for l in libs]
             crt0 = os.path.join(lib, "crt0-small.o" if small else "crt0.o")
+            # Debug information about code the linker left out (the versions
+            # of a function it did not choose, among others) gets an address
+            # no code has, where the default, 0, is the reset vector.
             link = [os.path.join(llvm_bin, "ld.lld"), "-T", script, "--gc-sections",
+                    "-z", "dead-reloc-in-nonalloc=.debug_*=0xffffffff",
                     crt0] + objs + objects + rt + ["-o", elf] + ldflags
             if lto:
                 link += ["-mllvm", f"-code-model={model}",
                          f"-plugin-opt=mcpu={cpu}"] + link_tuning
+                # -munoptimized means it for the whole program too: the
+                # linker's optimizer would otherwise still fold away
+                # variables a debugger is asked for.
+                if unoptimized:
+                    link += ["--lto-O0"]
             if quiet:
                 return subprocess.run(link, capture_output=True).returncode == 0
             run(link)

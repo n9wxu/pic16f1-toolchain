@@ -37,6 +37,7 @@ public:
   /// (PIC16F1StaticFrames.cpp) has no callers of its own and saves what its
   /// stack version's callers expect; see getCalleeSavedRegs.
   bool isProfitableForNoCSROpt(const Function &F) const override;
+  DwarfFrameBase getDwarfFrameBase(const MachineFunction &MF) const override;
   /// Where debug information should look for a frame object. One with a
   /// fixed address has no place in the frame.
   StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,

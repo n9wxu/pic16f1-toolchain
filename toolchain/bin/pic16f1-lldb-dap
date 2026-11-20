@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs LLDB's lldb-dap, built with PIC16F1 support from this checkout, wherever it is
+# called from (an editor's debug configuration, for one).
+here=$(cd "$(dirname "$0")" && pwd)
+exec "${PIC16F1_LLVM_BIN:-$here/../../build/llvm-build/bin}/lldb-dap" "$@"

@@ -12,6 +12,7 @@ these needs approval too (operating rule 1 in [the plan](../plan.md)).
 | [Object format](object-format.md) | ELF, address spaces, relocations, HEX conversion | Draft, awaiting approval |
 | [Assembly syntax](assembly-syntax.md) | Mnemonics, operands, address-part operators | Draft, awaiting approval |
 | [Simulator interface](simulator-interface.md) | Program exit, output, images, result record | Draft, awaiting approval |
+| [Debug interface](debug-interface.md) | Debugger address space, registers, gdb-remote packets, call stack, variable locations | Draft, awaiting approval |
 
 Instruction semantics are specified by Microchip's data sheets (for example
 DS40001364 for the PIC16(L)F193x). The simulator's instruction tests cite

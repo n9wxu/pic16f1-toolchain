@@ -40,6 +40,9 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DebugProgramInstruction.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
@@ -359,6 +362,47 @@ bool PIC16F1StaticFrames::runOnModule(Module &M) {
   return Changed;
 }
 
+/// The debug information says where a stack variable is by pointing at its
+/// alloca. One that has moved to a fixed address is described the way a
+/// static variable of the function is instead: a variable of the function's
+/// own scope whose location is an address, here \p At bytes into \p GV.
+static void describeForDebugger(Function &F, AllocaInst *AI,
+                                GlobalVariable *GV, uint64_t At) {
+  DISubprogram *SP = F.getSubprogram();
+  if (!SP)
+    return;
+  LLVMContext &Ctx = F.getContext();
+  for (DbgVariableRecord *DVR : findDVRDeclares(AI)) {
+    DILocalVariable *Var = DVR->getVariable();
+    DIExpression *Expr = DVR->getExpression();
+    // Only a variable of this function itself that is the whole object or
+    // a plain piece of it.
+    bool Plain = Expr->getNumElements() == 0 || Expr->isFragment();
+    if (!DVR->getDebugLoc().getInlinedAt() && Plain &&
+        Var->getScope()->getSubprogram() == SP) {
+      auto *DGV = DIGlobalVariable::getDistinct(
+          Ctx, Var->getScope(), Var->getName(), "", Var->getFile(),
+          Var->getLine(), Var->getType(), /*IsLocalToUnit=*/true,
+          /*IsDefinition=*/true, nullptr, nullptr, Var->getAlignInBits(),
+          nullptr);
+      DIExpression *Where = Expr;
+      if (At != 0)
+        Where = DIExpression::prepend(Expr, 0, At);
+      auto *GVE = DIGlobalVariableExpression::get(Ctx, DGV, Where);
+      GV->addDebugInfo(GVE);
+      // In place of the stack variable's own entry, which would be left
+      // as a variable without a location.
+      SmallVector<Metadata *, 8> Nodes;
+      for (MDNode *N : SP->getRetainedNodes())
+        if (N != Var)
+          Nodes.push_back(N);
+      Nodes.push_back(GVE);
+      SP->replaceRetainedNodes(MDNode::get(Ctx, Nodes));
+    }
+    DVR->eraseFromParent();
+  }
+}
+
 /// Give each small variable of \p F that lives in memory a fixed address.
 bool PIC16F1StaticFrames::fixLocals(Function &F) {
   Module &M = *F.getParent();
@@ -422,6 +466,7 @@ bool PIC16F1StaticFrames::fixLocals(Function &F) {
           Dead.push_back(II);
       for (Instruction *I : Dead)
         I->eraseFromParent();
+      describeForDebugger(F, AI, GV, At);
       Constant *Addr = ConstantExpr::getInBoundsGetElementPtr(
           I8, GV, ConstantInt::get(Type::getInt16Ty(M.getContext()), At));
       AI->replaceAllUsesWith(Addr);

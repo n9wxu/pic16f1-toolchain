@@ -7,6 +7,7 @@ pic16f1-sim: PIC16F1 simulator
 
 Usage:
   pic16f1-sim run [options] <image.hex|image.elf>
+  pic16f1-sim gdb [--device NAME] [--port N] <image.elf>
   pic16f1-sim disasm [--device NAME] <image>
   pic16f1-sim size [--device NAME] <image>
   pic16f1-sim elf2hex <in.elf> <out.hex>
@@ -21,6 +22,10 @@ Run options:
   --json              print a JSON result record on stdout instead of UART text
   --trace             print every executed instruction on stderr
   --profile FILE      write per-address execution counts to FILE
+
+gdb waits for a debugger (LLDB or gdb) to connect to the port, 3333 unless
+--port says otherwise, and runs the program under its control. UART output
+goes to the debugger's console.
 
 A program ends by executing SLEEP. Its exit code is the value it left in LATD
 (LATC on a device without PORTD).
@@ -44,6 +49,7 @@ struct Opts {
     json: bool,
     trace: bool,
     profile: Option<String>,
+    port: u16,
     files: Vec<String>,
 }
 
@@ -55,6 +61,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
         json: false,
         trace: false,
         profile: None,
+        port: 3333,
         files: Vec::new(),
     };
     let mut it = args.iter();
@@ -72,6 +79,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                     v => return Err(format!("unknown --uart mode '{v}'")),
                 }
             }
+            "--port" => o.port = val("--port")?.parse().map_err(|_| "bad --port value")?,
             "--json" => o.json = true,
             "--trace" => o.trace = true,
             "--profile" => o.profile = Some(val("--profile")?),
@@ -93,6 +101,15 @@ fn real_main(args: &[String]) -> Result<u8, String> {
         "run" => {
             need(1)?;
             run(&o)
+        }
+        "gdb" => {
+            need(1)?;
+            let dev = Device::builtin(&o.device)?;
+            let img = Image::load(&o.files[0])?;
+            let mut cpu = Cpu::new(dev);
+            cpu.load(&img)?;
+            cpu.uart_mode = o.uart;
+            pic16f1_sim::gdb::Server::new(cpu).serve(o.port)
         }
         "disasm" => {
             need(1)?;

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs the simulator from this checkout, wherever it is
+# called from (an editor's debug configuration, for one).
+here=$(cd "$(dirname "$0")" && pwd)
+exec "${PIC16F1_SIM:-$here/../../sim/target/release/pic16f1-sim}" "$@"

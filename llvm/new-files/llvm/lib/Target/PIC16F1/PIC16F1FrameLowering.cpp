@@ -25,6 +25,8 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "PIC16F1MachineFunctionInfo.h"
+#include "MCTargetDesc/PIC16F1Dwarf.h"
+#include "llvm/MC/MCDwarf.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -152,6 +154,30 @@ void PIC16F1FrameLowering::emitPrologue(MachineFunction &MF,
       BuildMI(MBB, I, DL, TII.get(PIC16F1::MOVWF))
           .addImm(TII.fileAddr(B ? PIC16F1::R13 : PIC16F1::R12));
     }
+  }
+  // For a debugger: where the caller's stack level is, now that the frame
+  // is set up (see MCTargetDesc/PIC16F1Dwarf.h).
+  if (MF.needsFrameMoves() && !IsInterrupt) {
+    SmallString<48> Level, Rule;
+    if (HasBase) {
+      PIC16F1Dwarf::op(Level, dwarf::DW_OP_breg0 + PIC16F1Dwarf::RP6);
+      PIC16F1Dwarf::op(Level, 0);
+    } else if (MFI.hasCalls()) {
+      PIC16F1Dwarf::stackLevel(Level);
+    }
+    if (Level.empty()) {
+      // No calls: the cell is still the caller's.
+      PIC16F1Dwarf::cell(Level);
+    } else {
+      PIC16F1Dwarf::op(Level, dwarf::DW_OP_plus_uconst);
+      PIC16F1Dwarf::uleb(Level, MFI.getStackSize());
+    }
+    PIC16F1Dwarf::valExpression(Rule, PIC16F1Dwarf::FSR1, Level);
+    unsigned Index = MF.addFrameInst(
+        MCCFIInstruction::createEscape(nullptr, Rule.str()));
+    BuildMI(MBB, I, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(Index)
+        .setMIFlag(MachineInstr::FrameSetup);
   }
   // What this function calls starts below its frame.
   if (MFI.hasCalls() || HasBase) {
@@ -445,4 +471,24 @@ bool PIC16F1FrameLowering::isProfitableForNoCSROpt(const Function &F) const {
         if (!AI->isStaticAlloca())
           return false;
   return true;
+}
+
+/// Where a debugger finds the base of the frame: what FSR1 is while the
+/// function's own code runs. FSR1 itself is not it after a call, until the
+/// function next needs its frame and takes its stack pointer back. But a
+/// function that makes calls has put that value in the cell __sp, and
+/// every function it calls leaves the cell as it found it; one with
+/// variable-sized objects, which move the cell, keeps it in RP6.
+TargetFrameLowering::DwarfFrameBase
+PIC16F1FrameLowering::getDwarfFrameBase(const MachineFunction &MF) const {
+  DwarfFrameBase Base;
+  Base.Kind = DwarfFrameBase::PIC16F1Base;
+  if (pic16f1HasFrameBase(MF))
+    Base.Location.Reg = PIC16F1::RP6;
+  else if (MF.getFrameInfo().hasCalls() &&
+           !MF.getFunction().hasFnAttribute("interrupt"))
+    Base.Location.Reg = 0;
+  else
+    Base.Location.Reg = PIC16F1::SP;
+  return Base;
 }

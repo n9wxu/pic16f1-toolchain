@@ -1418,4 +1418,11 @@ typedef union {
 #define _CONFIG2_LVP_OFF 0x1FFF
 #define _CONFIG2_LVP_ON 0x3FFF
 
+/* A program built for an in-circuit debugger (-mdebugger) leaves
+ * RA0 and RA1 to it: they are its clock and data lines. Naming
+ * their port, latch or direction bits in such a build is an error. */
+#ifdef __DEBUG
+#pragma GCC poison RA0 LATA0 TRISA0 RA1 LATA1 TRISA1
+#endif
+
 #endif /* __PIC16F1829_H */
