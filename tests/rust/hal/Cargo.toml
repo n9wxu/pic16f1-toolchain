@@ -1,0 +1,16 @@
+[package]
+name = "hal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pic16f1 = { path = "../../../toolchain/rust/pic16f1" }
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

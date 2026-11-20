@@ -1,0 +1,21 @@
+[package]
+name = "hardware"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pic16f1 = { path = "../../../toolchain/rust/pic16f1" }
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+# Line numbers and variables for the debugger.
+debug = true
+
+[profile.dev]
+panic = "abort"
+
+[profile.release.package."*"]
+debug = false

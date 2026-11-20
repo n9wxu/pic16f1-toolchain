@@ -1,0 +1,19 @@
+[package]
+name = "pic16f1"
+version = "0.1.0"
+edition = "2021"
+description = "Registers and a small hardware library for PIC16F1 microcontrollers, for the PIC16F1 LLVM toolchain"
+license = "Apache-2.0 WITH LLVM-exception"
+
+[features]
+default = ["pic16f1937", "panic-halt"]
+# The device. Exactly one.
+pic16f1937 = []
+pic16f1829 = []
+pic16f1619 = []
+pic16f18877 = []
+pic16f15276 = []
+pic16f1032 = []
+pic16f1064 = []
+# A panic handler that stops the processor. Leave it out to write your own.
+panic-halt = []

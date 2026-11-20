@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""The linker cargo and rustc call for a PIC16F1 program.
+
+rustc is run for a stand-in target (see pic16f1-retarget) with
+-C linker-plugin-lto, so what it hands the linker is LLVM bitcode, not
+machine code. This takes that bitcode, turns it into IR for the PIC16F1
+and has pic16f1-cc compile and link it, with the startup code, the runtime
+library and anything else named: the result is an ELF file where rustc
+asked for it and an Intel HEX file beside it. What the linker had to say
+(warnings, -mstack-report) goes to a .link.txt file there too, because
+rustc shows a linker's output only when it fails.
+
+Options reach it through rustc: in .cargo/config.toml,
+
+    rustflags = ["-C", "linker-plugin-lto",
+                 "-C", "link-arg=-mcpu=pic16f1937", "-C", "link-arg=-Os"]
+
+Understood: -mcpu=, -O levels, -g, -mdebugger, -mstack-report, -mcmodel=,
+-mprintf=, --libc, -Wl,... and the names of C, C++ and assembly sources,
+objects and libraries to compile and link with the program. Everything
+rustc adds for the stand-in target's own linker is dropped, as is the
+compiler_builtins crate: arithmetic the processor lacks comes from the
+toolchain's runtime library.
+"""
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BITCODE = (b"BC\xc0\xde", b"\xde\xc0\x17\x0b")
+
+
+def load(name):
+    path = os.path.join(HERE, name)
+    loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def is_bitcode(path):
+    with open(path, "rb") as f:
+        return f.read(4) in BITCODE
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    retarget = load("pic16f1-retarget")
+    bin_dir = retarget.llvm_bin()
+    output = None
+    modules, archives, passed = [], [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-o":
+            output = args[i + 1]
+            i += 1
+        elif a.endswith(".rlib"):
+            if "compiler_builtins" not in os.path.basename(a):
+                archives.append(a)
+        elif a.endswith((".o", ".bc")) and os.path.exists(a) and is_bitcode(a):
+            modules.append(a)
+        elif a.endswith(".o") and os.path.basename(a).startswith("symbols"):
+            pass  # rustc's list of exported symbols, as an object for the stand-in target
+        elif a.startswith(("-mcpu=", "-O", "-mcmodel=", "-mprintf=", "-mscanf=", "-std=")) \
+                or a in ("-g", "-mdebugger", "-mstack-report", "--libc", "--no-libc",
+                         "-munoptimized", "-minterrupt-copies") \
+                or a.startswith(("-Wl,-mllvm", "-Wl,-z", "-Wl,--defsym", "-D", "-I")) \
+                or a.endswith((".c", ".cpp", ".cc", ".S", ".s", ".a")) \
+                or (a.endswith(".o") and os.path.exists(a)):
+            passed.append(a)
+        i += 1
+    if not output:
+        sys.exit("pic16f1-rust-ld: no output file")
+    if not modules and not archives:
+        sys.exit("pic16f1-rust-ld: no LLVM bitcode among the inputs; "
+                 "is -C linker-plugin-lto in rustflags?")
+    if not any(a.startswith("-O") or a == "-munoptimized" for a in passed):
+        passed.append("-Os")
+    clang = os.path.join(bin_dir, "clang")
+    with tempfile.TemporaryDirectory() as tmp:
+        sources = []
+        base = output[:-4] if output.endswith(".elf") else output
+        for n, m in enumerate(modules):
+            # Kept beside the program: this is what the code generator was
+            # given, for anyone who wants to see what rustc made.
+            ll = base + (f".{n}" if n else "") + ".ll"
+            # An interrupt handler is called by nothing the linker sees.
+            for handler in retarget.retarget(m, ll):
+                passed.append(f"-Wl,--undefined={handler}")
+            sources.append(ll)
+        # A crate that was not merged into the program by rustc: an archive
+        # of bitcode, of which the linker takes the members it needs.
+        for n, rlib in enumerate(archives):
+            d = os.path.join(tmp, f"rlib{n}")
+            os.mkdir(d)
+            subprocess.run([os.path.join(bin_dir, "llvm-ar"), "x", os.path.abspath(rlib)],
+                           cwd=d, check=True)
+            members = []
+            for k, name in enumerate(sorted(os.listdir(d))):
+                path = os.path.join(d, name)
+                if not is_bitcode(path):
+                    continue
+                ll = os.path.join(d, f"m{k}.ll")
+                for handler in retarget.retarget(path, ll):
+                    passed.append(f"-Wl,--undefined={handler}")
+                obj = os.path.join(d, f"m{k}.o")
+                subprocess.run([clang, "--target=pic16f1", "-flto", "-c", "-x", "ir", ll,
+                                "-o", obj], check=True)
+                members.append(obj)
+            if members:
+                lib = os.path.join(tmp, f"librust{n}.a")
+                subprocess.run([os.path.join(bin_dir, "llvm-ar"), "rcs", lib] + members,
+                               check=True)
+                passed.append(lib)
+        # An ELF file where rustc wants it, and a HEX file beside it.
+        r = subprocess.run([sys.executable, os.path.join(HERE, "pic16f1-cc"),
+                            "-Wno-unused-command-line-argument"]
+                           + passed + sources + ["-o", base + ".hex"],
+                           capture_output=True, text=True)
+        # rustc shows what a linker says only when it fails. Warnings (the
+        # hardware stack count, for one) and reports asked for are kept
+        # in a file beside the program as well.
+        said = r.stdout + r.stderr
+        sys.stderr.write(said)
+        with open(base + ".link.txt", "w") as f:
+            f.write(said)
+        if r.returncode != 0:
+            return r.returncode
+        if base + ".elf" != output:
+            os.replace(base + ".elf", output)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

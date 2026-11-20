@@ -1,0 +1,26 @@
+{
+  "arch": "avr",
+  "atomic-cas": false,
+  "cpu": "atmega328",
+  "crt-objects-fallback": "false",
+  "data-layout": "e-P1-p:16:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-n8-a:8",
+  "eh-frame-header": false,
+  "env": "",
+  "exe-suffix": ".elf",
+  "linker": "pic16f1-rust-ld",
+  "linker-flavor": "gnu-cc",
+  "llvm-target": "avr-unknown-unknown",
+  "max-atomic-width": 16,
+  "metadata": {
+    "description": "PIC16F1 by way of the PIC16F1 LLVM toolchain: rustc makes LLVM IR as for an AVR, and the toolchain's linker wrapper compiles it",
+    "host_tools": false,
+    "std": false,
+    "tier": 3
+  },
+  "no-default-libraries": true,
+  "panic-strategy": "abort",
+  "relocation-model": "static",
+  "singlethread": true,
+  "target-c-int-width": "16",
+  "target-pointer-width": "16"
+}

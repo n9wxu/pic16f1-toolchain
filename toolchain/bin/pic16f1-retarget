@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Turn LLVM IR that a front end made for the AVR into IR for the PIC16F1.
+
+    pic16f1-retarget [-o out.ll] input.bc|input.ll|input.o
+
+Front ends that have no PIC16F1 target of their own (rustc, Zig) are run
+for the AVR, which is the closest machine they know: 8-bit bytes, 16-bit
+pointers and int, everything aligned to one byte, little-endian. They are
+asked for LLVM IR instead of machine code, and this turns that IR into
+what Clang would have written for the PIC16F1:
+
+  - the target triple and data layout become the PIC16F1's;
+  - functions and pointers to them leave the AVR's separate address space
+    for program memory (addrspace(1)): here a pointer of either kind is
+    16 bits in one space;
+  - the AVR's processor name and features are dropped from every function;
+  - a function with the AVR interrupt calling convention becomes an
+    interrupt handler ("interrupt"), which is how such a function is
+    written in those languages.
+
+Nothing else needs changing as long as the code was not written for the
+AVR's hardware (its I/O registers, inline assembly). Arguments and results
+of functions shared with C are passed alike for integers, pointers and
+32-bit floats; a struct passed by value to or from C, and f64 (C's double
+is 32 bits here), are not.
+
+Reads bitcode or text made by LLVM 23 or older.
+"""
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def llvm_bin():
+    repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+    for c in (os.environ.get("PIC16F1_LLVM_BIN"),
+              HERE if os.path.exists(os.path.join(HERE, "clang")) else None,
+              os.path.join(repo, "build", "llvm-build", "bin")):
+        if c and os.path.exists(os.path.join(c, "clang")):
+            return c
+    sys.exit("pic16f1-retarget: cannot find the LLVM tools (clang)")
+
+
+def retarget_text(text):
+    """The rewriting itself, on the text of a module that already has the
+    PIC16F1's triple and data layout. Returns the new text and the names of
+    the interrupt handlers in it, which nothing calls: whoever links the
+    module must ask for them to be kept (ld.lld --undefined=NAME)."""
+    out = []
+    handlers = []
+    for line in text.split("\n"):
+        # Interrupt handlers: the calling convention becomes the attribute.
+        if line.startswith("define ") and re.search(r"\bavr_(intr|signal)cc\b", line):
+            name = re.search(r'@("[^"]+"|[\w.$]+)\(', line)
+            if name:
+                handlers.append(name.group(1).strip('"'))
+            line = re.sub(r"\bavr_(intr|signal)cc ", "", line)
+            line = re.sub(r"(\) (?:local_unnamed_addr|unnamed_addr)?) ?",
+                          lambda m: m.group(1).rstrip() + ' "interrupt" ', line, count=1)
+        line = re.sub(r"\bavr_(intr|signal)cc ", "", line)
+        line = line.replace(" addrspace(1)", "")
+        # Intrinsics are named after their pointer arguments' address spaces.
+        if "@llvm." in line:
+            line = re.sub(r"(@llvm\.[\w.]*?)\.p1\b", r"\1.p0", line)
+            while re.search(r"@llvm\.[\w.]*\.p1\b", line):
+                line = re.sub(r"(@llvm\.[\w.]*)\.p1\b", r"\1.p0", line)
+        if line.startswith("attributes #"):
+            line = re.sub(r' "target-(cpu|features)"="[^"]*"', "", line)
+        out.append(line)
+    return "\n".join(out), handlers
+
+
+def retarget(src, dst):
+    clang = os.path.join(llvm_bin(), "clang")
+    with tempfile.TemporaryDirectory() as tmp:
+        ll = os.path.join(tmp, "module.ll")
+        # Clang reads either form, and gives the module the triple and data
+        # layout it is asked to compile for; no pass is run.
+        r = subprocess.run([clang, "--target=pic16f1", "-x", "ir", src, "-S", "-emit-llvm",
+                            "-Xclang", "-disable-llvm-passes", "-Wno-override-module",
+                            "-o", ll], capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.stderr.write(r.stderr)
+            sys.exit(f"pic16f1-retarget: cannot read {src}")
+        text = open(ll).read()
+    text, handlers = retarget_text(text)
+    with open(dst, "w") as f:
+        f.write(text)
+    return handlers
+
+
+def main():
+    args = sys.argv[1:]
+    out = None
+    if len(args) >= 2 and args[0] == "-o":
+        out = args[1]
+        args = args[2:]
+    if len(args) != 1 or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if args else 1
+    handlers = retarget(args[0], out or os.path.splitext(args[0])[0] + ".pic16f1.ll")
+    for h in handlers:
+        print(f"interrupt handler: {h} (link with -Wl,--undefined={h})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

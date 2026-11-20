@@ -54,6 +54,15 @@ if [ -x "$bld/bin/lldb-dap" ]; then
     cp "$root/toolchain/bin/pic16f1-lldb" "$root/toolchain/bin/pic16f1-lldb-dap" "$out/bin/"
 fi
 cp "$root/toolchain/bin/pic16f1-new-project" "$out/bin/"
+# Other languages: the tools that bring a front end's LLVM IR to this
+# target, the Rust crate and target description, the Zig device files.
+cp "$root/toolchain/bin/pic16f1-retarget" "$root/toolchain/bin/pic16f1-rust-ld" "$out/bin/"
+rm -rf "$out/share/pic16f1/rust" "$out/share/pic16f1/zig"
+mkdir -p "$out/share/pic16f1/rust" "$out/share/pic16f1/zig"
+cp "$root/toolchain/rust/pic16f1.json" "$out/share/pic16f1/rust/"
+cp -R "$root/toolchain/rust/pic16f1" "$out/share/pic16f1/rust/pic16f1"
+rm -rf "$out/share/pic16f1/rust/pic16f1/target" "$out/share/pic16f1/rust/pic16f1/Cargo.lock"
+cp -R "$root/toolchain/zig/." "$out/share/pic16f1/zig/"
 rm -rf "$out/share/pic16f1/project"
 mkdir -p "$out/share/pic16f1"
 cp -R "$root/toolchain/project" "$out/share/pic16f1/project"
