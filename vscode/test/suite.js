@@ -35,7 +35,7 @@ async function suite() {
     const folder = vscode.workspace.workspaceFolders[0];
     const bin = await api.toolchainBin();
     log(`toolchain: ${bin}`);
-    assert.ok(fs.existsSync(path.join(bin, process.platform === 'win32' ? 'clang.exe' : 'clang')), 'no clang in the toolchain');
+    assert.ok(fs.existsSync(path.join(bin, 'pic16f1-build')), 'no pic16f1-build in the toolchain');
 
     // The project is known for what it is.
     const info = await api.projectInfo(folder);

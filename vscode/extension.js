@@ -477,7 +477,11 @@ class ConfigurationProvider {
 
 class AdapterFactory {
     async createDebugAdapterDescriptor() {
-        return new vscode.DebugAdapterExecutable(await tool('lldb-dap'), []);
+        // (A checkout's toolchain/bin has the wrapper that finds the
+        // adapter in the build directory, and not the adapter itself.)
+        const adapter = await tool('lldb-dap');
+        const wrapper = path.join(path.dirname(adapter), 'pic16f1-lldb-dap');
+        return new vscode.DebugAdapterExecutable(!fs.existsSync(adapter) && fs.existsSync(wrapper) ? wrapper : adapter, []);
     }
 }
 

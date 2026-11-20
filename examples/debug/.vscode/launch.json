@@ -8,7 +8,7 @@
             "type": "lldb-dap",
             "request": "attach",
             "program": "${workspaceFolder}/build/main.elf",
-            "debugAdapterExecutable": "${config:pic16f1.toolchain}/toolchain/bin/pic16f1-lldb-dap",
+            "debugAdapterExecutable": "${config:pic16f1.checkout}/toolchain/bin/pic16f1-lldb-dap",
             "gdb-remote-hostname": "127.0.0.1",
             "gdb-remote-port": 3333,
             "preLaunchTask": "pic16f1: simulator",
