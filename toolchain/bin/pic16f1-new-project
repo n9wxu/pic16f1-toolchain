@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Start a C project for a PIC16F1 device.
+"""Start a project for a PIC16F1 device.
 
-    pic16f1-new-project [--device pic16f1937] [--openocd DIR] <directory>
+    pic16f1-new-project [--language c|c++|rust|zig] [--device pic16f1937]
+                        [--openocd DIR] <directory>
 
-Makes the directory with a small program (main.c), a Makefile, and a VS Code
-setup that builds it and debugs it on the simulator or, through a gdb-remote
+Makes the directory with a small program, a Makefile, and a VS Code setup
+that builds it and debugs it on the simulator or, through a gdb-remote
 probe, on the part. The project uses the toolchain this command belongs to.
+The program is in C unless --language says otherwise; whichever it is,
+`make` builds build/NAME.hex and .elf and the VS Code setup is the same.
+(Rust needs rustup, Zig a Zig compiler: see docs/languages.md.)
 """
 import os
 import re
@@ -23,7 +27,7 @@ def first_dir(candidates, what):
 
 def main():
     args = sys.argv[1:]
-    device, openocd, target = "pic16f1937", None, None
+    device, openocd, target, language = "pic16f1937", None, None, "c"
     while args:
         a = args.pop(0)
         if a in ("-h", "--help"):
@@ -31,6 +35,10 @@ def main():
             return 0
         if a == "--device" and args:
             device = args.pop(0).lower()
+        elif a == "--language" and args:
+            language = args.pop(0).lower().replace("cpp", "c++").replace("cxx", "c++")
+            if language not in ("c", "c++", "rust", "zig"):
+                sys.exit("pic16f1-new-project: --language is c, c++, rust or zig")
         elif a == "--openocd" and args:
             openocd = os.path.abspath(args.pop(0))
         elif a.startswith("-") or target:
@@ -67,19 +75,38 @@ def main():
 
     if os.path.exists(target) and os.listdir(target):
         sys.exit(f"pic16f1-new-project: {target} exists and is not empty")
+    # What a language other than C replaces of the template, and adds.
+    overlay = None
+    if language != "c":
+        overlay = template + "-" + language
+        if not os.path.isdir(overlay):
+            sys.exit(f"pic16f1-new-project: no template for {language} ({overlay})")
+    rust = ""
+    for c in (os.path.join(HERE, "..", "share", "pic16f1", "rust"), os.path.join(HERE, "..", "rust")):
+        if os.path.isdir(c):
+            rust = os.path.normpath(c)
+    if language == "rust":
+        # A cargo package name.
+        name = re.sub(r"[^a-z0-9_-]", "-", name.lower())
     values = {"NAME": name, "DEVICE": device, "DEVICE_UPPER": device.upper(), "TOOLCHAIN": HERE,
               "INCLUDE": include, "CLANG_INCLUDE": clang_inc, "OPENOCD": openocd,
-              "SVD": os.path.join(svd_dir, device + ".svd")}
-    for folder, _, files in os.walk(template):
-        out = os.path.join(target, os.path.relpath(folder, template))
-        os.makedirs(out, exist_ok=True)
-        for f in files:
-            text = open(os.path.join(folder, f)).read()
-            text = re.sub(r"@([A-Z_]+)@", lambda m: values.get(m.group(1), m.group(0)), text)
-            # (Stored as "gitignore" so that it does not act on the template.)
-            with open(os.path.join(out, ".gitignore" if f == "gitignore" else f), "w") as o:
-                o.write(text)
-    print(f"{target}: a project for the {device.upper()}.\n"
+              "SVD": os.path.join(svd_dir, device + ".svd"), "RUST": rust,
+              "LANGUAGE": {"c": "C", "c++": "C++", "rust": "Rust", "zig": "Zig"}[language]}
+    for source in (template, overlay):
+        if not source:
+            continue
+        for folder, _, files in os.walk(source):
+            out = os.path.join(target, os.path.relpath(folder, source))
+            os.makedirs(out, exist_ok=True)
+            for f in files:
+                if overlay and source == template and f == "main.c":
+                    continue
+                text = open(os.path.join(folder, f)).read()
+                text = re.sub(r"@([A-Z_]+)@", lambda m: values.get(m.group(1), m.group(0)), text)
+                # (Stored as "gitignore" so that it does not act on the template.)
+                with open(os.path.join(out, ".gitignore" if f == "gitignore" else f), "w") as o:
+                    o.write(text)
+    print(f"{target}: a {values['LANGUAGE']} project for the {device.upper()}.\n"
           f"  cd {target} && make          build\n"
           f"  code {target}                open it in VS Code; F5 debugs on the simulator")
     return 0

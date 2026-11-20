@@ -1,0 +1,5 @@
+# The nightly this toolchain's Rust support was tested with. Another must
+# have an LLVM no newer than the toolchain's (23).
+[toolchain]
+channel = "nightly-2024-11-19"
+components = ["rust-src"]

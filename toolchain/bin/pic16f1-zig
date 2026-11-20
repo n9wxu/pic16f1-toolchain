@@ -46,6 +46,7 @@ def load(name):
 def find_zig():
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
     for c in (os.environ.get("PIC16F1_ZIG"), os.path.join(repo, "build", "zig", "zig"),
+              os.path.join(repo, "zig", "zig"),  # beside a packaged toolchain in build/
               shutil.which("zig")):
         if c and os.path.exists(c):
             return c

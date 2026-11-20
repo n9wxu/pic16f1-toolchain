@@ -1,6 +1,6 @@
 # @NAME@
 
-A C project for the @DEVICE_UPPER@, built with the PIC16F1 LLVM toolchain
+A @LANGUAGE@ project for the @DEVICE_UPPER@, built with the PIC16F1 LLVM toolchain
 at `@TOOLCHAIN@`.
 
 ## In VS Code
@@ -35,6 +35,9 @@ make list       # disassembly
 `build/@NAME@.hex` is an ordinary Intel HEX file for any programmer.
 
 ## Writing for this toolchain
+
+For C; `docs/languages.md` in the toolchain's repository has the same for
+C++, Rust and Zig.
 
 - `#include <xc.h>` declares the device's registers (`LATE`,
   `LATDbits.LATD1`, ...).

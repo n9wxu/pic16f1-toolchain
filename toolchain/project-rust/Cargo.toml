@@ -1,0 +1,19 @@
+[package]
+name = "@NAME@"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pic16f1 = { path = "@RUST@/pic16f1", default-features = false, features = ["@DEVICE@", "panic-halt"] }
+
+# rustc optimizes for size and hands the whole program to the toolchain's
+# code generator as one piece; debug information is kept for the debugger.
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = true
+
+[profile.dev]
+panic = "abort"

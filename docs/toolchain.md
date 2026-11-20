@@ -855,6 +855,12 @@ build/toolchain/bin/pic16f1-new-project --device pic16f1937 ~/projects/blink
 cd ~/projects/blink && make        # or open the folder in VS Code and press F5
 ```
 
+`--language c++`, `rust` or `zig` starts the same project in that language
+(see [languages.md](languages.md) for what each needs installed): the
+program, a Makefile that builds it to the same `build/NAME.hex` and
+`.elf`, and the same VS Code setup, so that building and debugging on the
+simulator and on the part work alike in all four.
+
 The project has a small program for the F1 Evaluation Platform, a Makefile
 (`make`, `make debug`, `make size`, `make list`), and a VS Code setup: a
 build task, "Debug on the simulator" and "Debug on the part (PICkit 2

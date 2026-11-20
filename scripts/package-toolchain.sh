@@ -64,9 +64,12 @@ cp "$root/toolchain/rust/pic16f1.json" "$out/share/pic16f1/rust/"
 cp -R "$root/toolchain/rust/pic16f1" "$out/share/pic16f1/rust/pic16f1"
 rm -rf "$out/share/pic16f1/rust/pic16f1/target" "$out/share/pic16f1/rust/pic16f1/Cargo.lock"
 cp -R "$root/toolchain/zig/." "$out/share/pic16f1/zig/"
-rm -rf "$out/share/pic16f1/project"
+rm -rf "$out/share/pic16f1/project" "$out"/share/pic16f1/project-*
 mkdir -p "$out/share/pic16f1"
 cp -R "$root/toolchain/project" "$out/share/pic16f1/project"
+for lang in c++ rust zig; do
+    cp -R "$root/toolchain/project-$lang" "$out/share/pic16f1/project-$lang"
+done
 mkdir -p "$out/share/pic16f1/svd"
 cp "$root"/toolchain/svd/*.svd "$out/share/pic16f1/svd/"
 # The C library, if it was built somewhere else than in this tree.

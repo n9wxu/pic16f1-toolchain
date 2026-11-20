@@ -10,6 +10,11 @@ and why, and what is left out. C itself is described in
 | [Rust](#rust) | Stock `rustc` for a stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language with `core`; a register and hardware crate; `cargo build`; tested on the simulator and on a PIC16LF1937 |
 | [Zig](#zig) | The stock Zig compiler for the same stand-in target, its LLVM IR retargeted and compiled by this toolchain | The language in all four build modes; a register and hardware library; tested on the simulator and on a PIC16LF1937 |
 
+`pic16f1-new-project --language c++|rust|zig DIR` starts a project in any
+of them, with a Makefile and the VS Code setup for building and for
+debugging on the simulator and on the part; the same LED counter is 66
+words in C, 77 in C++, 70 in Rust and 76 in Zig.
+
 All of them end in the same code generator, linker, runtime library and
 debugger as C, so what [toolchain.md](toolchain.md) says about optimization
 levels, static frames, the hardware stack count, `-mdebugger` and LLDB

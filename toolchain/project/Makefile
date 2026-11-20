@@ -24,7 +24,7 @@ FLAGS := -g $(OPT) -mcpu=$(DEVICE) -Wall $(if $(DEBUGGER),-mdebugger) $(CFLAGS)
 build/$(NAME).hex: $(SOURCES) $(wildcard *.h) Makefile
 	@mkdir -p build
 	$(CC) $(FLAGS) -o $@ $(SOURCES)
-	@$(SIM) size --device $(DEVICE) build/$(NAME).elf
+	@echo "$$($(SIM) size --device $(DEVICE) build/$(NAME).elf) words of flash used"
 
 .PHONY: sim debug size list clean
 sim: build/$(NAME).hex
@@ -36,7 +36,7 @@ debug: build/$(NAME).hex
 	    -o "breakpoint set --one-shot true --name main" -o "continue"
 
 size: build/$(NAME).hex
-	@$(SIM) size --device $(DEVICE) build/$(NAME).elf
+	@echo "$$($(SIM) size --device $(DEVICE) build/$(NAME).elf) words of flash used"
 
 list: build/$(NAME).hex
 	@$(SIM) disasm --device $(DEVICE) build/$(NAME).elf
