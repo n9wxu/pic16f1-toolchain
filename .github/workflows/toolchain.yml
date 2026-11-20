@@ -203,7 +203,8 @@ jobs:
         env:
           # libxml2 is linked in, not a DLL: its headers must be told, and
           # its use of the system's random numbers needs bcrypt.
-          CL: /DLIBXML_STATIC
+          # (With - and not /: Git's shell rewrites what looks like a path.)
+          CL: -DLIBXML_STATIC
           LINK: bcrypt.lib
         run: |
           here=$(cygpath -m "$PWD")
