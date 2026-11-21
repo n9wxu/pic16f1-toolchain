@@ -27,6 +27,26 @@ void loop() {
 
 That is 229 words of the part's 8,192 and 5 bytes of RAM.
 
+## In the Arduino IDE
+
+```sh
+pic16f1-arduino-ide --openocd <the PICkit 2 probe's OpenOCD directory>
+```
+
+copies the platform into the sketchbook (`Documents/Arduino/hardware/pic16f1`)
+and notes where the toolchain is. After a restart the IDE has **Tools >
+Board > PIC16F1 (LLVM toolchain) > PIC16F1937 (F1 Evaluation Platform)**,
+with the oscillator and the optimization level in the Tools menu;
+`arduino-cli` knows the board as `pic16f1:pic16f1:f1eval`. Verify compiles
+with this toolchain and gives the same program as `pic16f1-build`.
+
+To load a sketch, choose **Tools > Programmer > PICkit 2 probe (OpenOCD)**
+and **Sketch > Upload Using Programmer** (`arduino-cli upload -P pk2icsp`).
+The plain Upload button wants a serial port, which a part without a
+bootloader does not have. The size the IDE reports as bytes is words.
+`pic16f1-arduino-ide --remove` takes the platform out again; run the
+command again after the toolchain is updated or moved.
+
 ## Pins
 
 A pin is a number, 8 times its port plus its bit: `PIN_RA0` (0) to
@@ -120,6 +140,12 @@ interrupt code only with `Serial`, the pin interrupt table only with
 |---|---|
 | `scripts/test-arduino.sh` | Blink at five oscillator settings; `Basics` at two levels and three clocks, checked by the sketch and by what it prints on the simulator; `Board` builds, also for the debugger; a new project builds with `make` and prints `millis` |
 | `tests/arduino/Board`, run by `tools/hwtest.py` on a PIC16LF1937 on the F1 Evaluation Platform | Pass: the 1.024 V reference read against VDD; the MCP9800 found with `Wire`, read with a repeated start, and an address with no device reported as such; EEPROM bytes and a `long` written and read back; PWM registers after `analogWrite`; two rising edges counted by `attachInterrupt`; `delay(500)` as 499 to 501 of `millis` |
+
+With the `arduino-cli` of Arduino IDE 2 (0.35.3): the three test sketches
+compile to the same sizes as with `pic16f1-build`, `Basics` so built
+passes on the simulator, the libraries a sketch includes are found, and
+`upload -P pk2icsp` programmed the part. The IDE's own window was not
+used.
 
 Not tested on the part: `SPI` (nothing on the board to talk to), `Serial`
 on its pins (its text is checked on the simulator), `pulseIn`, `shiftOut`

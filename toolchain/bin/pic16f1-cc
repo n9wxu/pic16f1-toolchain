@@ -14,7 +14,9 @@ __doc__ = """Compiler driver for the PIC16F1 LLVM toolchain.
 Compiles C, C++ (.cpp, .cc, .cxx) and assembly sources with clang, links them with ld.lld against
 the startup code and runtime library, and converts the result to Intel HEX.
 With -o NAME.hex it also leaves NAME.elf beside it; any other -o name gets
-the ELF file. -c and -S stop after compiling.
+the ELF file. -c and -S stop after compiling, -E after preprocessing.
+--c++ links objects as a C++ program (with the C++ and C libraries) when no
+C++ source is on the command line to show that it is one.
 
 -mcmodel=small leaves out the page selection (MOVLP) before calls, which is
 right only for a program that fits in the first 2K words of flash; the
@@ -130,6 +132,7 @@ def main():
     output = None
     cpu = "pic16f1937"
     compile_only = asm_only = use_libc = unoptimized = debugger = False
+    preprocess_only = link_cxx = False
     no_libc = False
     model = None
     sources, objects, cflags, ldflags = [], [], [], []
@@ -145,6 +148,10 @@ def main():
             compile_only = True
         elif a == "-S":
             asm_only = True
+        elif a == "-E":
+            preprocess_only = True
+        elif a == "--c++":
+            link_cxx = True
         elif a.startswith("-mcmodel="):
             model = a[len("-mcmodel="):]
             if model not in ("small", "medium"):
@@ -212,7 +219,7 @@ def main():
     # A C++ program gets the C library without asking, if it is installed:
     # the C++ standard headers are built on the C library's. (Only what
     # the program uses is linked.) --no-libc says otherwise.
-    is_cxx = any(s.endswith(CXX_SUFFIXES) for s in sources)
+    is_cxx = link_cxx or any(s.endswith(CXX_SUFFIXES) for s in sources)
     if is_cxx and not no_libc and any(
             c and os.path.exists(os.path.join(c, "banks32", "lib", "libc.a"))
             for c in candidates):
@@ -301,6 +308,12 @@ def main():
         link_tuning += ["-mllvm", "-unroll-threshold=0",
                         "-mllvm", "-unroll-partial-threshold=0"]
 
+    if preprocess_only:
+        cmd = [f for f in compiler(sources) if f != "-flto"] + ["-E"] + sources
+        if output:
+            cmd += ["-o", output]
+        run(cmd)
+        return 0
     if compile_only or asm_only:
         cmd = compiler(sources) + [f"-mcmodel={model or 'medium'}", "-S" if asm_only else "-c"] + sources
         if output:

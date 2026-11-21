@@ -58,4 +58,24 @@ echo $(($(cat "$tmp/count") + 1)) > "$tmp/count"
 grep -q "^Fresh" "$tmp/out" && grep -Eq "^(99[0-9]|10[0-9][0-9])" "$tmp/out" ||
     { echo "FAIL new project: it printed"; cat "$tmp/out"; exit 1; }
 echo "pass  a new Arduino project builds with make and prints millis"
+
+# The same sketches through the Arduino IDE's own builder, if it is here:
+# the platform installed in a sketchbook of its own.
+cli=${ARDUINO_CLI:-$(command -v arduino-cli || true)}
+[ -n "$cli" ] || cli="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
+tools=$root/build/toolchain/bin
+if [ -x "$cli" ] && [ -x "$tools/pic16f1-arduino-ide" ]; then
+    "$tools/pic16f1-arduino-ide" --sketchbook "$tmp/sketchbook" > /dev/null
+    for sketch in Blink Basics Board; do
+        ARDUINO_DIRECTORIES_USER="$tmp/sketchbook" "$cli" compile --fqbn pic16f1:pic16f1:f1eval \
+            --build-path "$tmp/ide-$sketch" "$tmp/$sketch" > "$tmp/log" 2>&1 ||
+            { cat "$tmp/log"; echo "FAIL arduino-cli: $sketch"; exit 1; }
+    done
+    code=0; "$sim" run "$tmp/ide-Basics/Basics.ino.elf" > "$tmp/out" || code=$?
+    [ "$code" = 90 ] && cmp -s "$tmp/out" "$root/tests/arduino/Basics/expected.txt" ||
+        { cat "$tmp/out"; echo "FAIL arduino-cli: Basics exit code $code"; exit 1; }
+    echo "pass  arduino-cli builds the three sketches; Basics runs"
+else
+    echo "skip  arduino-cli (not installed, or no build/toolchain)"
+fi
 echo "$(cat "$tmp/count") builds"

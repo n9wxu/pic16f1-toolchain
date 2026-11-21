@@ -26,7 +26,9 @@
 #endif
 #include <xc.h>
 
+#ifndef ARDUINO
 #define ARDUINO 10800
+#endif
 #define ARDUINO_ARCH_PIC16F1 1
 
 #ifdef __cplusplus

@@ -1,0 +1,3 @@
+pk2icsp.name=PICkit 2 probe (OpenOCD)
+pk2icsp.program.tool=pk2icsp
+pk2icsp.program.tool.default=pk2icsp

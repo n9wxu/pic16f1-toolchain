@@ -1,0 +1,49 @@
+# The PIC16F1 LLVM toolchain as a platform of the Arduino IDE and
+# arduino-cli. pic16f1-arduino-ide puts this folder in a sketchbook's
+# hardware folder and says, in platform.local.txt beside it, where the
+# toolchain is (compiler.path) and where the probe's OpenOCD is
+# (tools.pk2icsp.path).
+
+name=PIC16F1 (LLVM toolchain)
+version=0.3.0
+
+compiler.path=
+compiler.cmd=pic16f1-cc
+compiler.flags=-mcpu={build.mcu} {build.opt} -g -flto -DF_CPU={build.f_cpu} -DARDUINO={runtime.ide.version} -DARDUINO_{build.board} -DARDUINO_ARCH_{build.arch}
+compiler.c.flags=-std=gnu11 --libc
+compiler.cpp.flags=-std=gnu++17
+compiler.c.extra_flags=
+compiler.cpp.extra_flags=
+compiler.ld.extra_flags=
+
+recipe.c.o.pattern="{compiler.path}{compiler.cmd}" {compiler.flags} {compiler.c.flags} {compiler.c.extra_flags} {includes} -c "{source_file}" -o "{object_file}"
+recipe.cpp.o.pattern="{compiler.path}{compiler.cmd}" {compiler.flags} {compiler.cpp.flags} {compiler.cpp.extra_flags} {includes} -c "{source_file}" -o "{object_file}"
+recipe.S.o.pattern="{compiler.path}{compiler.cmd}" -mcpu={build.mcu} -DF_CPU={build.f_cpu} {includes} -c "{source_file}" -o "{object_file}"
+recipe.ar.pattern="{compiler.path}llvm-ar" rcs "{archive_file_path}" "{object_file}"
+
+# The whole program is compiled here, from the objects' and the core
+# library's intermediate code; the .elf file is left beside the .hex.
+recipe.c.combine.pattern="{compiler.path}{compiler.cmd}" {compiler.flags} {compiler.cpp.flags} --c++ {compiler.ld.extra_flags} -o "{build.path}/{build.project_name}.hex" {object_files} "{archive_file_path}"
+recipe.objcopy.hex.pattern="{compiler.path}pic16f1-sim" elf2hex "{build.path}/{build.project_name}.elf" "{build.path}/{build.project_name}.hex"
+
+# The sketch as the compiler sees it, for the IDE to find the libraries it
+# includes and the functions it defines.
+# (Without line numbers before the source lines of a message: the IDE finds
+# a missing library by the #include line the compiler shows.)
+preproc.macros.flags=-w -x c++ -E -CC -fno-diagnostics-show-line-numbers
+recipe.preproc.macros="{compiler.path}{compiler.cmd}" -mcpu={build.mcu} {compiler.cpp.flags} -DF_CPU={build.f_cpu} -DARDUINO={runtime.ide.version} {preproc.macros.flags} {includes} "{source_file}" -o "{preprocessed_file_path}"
+
+# Words of flash (the IDE calls them bytes).
+recipe.size.pattern="{compiler.path}pic16f1-sim" size --device {build.mcu} "{build.path}/{build.project_name}.elf"
+recipe.size.regex=^(\d+)\s*$
+
+# Upload: the PICkit 2 probe firmware's OpenOCD programs the part.
+tools.pk2icsp.path=
+tools.pk2icsp.vdd=3300
+tools.pk2icsp.upload.params.verbose=
+tools.pk2icsp.upload.params.quiet=
+tools.pk2icsp.upload.pattern="{path}/src/openocd" -s "{path}/tcl" -f interface/pk2icsp.cfg -c "pk2icsp vdd {vdd}" -c "pk2icsp hvp on" -f target/pic16f193x.cfg -c "init; flash write_image erase {{build.path}/{build.project_name}.hex}; shutdown"
+# (The same as Sketch > Upload Using Programmer.)
+tools.pk2icsp.program.params.verbose=
+tools.pk2icsp.program.params.quiet=
+tools.pk2icsp.program.pattern="{path}/src/openocd" -s "{path}/tcl" -f interface/pk2icsp.cfg -c "pk2icsp vdd {vdd}" -c "pk2icsp hvp on" -f target/pic16f193x.cfg -c "init; flash write_image erase {{build.path}/{build.project_name}.hex}; shutdown"

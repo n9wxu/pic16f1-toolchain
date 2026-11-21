@@ -1,0 +1,94 @@
+#!/bin/sh
+''':'
+# Python runs this file; these lines find it. A packaged toolchain brings
+# its own (libexec/python); a checkout uses python3 from the PATH.
+case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
+[ -x "$d/../libexec/python/bin/python3" ] && exec "$d/../libexec/python/bin/python3" "$0" "$@"
+[ -x "$d/../libexec/python/python.exe" ] && exec "$d/../libexec/python/python.exe" "$0" "$@"
+exec python3 "$0" "$@"
+'''
+__doc__ = """Make the PIC16F1 a board of the Arduino IDE and arduino-cli.
+
+    pic16f1-arduino-ide [--sketchbook DIR] [--openocd DIR] [--remove]
+
+Copies the toolchain's Arduino platform (its core, the pins, the Wire, SPI
+and EEPROM libraries) into the sketchbook's hardware folder, as
+hardware/pic16f1/pic16f1, and writes beside it where this toolchain is.
+After a restart the IDE has "PIC16F1937 (F1 Evaluation Platform)" under
+Tools > Board > PIC16F1 (LLVM toolchain); arduino-cli knows it as
+pic16f1:pic16f1:f1eval.
+
+    --sketchbook DIR   the sketchbook (Documents/Arduino of your home
+                       directory, where the IDE keeps it unless told
+                       otherwise in its settings)
+    --openocd DIR      for Upload: the directory of the PICkit 2 probe
+                       firmware's OpenOCD (the one with src/openocd and tcl)
+    --remove           take the platform out again
+
+Run it again after the toolchain is updated or moved.
+"""
+import os
+import shutil
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def main():
+    args = sys.argv[1:]
+    sketchbook = os.path.join(os.path.expanduser("~"), "Documents", "Arduino")
+    openocd, remove = "", False
+    while args:
+        a = args.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "--sketchbook" and args:
+            sketchbook = args.pop(0)
+        elif a == "--openocd" and args:
+            openocd = os.path.abspath(args.pop(0))
+        elif a == "--remove":
+            remove = True
+        else:
+            sys.exit(f"pic16f1-arduino-ide: unexpected argument {a}; see --help")
+    target = os.path.join(os.path.abspath(sketchbook), "hardware", "pic16f1", "pic16f1")
+    if remove:
+        shutil.rmtree(target, ignore_errors=True)
+        print(f"removed {target}")
+        return 0
+    source = None
+    for c in (os.path.join(HERE, "..", "share", "pic16f1", "arduino"), os.path.join(HERE, "..", "arduino")):
+        if os.path.exists(os.path.join(c, "platform.txt")):
+            source = os.path.normpath(c)
+            break
+    if not source:
+        sys.exit("pic16f1-arduino-ide: cannot find the Arduino platform (platform.txt)")
+    # The programs the recipes run: beside this script in a packaged
+    # toolchain; in a checkout, its build.
+    tools = HERE
+    exe = ".exe" if os.name == "nt" else ""
+    if not os.path.exists(os.path.join(tools, "llvm-ar" + exe)):
+        built = os.path.normpath(os.path.join(HERE, "..", "..", "build", "toolchain", "bin"))
+        if not os.path.exists(os.path.join(built, "llvm-ar" + exe)):
+            sys.exit("pic16f1-arduino-ide: this toolchain has no llvm-ar; in a checkout, build it first (scripts/package-toolchain.sh)")
+        tools = built
+    if os.path.exists(target):
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    # (Forward slashes: the file is read as Java properties, where a
+    # backslash is an escape.)
+    with open(os.path.join(target, "platform.local.txt"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("compiler.path=" + tools.replace("\\", "/") + "/\n")
+        if openocd:
+            f.write("tools.pk2icsp.path=" + openocd.replace("\\", "/") + "\n")
+    print(f"{target}: the PIC16F1 platform, with the toolchain at {tools}.\n"
+          "  Restart the Arduino IDE; the board is Tools > Board > PIC16F1 (LLVM toolchain).\n"
+          "  arduino-cli: --fqbn pic16f1:pic16f1:f1eval")
+    if not openocd:
+        print("  Upload needs --openocd DIR (the PICkit 2 probe's OpenOCD); without it, Sketch > Export Compiled\n"
+              "  Binary gives a .hex file for any programmer.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

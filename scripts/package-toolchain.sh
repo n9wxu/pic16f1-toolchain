@@ -53,7 +53,8 @@ if [ -x "$bld/bin/lldb-dap" ]; then
     done
     cp "$root/toolchain/bin/pic16f1-lldb" "$root/toolchain/bin/pic16f1-lldb-dap" "$out/bin/"
 fi
-cp "$root/toolchain/bin/pic16f1-new-project" "$out/bin/"
+cp "$root/toolchain/bin/pic16f1-new-project" "$root/toolchain/bin/pic16f1-build" \
+    "$root/toolchain/bin/pic16f1-arduino-ide" "$out/bin/"
 # Other languages: the tools that bring a front end's LLVM IR to this
 # target, the Rust crate and target description, the Zig device files.
 cp "$root/toolchain/bin/pic16f1-retarget" "$root/toolchain/bin/pic16f1-rust-ld" \

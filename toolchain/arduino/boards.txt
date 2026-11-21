@@ -1,0 +1,30 @@
+menu.clock=Oscillator
+menu.opt=Optimize
+
+f1eval.name=PIC16F1937 (F1 Evaluation Platform)
+f1eval.build.mcu=pic16f1937
+f1eval.build.board=PIC16F1937
+f1eval.build.core=pic16f1
+f1eval.build.variant=pic16f1937
+f1eval.upload.tool=pk2icsp
+f1eval.upload.tool.default=pk2icsp
+f1eval.upload.maximum_size=8192
+f1eval.upload.wait_for_upload_port=false
+
+f1eval.menu.clock.16=16 MHz (internal)
+f1eval.menu.clock.16.build.f_cpu=16000000UL
+f1eval.menu.clock.32=32 MHz (internal, PLL)
+f1eval.menu.clock.32.build.f_cpu=32000000UL
+f1eval.menu.clock.8=8 MHz (internal)
+f1eval.menu.clock.8.build.f_cpu=8000000UL
+f1eval.menu.clock.4=4 MHz (internal)
+f1eval.menu.clock.4.build.f_cpu=4000000UL
+f1eval.menu.clock.1=1 MHz (internal)
+f1eval.menu.clock.1.build.f_cpu=1000000UL
+
+f1eval.menu.opt.s=Smallest (-Os)
+f1eval.menu.opt.s.build.opt=-Os
+f1eval.menu.opt.1=Easy to debug (-O1)
+f1eval.menu.opt.1.build.opt=-O1
+f1eval.menu.opt.2=Faster (-O2)
+f1eval.menu.opt.2.build.opt=-O2

@@ -35,7 +35,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The LLVM programs a toolchain has, by the name each is run as.
 LLVM_TOOLS = ["clang", "ld.lld", "llvm-mc", "llvm-objdump", "llvm-readelf", "llvm-objcopy", "llvm-ar", "llvm-nm",
               "llvm-size", "lldb", "lldb-dap"]
-DRIVERS = ["pic16f1-cc", "pic16f1-build", "pic16f1-forth", "pic16f1-new-project", "pic16f1-retarget",
+DRIVERS = ["pic16f1-cc", "pic16f1-build", "pic16f1-arduino-ide", "pic16f1-forth", "pic16f1-new-project", "pic16f1-retarget",
            "pic16f1-rust-ld", "pic16f1-zig"]
 # What of a toolchain tree is the same on every system.
 TARGET_PARTS = ["include", "lib/pic16f1", "lib/clang", "picolibc", "share"]
