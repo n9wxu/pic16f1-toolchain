@@ -134,6 +134,62 @@ sketch has only the parts it uses: the serial port's receive buffer and
 interrupt code only with `Serial`, the pin interrupt table only with
 `attachInterrupt`.
 
+## Against an Arduino Nano
+
+The same sketches (`tools/arduino-bench/sketches`: the IDE's first
+examples, one for each library, and a benchmark) built for an Arduino Nano
+(ATmega328P; `arduino-cli`, Arduino AVR Boards 1.8.6, which is avr-gcc 7.3
+at `-Os` as a whole program) and for the PIC16F1937 (`-Os`, 16 MHz).
+`tools/arduino_bench.py` makes both tables.
+
+| Sketch | Nano: bytes of flash | of 30,720 | PIC16F1937: words of flash | of 8,192 | in bytes (14 bits a word) | Nano: RAM | PIC: RAM |
+|---|---|---|---|---|---|---|---|
+| BareMinimum | 444 | 1.4% | 143 | 1.7% | 250 | 9 | 5 |
+| Blink | 924 | 3.0% | 229 | 2.8% | 400 | 9 | 5 |
+| BlinkWithoutDelay | 848 | 2.8% | 240 | 2.9% | 420 | 15 | 11 |
+| DigitalReadSerial | 1,942 | 6.3% | 635 | 7.8% | 1,111 | 188 | 52 |
+| AnalogReadSerial | 1,848 | 6.0% | 835 | 10.2% | 1,461 | 188 | 58 |
+| ReadAnalogVoltage | 2,988 | 9.7% | 3,211 | 39.2% | 5,619 | 200 | 85 |
+| Fade | 1,124 | 3.7% | 298 | 3.6% | 521 | 13 | 9 |
+| ButtonInterrupt | 1,032 | 3.4% | 335 | 4.1% | 586 | 14 | 28 |
+| WireRead | 4,164 | 13.6% | 1,296 | 15.8% | 2,268 | 404 | 103 |
+| EepromCount | 1,710 | 5.6% | 723 | 8.8% | 1,265 | 188 | 54 |
+| SpiTransfer | 1,012 | 3.3% | 243 | 3.0% | 425 | 11 | 6 |
+| Bench | 4,568 | 14.9% | 4,400 | 53.7% | 7,700 | 547 | 343 |
+
+A word of this part is 14 bits, so the fifth column is what the same code
+would be in bytes. Counted that way the PIC16F1 program is smaller than
+the AVR's in every sketch without floating point or 32-bit arithmetic, by
+a third to a half; as a share of the part it is about the same, because
+the part is smaller. Floating point reverses it (ReadAnalogVoltage, Bench):
+the AVR has a multiplier and a hand-written floating-point library, and
+this toolchain's is compiled C. The Nano's RAM figure is its globals (its
+stack is extra); the PIC's includes the fixed frames of its functions
+and leaves out the 32 bytes kept for the interrupt handler's.
+
+| Piece of Bench | Nano, 16 MHz: ms | PIC16F1937, 16 MHz: ms | times the Nano | PIC16F1937, 32 MHz: ms | times the Nano |
+|---|---|---|---|---|---|
+| 1,000 times `digitalWrite` high and low, the pin a constant | 9.31 | 4.52 | 0.5 | 2.22 | 0.2 |
+| the same, the pin in a variable | 9.60 | 33.78 | 3.5 | 16.52 | 1.7 |
+| 1,000 `digitalRead` | 3.00 | 6.10 | 2.0 | 2.98 | 1.0 |
+| 1,000 calls of `millis` | 1.03 | 8.74 | 8.5 | 4.28 | 4.1 |
+| CRC-8 of 1,024 bytes, bit by bit | 4.34 | 30.05 | 6.9 | 14.69 | 3.4 |
+| 1,000 16-bit multiplications, 200 divisions | 3.94 | 17.10 | 4.3 | 8.35 | 2.1 |
+| 1,000 32-bit multiplications, 200 divisions | 13.86 | 241.73 | 17.4 | 118.23 | 8.5 |
+| 500 terms of a series for pi | 20.94 | 509.14 | 24.3 | 249.00 | 11.9 |
+| the primes below 256, ten times | 6.96 | 68.68 | 9.9 | 33.60 | 4.8 |
+| 64 16-bit numbers, insertion sort | 1.68 | 8.74 | 5.2 | 4.26 | 2.5 |
+
+Both run on simulators, not on the parts: `pic16f1-sim`, and simavr's
+ATmega328P (`tools/arduino-bench/build-avrrun.sh`). Each piece is timed by
+the sketch's own `micros`, and what each computes is the same on both.
+At 16 MHz the PIC16F1 executes 4 million instructions a second and the AVR
+up to 16 million, and the AVR's instructions do more, so a factor of four
+to seven is the parts themselves. Where the PIC16F1 is ahead is the pin
+that is a constant: one instruction here, a call and a table lookup on the
+AVR. Where it is furthest behind is 32-bit multiplication and floating
+point, which leave room in the runtime library.
+
 ## Tests
 
 | | |
