@@ -11,6 +11,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 bin=${1:-$root/build/llvm-build/bin}
+bin=$(cd "$bin" && pwd)   # (meson wants the whole path)
 dest=${2:-$root/build/toolchain/picolibc}
 src=$root/build/picolibc
 rev=$(cat "$root/toolchain/picolibc/VERSION")
