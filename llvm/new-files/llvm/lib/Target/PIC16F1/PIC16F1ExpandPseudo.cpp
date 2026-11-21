@@ -29,6 +29,7 @@
 #include "PIC16F1MachineFunctionInfo.h"
 #include "PIC16F1InstrInfo.h"
 #include "PIC16F1Subtarget.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
