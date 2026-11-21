@@ -331,13 +331,15 @@ pub const Eeprom = struct {
     /// would then write. They are put in two variables first (arming the
     /// write), the unlock copies them from there, and they are cleared
     /// after; code reached by accident finds zeros, and nothing is written.
-    var key1: u8 = 0;
-    var key2: u8 = 0;
+    ///
+    /// The unlock itself is five instructions that the part wants with
+    /// nothing between them; they are in the runtime library
+    /// (__eecon_unlock), which is given the two values.
+    var keys: u16 = 0;
+    extern fn __eecon_unlock(keys: c_uint) void;
     pub fn write(address: u8, value: u8) void {
-        const k1: *volatile u8 = &key1;
-        const k2: *volatile u8 = &key2;
-        k1.* = 0x55;
-        k2.* = 0xAA;
+        const armed: *volatile u16 = &keys;
+        armed.* = 0xAA55;
         device.EEADRL.* = address;
         device.EEDATL.* = value;
         device.EECON1bits.EEPGD = 0;
@@ -346,14 +348,9 @@ pub const Eeprom = struct {
         {
             const were = disableInterrupts();
             defer restoreInterrupts(were);
-            const first = k1.*;
-            const second = k2.*;
-            device.EECON2.* = first;
-            device.EECON2.* = second;
-            device.EECON1bits.WR = 1;
+            __eecon_unlock(armed.*);
         }
-        k1.* = 0;
-        k2.* = 0;
+        armed.* = 0;
         while (device.EECON1bits.WR == 1) {}
         device.EECON1bits.WREN = 0;
     }

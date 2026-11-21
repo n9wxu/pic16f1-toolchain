@@ -1,7 +1,7 @@
 # F1 Evaluation Platform demo
 
 Everything on Microchip's F1 Evaluation Platform (DM164130-1) at once, in
-C++23, on its PIC16LF1937: 2,365 words of the part's 8,192 and 61 bytes
+C++23, on its PIC16LF1937: 2,380 words of the part's 8,192 and 61 bytes
 of its RAM, with the processor asleep between the 32 ticks a second of
 the watch crystal.
 

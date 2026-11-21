@@ -253,27 +253,23 @@ impl Eeprom {
     /// after; code reached by accident finds zeros, and nothing is written.
     pub fn write(address: u8, value: u8) {
         use core::ptr::{addr_of_mut, read_volatile, write_volatile};
-        static mut KEY1: u8 = 0;
-        static mut KEY2: u8 = 0;
-        unsafe {
-            write_volatile(addr_of_mut!(KEY1), 0x55);
-            write_volatile(addr_of_mut!(KEY2), 0xAA);
+        // The unlock itself is five instructions that the part wants with
+        // nothing between them; they are in the runtime library
+        // (__eecon_unlock), which is given the two values.
+        extern "C" {
+            fn __eecon_unlock(keys: u16);
         }
+        static mut KEYS: u16 = 0;
+        unsafe { write_volatile(addr_of_mut!(KEYS), 0xAA55) };
         EEADRL.write(address);
         EEDATL.write(value);
         eecon1::EEPGD.clear();
         eecon1::CFGS.clear();
         eecon1::WREN.set();
         crate::critical(|| {
-            let (first, second) = unsafe { (read_volatile(addr_of_mut!(KEY1)), read_volatile(addr_of_mut!(KEY2))) };
-            EECON2.write(first);
-            EECON2.write(second);
-            eecon1::WR.set();
+            unsafe { __eecon_unlock(read_volatile(addr_of_mut!(KEYS))) };
         });
-        unsafe {
-            write_volatile(addr_of_mut!(KEY1), 0);
-            write_volatile(addr_of_mut!(KEY2), 0);
-        }
+        unsafe { write_volatile(addr_of_mut!(KEYS), 0) };
         while eecon1::WR.is_set() {}
         eecon1::WREN.clear();
     }

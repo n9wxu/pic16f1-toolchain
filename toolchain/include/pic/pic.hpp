@@ -23,6 +23,8 @@
 #warning "<pic/pic.hpp> is written for the PIC16F193x; check the register names for this device"
 #endif
 
+extern "C" void __eecon_unlock(unsigned int keys);
+
 namespace pic {
 
 // ---- Registers by port letter ----------------------------------------------
@@ -263,11 +265,14 @@ struct Eeprom {
     // would then write. They are put in two variables first (arming the
     // write), the unlock copies them from there, and they are cleared
     // after; code reached by accident finds zeros, and nothing is written.
-    static inline volatile uint8_t key1, key2;
+    //
+    // The unlock itself is five instructions that the part wants with
+    // nothing between them; they are in the runtime library
+    // (__eecon_unlock), which is given the two values.
+    static inline volatile uint16_t keys;
     static void write(uint8_t address, uint8_t value)
     {
-        key1 = 0x55;
-        key2 = 0xAA;
+        keys = 0xAA55;
         EEADRL = address;
         EEDATL = value;
         EECON1bits.EEPGD = 0;
@@ -275,13 +280,9 @@ struct Eeprom {
         EECON1bits.WREN = 1;
         {
             CriticalSection quiet;
-            uint8_t first = key1, second = key2;
-            EECON2 = first;
-            EECON2 = second;
-            EECON1bits.WR = 1;
+            __eecon_unlock(keys);
         }
-        key1 = 0;
-        key2 = 0;
+        keys = 0;
         while (EECON1bits.WR) {
         }
         EECON1bits.WREN = 0;
