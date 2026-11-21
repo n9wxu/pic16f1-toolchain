@@ -326,6 +326,6 @@ jobs:
           PIC16F1_LLVM_BIN: dist/windows-x86_64/pic16f1-toolchain/bin
         run: |
           scripts/build-llvm-tests.sh build/out/llvm-pic16f1
-          python tools/bench.py --markdown toolchain-report.md --json toolchain-report.json \
+          python tools/bench.py --sim dist/windows-x86_64/pic16f1-toolchain/bin/pic16f1-sim.exe --markdown toolchain-report.md --json toolchain-report.json \
             reference/xc8-v4.00 build/out/llvm-pic16f1
           cat toolchain-report.md >> "$GITHUB_STEP_SUMMARY"
