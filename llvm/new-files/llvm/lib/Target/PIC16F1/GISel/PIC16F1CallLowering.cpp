@@ -27,6 +27,7 @@
 #include "llvm/CodeGen/TargetCallingConv.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace llvm;

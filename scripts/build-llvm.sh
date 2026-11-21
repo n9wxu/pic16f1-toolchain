@@ -8,6 +8,8 @@
 #   LLVM_BUILD  build directory        (default build/llvm-build)
 #   CMAKE_EXTRA extra cmake arguments, e.g. a compiler launcher
 #   NINJA_JOBS  how many compilations at once (default: ninja's own choice)
+#   NINJA_KEEP  how many failures before stopping (default 1; 0: go on, as
+#               CI does, to show every error of a compiler in one run)
 #   HOST_ONLY   if set, stop after the host programs: no runtime library
 #               and no build/toolchain (scripts/build-release.sh uses this
 #               for the builds a release is made of)
@@ -38,7 +40,7 @@ cmake -G Ninja -S "$src/llvm" -B "$bld" \
     -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_BINDINGS=OFF \
     -DLLVM_ENABLE_LIBEDIT=OFF ${CMAKE_EXTRA:-}
 # shellcheck disable=SC2086
-ninja -C "$bld" ${NINJA_JOBS:+-j$NINJA_JOBS} $tools
+ninja -C "$bld" ${NINJA_JOBS:+-j$NINJA_JOBS} ${NINJA_KEEP:+-k$NINJA_KEEP} $tools
 [ -z "${HOST_ONLY:-}" ] || exit 0
 
 "$root/scripts/build-runtime.sh" "$bld/bin"

@@ -27,6 +27,7 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 
 #define DEBUG_TYPE "pic16f1-asm-parser"

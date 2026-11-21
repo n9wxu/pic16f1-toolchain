@@ -8,6 +8,7 @@
 
 #include "ABIInfoImpl.h"
 #include "TargetInfo.h"
+#include "llvm/Support/Casting.h"
 
 using namespace clang;
 using namespace clang::CodeGen;

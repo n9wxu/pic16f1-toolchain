@@ -31,6 +31,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Endian.h"
 
 #include <functional>

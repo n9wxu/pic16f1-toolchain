@@ -42,7 +42,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
 
       - name: Compiler cache
-        uses: actions/cache@v4
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ccache-${{ runner.os }}-${{ hashFiles('llvm/LLVM_VERSION') }}-${{ github.sha }}
@@ -70,8 +71,17 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ \
             -DLIBXML2_INCLUDE_DIR=$PWD/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$PWD/build/libxml2/lib/libxml2.a \
             -DLLDB_ENABLE_LIBEDIT=OFF"
-          scripts/build-llvm.sh
+          NINJA_KEEP=0 scripts/build-llvm.sh
           ccache --show-stats
+
+      # (Also of a build that failed: the next one then starts where this
+      # one stopped, not from nothing.)
+      - name: Save the compiler cache
+        if: always() && steps.ccache.outputs.cache-primary-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
       - name: Assembler matches Microchip's encodings and round-trips
         run: scripts/test-assembler.sh build/llvm-build/bin
@@ -230,7 +240,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
             -DLIBXML2_INCLUDE_DIR=$here/build/libxml2/include/libxml2 -DLIBXML2_LIBRARY=$here/$xml"
-          scripts/build-llvm.sh
+          NINJA_KEEP=0 scripts/build-llvm.sh
           sccache --show-stats
 
       # The programs only; the next job puts them with the Linux job's

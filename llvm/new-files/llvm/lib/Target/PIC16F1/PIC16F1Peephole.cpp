@@ -54,6 +54,7 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Module.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include <climits>
 

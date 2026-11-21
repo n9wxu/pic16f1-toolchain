@@ -38,6 +38,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/Local.h"

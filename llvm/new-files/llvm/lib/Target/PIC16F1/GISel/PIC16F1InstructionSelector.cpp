@@ -29,6 +29,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "pic16f1-isel"
