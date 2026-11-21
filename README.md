@@ -56,7 +56,7 @@ gates G0 to G2.
 | `llvm/` | LLVM, Clang and LLD changes: a patch plus the new files |
 | `toolchain/` | Compiler driver, runtime library, device headers, linker scripts, register descriptions (SVD), debugger wrappers and the template for new projects |
 | `examples/debug/` | A program with a VS Code setup for debugging on the simulator |
-| `examples/f1-eval/` | Everything on the F1 Evaluation Platform at once, in C++23: LCD, button, potentiometer, LEDs, the MCP9800, the crystal's clock, EEPROM and the serial pin, in 2,359 words |
+| `examples/f1-eval/` | Everything on the F1 Evaluation Platform at once, in C++23: LCD, button, potentiometer, LEDs, the MCP9800, the crystal's clock, EEPROM and the serial pin, in 2,365 words |
 | `pcb/` | KiCad project of a simple programmer and debugger |
 | `vscode/` | The VS Code extension, and its tests |
 | `scripts/` | Build helpers |

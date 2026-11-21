@@ -298,9 +298,19 @@ pub const Adc = struct {
         device.ADCON0bits.CHS = channel;
         // The sampling capacitor needs about 5 us to follow the new input.
         for (0..8) |_| nop();
-        device.ADCON0bits.GO_nDONE = 1;
-        while (device.ADCON0bits.GO_nDONE == 1) {}
-        return device.ADRES.*;
+        // A conversion takes at most 200 instruction cycles. One that has
+        // not finished in several times that never will: the PIC16F193x
+        // can lose one (errata DS80000479: with the converter's own RC
+        // clock when not asleep, or above 8 MHz). It is stopped and
+        // started again.
+        while (true) {
+            device.ADCON0bits.GO_nDONE = 1;
+            var patience: u8 = 255;
+            while (patience != 0) : (patience -= 1) {
+                if (device.ADCON0bits.GO_nDONE == 0) return device.ADRES.*;
+            }
+            device.ADCON0bits.GO_nDONE = 0;
+        }
     }
 };
 

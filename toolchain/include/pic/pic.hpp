@@ -196,11 +196,22 @@ struct Uart {
 // ---- The A/D converter (10 bits) ----------------------------------------------------
 struct Adc {
     static constexpr uint8_t temperature = 29, dac = 30, fixed_reference = 31;
-    // Right-justified results, the converter's own RC clock (which runs at
-    // any oscillator setting, and in sleep), VDD and VSS as references.
+    // Right-justified results, VDD and VSS as references. The clock is
+    // the oscillator divided down to 2 to 4 us a bit, if _XTAL_FREQ says
+    // it is 8 MHz or less; otherwise the converter's own RC clock, which
+    // runs at any oscillator setting and in sleep, but with which the
+    // PIC16F193x now and then loses a conversion when it is not asleep
+    // (see read).
     static void begin()
     {
+#if defined(_XTAL_FREQ) && _XTAL_FREQ <= 8000000UL
+        ADCON1 = 0x80 | (_XTAL_FREQ <= 1000000UL   ? 0x00   // Fosc/2
+                         : _XTAL_FREQ <= 2000000UL ? 0x40   // Fosc/4
+                         : _XTAL_FREQ <= 4000000UL ? 0x10   // Fosc/8
+                                                   : 0x50); // Fosc/16
+#else
         ADCON1 = 0xF0;
+#endif
         ADCON0bits.ADON = 1;
     }
     // The fixed voltage reference as an input to measure against: 1 gives
@@ -219,10 +230,18 @@ struct Adc {
         // The sampling capacitor needs about 5 us to follow the new input.
         for (volatile uint8_t settle = 8; settle; settle = settle - 1) {
         }
-        ADCON0bits.GO_nDONE = 1;
-        while (ADCON0bits.GO_nDONE) {
+        // A conversion takes at most 200 instruction cycles. One that has
+        // not finished in several times that never will: the PIC16F193x
+        // can lose one (errata DS80000479: with the converter's own RC
+        // clock when not asleep, or above 8 MHz). It is stopped and
+        // started again.
+        for (;;) {
+            ADCON0bits.GO_nDONE = 1;
+            for (uint8_t patience = 255; patience; patience--)
+                if (!ADCON0bits.GO_nDONE)
+                    return ADRES;
+            ADCON0bits.GO_nDONE = 0;
         }
-        return ADRES;
     }
 };
 

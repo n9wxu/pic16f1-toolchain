@@ -180,7 +180,7 @@ int main()
 | `pic::set_clock(pic::Clock::MHz8)` | The internal oscillator, 500 kHz to 16 MHz |
 | `pic::delay_ms(n)` `delay_us(n)` `delay_cycles(n)` | At least the time asked for; with a constant, computed by the compiler |
 | `pic::Uart` | `begin(baud)` `write(byte)` `write(text)` `print(number)` `print_hex(byte)` `flush()` `available()` `read()`; the EUSART on RC6 and RC7, 8N1, polled |
-| `pic::Adc` | `begin()` `read(channel)` (10 bits) `fixed_reference_on(gain)`; channels `temperature`, `dac`, `fixed_reference` besides the pins |
+| `pic::Adc` | `begin()` `read(channel)` (10 bits) `fixed_reference_on(gain)`; channels `temperature`, `dac`, `fixed_reference` besides the pins. `read` restarts a conversion the part loses (PIC16F193x errata DS80000479), so it cannot hang; so do the Rust and Zig libraries |
 | `pic::Eeprom` | `read(address)` `write(address, value)` `update(address, value)` (writes only a changed byte) |
 | `pic::Timer0` | `begin(shift, interrupts)` `count()` `wrapped()` |
 | `pic::enable_interrupts()` `disable_interrupts()`, `pic::CriticalSection` | The last turns interrupts off for the life of the object and restores them |
@@ -192,7 +192,7 @@ C++23: the LCD glass with each segment a type, an I2C master that reports
 errors with `std::expected`, the MCP9800 sensor over a bus concept, a
 clock on the watch crystal that runs while the processor sleeps, and
 tests of the drivers that run in the compiler as `static_assert`. It is
-2,359 words at `-Os`; its README says what each file shows and costs.
+2,365 words at `-Os`; its README says what each file shows and costs.
 
 ### Tests
 

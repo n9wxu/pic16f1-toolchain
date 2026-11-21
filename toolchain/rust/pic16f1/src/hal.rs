@@ -215,9 +215,20 @@ impl Adc {
         for _ in 0..8 {
             crate::nop();
         }
-        adcon0::GO_nDONE.set();
-        while adcon0::GO_nDONE.is_set() {}
-        ADRES.read()
+        // A conversion takes at most 200 instruction cycles. One that has
+        // not finished in several times that never will: the PIC16F193x
+        // can lose one (errata DS80000479: with the converter's own RC
+        // clock when not asleep, or above 8 MHz). It is stopped and
+        // started again.
+        loop {
+            adcon0::GO_nDONE.set();
+            for _ in 0..255u8 {
+                if !adcon0::GO_nDONE.is_set() {
+                    return ADRES.read();
+                }
+            }
+            adcon0::GO_nDONE.clear();
+        }
     }
 }
 
