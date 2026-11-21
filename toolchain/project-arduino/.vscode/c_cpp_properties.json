@@ -1,0 +1,17 @@
+{
+    // For the editor only (completion, go to definition): the compiler is
+    // the toolchain's, run by the build task.
+    "version": 4,
+    "configurations": [
+        {
+            "name": "@DEVICE_UPPER@",
+            "includePath": [ "${workspaceFolder}/**", "@ARDUINO@/cores/pic16f1", "@ARDUINO@/variants/@DEVICE@",
+                             "@ARDUINO@/libraries/*/src", "@INCLUDE@", "@CLANG_INCLUDE@" ],
+            "defines": [ "__@DEVICE_UPPER@__", "__pic16f1__", "F_CPU=16000000UL", "ARDUINO=10800" ],
+            "forcedInclude": [ "@ARDUINO@/cores/pic16f1/Arduino.h" ],
+            "cppStandard": "gnu++17",
+            "compilerPath": "",
+            "intelliSenseMode": "clang-arm"
+        }
+    ]
+}

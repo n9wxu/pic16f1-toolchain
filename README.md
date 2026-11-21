@@ -24,7 +24,7 @@ gates G0 to G2.
 | 4 | LLVM backend, C working | done: 98.7% of the GCC C torture tests that build pass, picolibc builds and its tests pass |
 | 5 | Optimization | every benchmark no larger and no slower than XC8 at each of its levels; in total 0.73 of XC8's size at `-Os` |
 | 6 | Debugging | LLDB with a PIC16F1 plugin, on the simulator and on the part; VS Code projects (`pic16f1-new-project`) |
-| 7 | Other languages | C++, Rust, Zig and Forth ([docs/languages.md](docs/languages.md)); a catalog of others ([docs/language-catalog.md](docs/language-catalog.md)) |
+| 7 | Other languages | C++, Rust, Zig and Forth ([docs/languages.md](docs/languages.md)); Arduino sketches ([docs/arduino.md](docs/arduino.md)); a catalog of others ([docs/language-catalog.md](docs/language-catalog.md)) |
 | 8 | Releases | For macOS, Linux and Windows: the toolchain as an archive, and as a VS Code extension that installs it and builds and debugs projects ([docs/install.md](docs/install.md)) |
 
 ## Layout

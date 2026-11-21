@@ -119,6 +119,9 @@ jobs:
           scripts/build-cxx.sh
           scripts/test-cxx.sh
 
+      - name: The Arduino core
+        run: scripts/test-arduino.sh
+
       - name: Compiler tests
         env:
           PIC16F1_CC: build/toolchain/bin/pic16f1-cc

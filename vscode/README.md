@@ -1,6 +1,6 @@
 # PIC16F1 Toolchain
 
-C, C++, Rust, Zig and Forth for Microchip's PIC16F1 microcontrollers (the
+C, C++, Rust, Zig, Forth and Arduino sketches for Microchip's PIC16F1 microcontrollers (the
 enhanced mid-range core: PIC16F1937, PIC16F18877 and their like), with a
 simulator and a debugger. Installing this extension installs all of it:
 the compiler (Clang and LLVM with a code generator written for this
@@ -25,7 +25,7 @@ its programs on their PATH: `pic16f1-cc`, `pic16f1-build`, `pic16f1-sim`,
 
 | | |
 |---|---|
-| **PIC16F1: New Project...** | A project in C, C++, Rust or Zig for a device, with a Makefile for use outside the editor |
+| **PIC16F1: New Project...** | A project in C, C++, Rust or Zig, or an Arduino sketch, for a device, with a Makefile for use outside the editor |
 | **PIC16F1: Build** (F7), **Clean** | Also as tasks (Terminal > Run Build Task) |
 | **PIC16F1: Debug on the Simulator** | The same as F5 with "Debug on the simulator" |
 | **PIC16F1: Debug on the Part (Probe)** | Programs the part through OpenOCD and debugs it there |

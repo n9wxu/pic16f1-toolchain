@@ -21,7 +21,7 @@ cat "$tree/VERSION"
 "$bin/clang$exe" --version | head -1
 
 # Projects, as pic16f1-new-project makes them and pic16f1-build builds them.
-for lang in c c++; do
+for lang in c c++ arduino; do
     "$bin/pic16f1-new-project$exe" --language $lang "$tmp/p-$lang" > /dev/null
     "$bin/pic16f1-build$exe" "$tmp/p-$lang" > "$tmp/build.out" || { cat "$tmp/build.out"; fail "building a $lang project"; }
     grep -q "words of flash used" "$tmp/build.out" || fail "no size from a $lang project"

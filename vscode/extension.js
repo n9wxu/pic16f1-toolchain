@@ -26,6 +26,7 @@ const LANGUAGES = [
     { label: 'C++', id: 'c++', description: 'without exceptions and run-time type information' },
     { label: 'Rust', id: 'rust', description: 'needs rustup; core only' },
     { label: 'Zig', id: 'zig', description: 'needs Zig 0.15 on the PATH' },
+    { label: 'Arduino', id: 'arduino', description: 'a sketch: setup, loop, Serial, Wire, SPI, EEPROM' },
 ];
 const OPTIMIZATIONS = [
     { label: '-O1', description: 'small and fast, and still easy to follow in the debugger' },

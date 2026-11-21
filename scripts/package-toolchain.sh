@@ -67,9 +67,11 @@ cp -R "$root/toolchain/zig/." "$out/share/pic16f1/zig/"
 rm -rf "$out/share/pic16f1/project" "$out"/share/pic16f1/project-*
 mkdir -p "$out/share/pic16f1"
 cp -R "$root/toolchain/project" "$out/share/pic16f1/project"
-for lang in c++ rust zig; do
+for lang in c++ rust zig arduino; do
     cp -R "$root/toolchain/project-$lang" "$out/share/pic16f1/project-$lang"
 done
+rm -rf "$out/share/pic16f1/arduino"
+cp -R "$root/toolchain/arduino" "$out/share/pic16f1/arduino"
 mkdir -p "$out/share/pic16f1/svd"
 cp "$root"/toolchain/svd/*.svd "$out/share/pic16f1/svd/"
 # The C library, if it was built somewhere else than in this tree.

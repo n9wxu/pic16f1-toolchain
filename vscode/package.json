@@ -1,8 +1,8 @@
 {
   "name": "pic16f1-toolchain",
   "displayName": "PIC16F1 Toolchain",
-  "description": "C, C++, Rust, Zig and Forth for PIC16F1 microcontrollers: compiler, simulator and debugger in one install.",
-  "version": "0.2.0",
+  "description": "C, C++, Rust, Zig, Forth and Arduino sketches for PIC16F1 microcontrollers: compiler, simulator and debugger in one install.",
+  "version": "0.3.0",
   "publisher": "pic16f1",
   "license": "Apache-2.0 WITH LLVM-exception",
   "engines": { "vscode": "^1.90.0" },

@@ -12,9 +12,9 @@ __doc__ = """Build a PIC16F1 project: what `make` does in one, without make.
     pic16f1-build [build|clean|size|list|sim|debug|info] [options] [directory]
 
 The directory (the current one if none is named) is a project as
-pic16f1-new-project makes them, in C, C++, Rust, Zig or Forth; which it is
-shows from what is in it (Cargo.toml, main.zig, a .fth file, or C and C++
-sources). The program is built to build/NAME.hex and build/NAME.elf with
+pic16f1-new-project makes them, in C, C++, Rust, Zig or Forth, or an
+Arduino sketch; which it is shows from what is in it (Cargo.toml, main.zig,
+a .fth file, a .ino file, or C and C++ sources). The program is built to build/NAME.hex and build/NAME.elf with
 debug information.
 
     build   (the default) compile and link; print the flash words used
@@ -31,11 +31,12 @@ debug information.
     --mode MODE     Zig's build mode (ReleaseSmall)
     --debugger      build for an in-circuit debugger on the part (-mdebugger)
     --name NAME     the program's name (the directory's)
+    --f-cpu HZ      an Arduino sketch's oscillator frequency (16000000)
     --port N        the simulator's port for `sim` (3333)
     -- FLAGS        more options for the compiler
 
 What is not given is taken from the project's Makefile, if it has one
-(its DEVICE, OPT, MODE, NAME and CFLAGS), so that this and `make` build
+(its DEVICE, OPT, MODE, NAME, CFLAGS and F_CPU), so that this and `make` build
 the same program. It is for systems without make (Windows) and for editors: the
 VS Code extension builds with it.
 """
@@ -64,6 +65,7 @@ def tool(name):
         return [sys.executable, path]
     repo = os.path.normpath(os.path.join(HERE, "..", ".."))
     for c in (os.environ.get("PIC16F1_SIM") if name == "pic16f1-sim" else None,
+              os.path.join(os.environ["PIC16F1_LLVM_BIN"], name + EXE) if os.environ.get("PIC16F1_LLVM_BIN") else None,
               path + EXE,
               os.path.join(repo, "sim", "target", "release", name + EXE) if name == "pic16f1-sim" else None,
               os.path.join(repo, "build", "llvm-build", "bin", name + EXE)):
@@ -93,6 +95,8 @@ def language_of(directory):
         return "zig"
     if glob.glob(os.path.join(directory, "*.fth")):
         return "forth"
+    if glob.glob(os.path.join(directory, "*.ino")):
+        return "arduino"
     return "c"
 
 
@@ -145,6 +149,179 @@ def build_rust(o):
     run(tool("pic16f1-sim") + ["elf2hex", o.elf, o.hex])
 
 
+# ---- Arduino sketches ---------------------------------------------------------
+NOT_FUNCTIONS = {"if", "else", "while", "for", "switch", "return", "do", "class", "struct", "union", "enum",
+                 "namespace", "typedef", "new", "delete", "operator", "using", "template", "case", "sizeof"}
+
+
+def blanked(text):
+    """The text with comments, strings and character constants turned to
+    spaces (new lines kept), so that what is left is code and every
+    character is where it was."""
+    def spaces(m):
+        return re.sub(r"[^\n]", " ", m.group(0))
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', spaces, text, flags=re.S)
+
+
+def sketch_functions(text):
+    """(offset, prototype) of each function defined at the top level of a
+    sketch, in order; no prototype for the ones <Arduino.h> declares."""
+    code = blanked(text)
+    found = []
+    depth = 0
+    starts = {m.start(): m for m in re.finditer(
+        r"^[ \t]*((?:[A-Za-z_][\w:<>,\[\]]*[ \t*&]+)+)([A-Za-z_]\w*)[ \t]*\(([^(){};]*)\)[ \t\r\n]*\{", code, re.M)}
+    for i, ch in enumerate(code):
+        if depth == 0 and i in starts:
+            m = starts[i]
+            words = set(re.findall(r"[A-Za-z_]\w*", m.group(1))) | {m.group(2)}
+            if not words & NOT_FUNCTIONS:
+                # (A default argument is said once, where the function is;
+                # setup and loop are declared by <Arduino.h>.)
+                params = re.sub(r"\s*=[^,]*", "", " ".join(m.group(3).split()))
+                proto = f"{' '.join(m.group(1).split())} {m.group(2)}({params});"
+                found.append((i, None if m.group(2) in ("setup", "loop", "main") else proto))
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    return found
+
+
+def sketch_to_cpp(inos, out):
+    """One C++ source from the .ino files of a sketch, as the Arduino IDE
+    makes it: <Arduino.h> first, and every function declared before the
+    first is defined, so that their order does not matter. #line keeps the
+    compiler's messages pointing into the .ino files."""
+    def quoted(path):
+        return path.replace("\\", "/")
+    texts = [(f, open(f, encoding="utf-8", errors="replace").read()) for f in inos]
+    protos = [p for _, t in texts for _, p in sketch_functions(t) if p]
+    first, text = texts[0]
+    here = sketch_functions(text)
+    at = here[0][0] if here else len(text)
+    line = text.count("\n", 0, at) + 1
+    parts = ["#include <Arduino.h>\n", f'#line 1 "{quoted(first)}"\n', text[:at]]
+    parts += [p + "\n" for p in protos]
+    parts += [f'#line {line} "{quoted(first)}"\n', text[at:], "\n"]
+    for f, t in texts[1:]:
+        parts += [f'#line 1 "{quoted(f)}"\n', t, "\n"]
+    new = "".join(parts)
+    try:
+        if open(out, encoding="utf-8").read() == new:
+            return
+    except OSError:
+        pass
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(new)
+
+
+def arduino_home():
+    for c in (os.path.join(HERE, "..", "share", "pic16f1", "arduino"), os.path.join(HERE, "..", "arduino")):
+        if os.path.exists(os.path.join(c, "cores", "pic16f1", "Arduino.h")):
+            return os.path.normpath(c)
+    fail("cannot find the Arduino core (cores/pic16f1/Arduino.h)")
+
+
+def arduino_libraries(sources, places):
+    """The libraries the sources include, and the ones those include: for
+    #include <Name.h>, the first place with Name/src/Name.h or
+    Name/Name.h."""
+    used, seen, todo = [], set(), list(sources)
+    while todo:
+        src = todo.pop()
+        try:
+            text = open(src, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        for header in re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', text, re.M):
+            name = os.path.splitext(os.path.basename(header))[0]
+            if name in seen:
+                continue
+            for place in places:
+                for d in (os.path.join(place, name, "src"), os.path.join(place, name)):
+                    if os.path.exists(os.path.join(d, os.path.basename(header))):
+                        seen.add(name)
+                        used.append(d)
+                        todo += [os.path.join(d, f) for f in sorted(os.listdir(d))
+                                 if f.endswith((".h", ".hpp", ".cpp", ".c"))]
+                        break
+                if name in seen:
+                    break
+    return used
+
+
+def build_arduino(o):
+    home = arduino_home()
+    core = os.path.join(home, "cores", "pic16f1")
+    variant = os.path.join(home, "variants", o.device)
+    if not os.path.isdir(variant):
+        have = ", ".join(sorted(os.listdir(os.path.join(home, "variants"))))
+        fail(f"the Arduino core has no pins for the {o.device} (it has: {have})")
+    # The sketch: NAME.ino first if there is one, as the directory is named.
+    inos = sorted(glob.glob("*.ino"))
+    main = os.path.basename(os.getcwd()) + ".ino"
+    if main in inos:
+        inos.remove(main)
+        inos.insert(0, main)
+    work = os.path.join("build", "arduino")
+    os.makedirs(work, exist_ok=True)
+    sketch = os.path.join(work, o.name + ".ino.cpp")
+    sketch_to_cpp([os.path.abspath(f) for f in inos], sketch)
+    more = sources(["*.cpp", "*.cc", "*.c", "*.S"])
+
+    places = [os.path.abspath("libraries"), os.path.join(home, "libraries")]
+    places += [p for p in os.environ.get("PIC16F1_ARDUINO_LIBRARIES", "").split(os.pathsep) if p]
+    places.append(os.path.join(os.path.expanduser("~"), "Documents", "Arduino", "libraries"))
+    libraries = arduino_libraries([os.path.abspath(f) for f in inos + more], [p for p in places if os.path.isdir(p)])
+
+    common = [f"-mcpu={o.device}", o.opt or "-Os", "-g", f"-DF_CPU={o.f_cpu}UL", "-DARDUINO=10800",
+              "-I", core, "-I", variant] + [x for d in libraries for x in ("-I", d)]
+    common += (["-mdebugger"] if o.debugger else []) + o.extra
+    flags = {True: ["-std=gnu++17"], False: ["-std=gnu11", "--libc"]}
+    stamp = " ".join(common)
+
+    def compiled(src, obj_dir, headers):
+        """The object of a source, compiled if it is not up to date (the
+        source, a header beside it, or the options changed)."""
+        os.makedirs(obj_dir, exist_ok=True)
+        obj = os.path.join(obj_dir, os.path.basename(src) + ".o")
+        said = obj + ".flags"
+        try:
+            fresh = (open(said).read() == stamp and
+                     os.path.getmtime(obj) >= max(os.path.getmtime(f) for f in [src] + headers))
+        except OSError:
+            fresh = False
+        if not fresh:
+            cxx = not src.endswith((".c", ".S"))
+            run(tool("pic16f1-cc") + common + flags[cxx] + ["-flto", "-c", src, "-o", obj])
+            with open(said, "w") as f:
+                f.write(stamp)
+        return obj
+
+    def headers_of(*dirs):
+        return [os.path.join(d, f) for d in dirs for f in os.listdir(d) if f.endswith((".h", ".hpp"))]
+
+    # The core, as a library: the linker takes from it what the sketch
+    # uses (the serial port's interrupt code only with Serial, and so on).
+    core_headers = headers_of(core, variant)
+    members = [compiled(os.path.join(core, f), os.path.join(work, "core"), core_headers)
+               for f in sorted(os.listdir(core)) if f.endswith((".cpp", ".c"))]
+    archive = os.path.join(work, "core.a")
+    if not os.path.exists(archive) or any(os.path.getmtime(m) > os.path.getmtime(archive) for m in members):
+        if os.path.exists(archive):
+            os.remove(archive)
+        run(tool("llvm-ar") + ["rcs", archive] + members)
+    objects = []
+    for n, d in enumerate(libraries):
+        lib_headers = core_headers + headers_of(d)
+        objects += [compiled(os.path.join(d, f), os.path.join(work, f"lib{n}-" + os.path.basename(os.path.dirname(d) if os.path.basename(d) == "src" else d)), lib_headers)
+                    for f in sorted(os.listdir(d)) if f.endswith((".cpp", ".c"))]
+    local = [os.path.abspath(f) for f in sources(["*.h", "*.hpp"])]
+    objects += [compiled(os.path.abspath(f), os.path.join(work, "sketch"), core_headers + local) for f in more]
+    run(tool("pic16f1-cc") + common + flags[True] + ["-I", os.getcwd(), "-o", o.hex, sketch] + objects + [archive])
+
+
 def build(o):
     os.makedirs("build", exist_ok=True)
     flags = ["-g"] + ([o.opt] if o.opt else []) + [f"-mcpu={o.device}"] + (["-mdebugger"] if o.debugger else [])
@@ -153,6 +330,8 @@ def build(o):
         build_rust(o)
     elif o.language == "zig":
         run(tool("pic16f1-zig") + ["-g", "-O", o.mode] + flags[1:] + o.extra + ["-o", o.hex, "main.zig"] + sources(["*.c"]))
+    elif o.language == "arduino":
+        build_arduino(o)
     elif o.language == "forth":
         main = "main.fth" if os.path.exists("main.fth") else sources(["*.fth"])[0]
         run(tool("pic16f1-forth") + flags + o.extra + ["-o", o.hex, main])
@@ -179,7 +358,7 @@ class Options:
 def main():
     args = sys.argv[1:]
     o = Options()
-    o.device = o.opt = o.mode = o.name = None
+    o.device = o.opt = o.mode = o.name = o.f_cpu = None
     o.debugger = False
     o.extra = []
     port = "3333"
@@ -192,12 +371,12 @@ def main():
         if a == "--":
             o.extra = args
             break
-        if a in ("--device", "--opt", "--mode", "--name", "--port") and args:
+        if a in ("--device", "--opt", "--mode", "--name", "--port", "--f-cpu") and args:
             value = args.pop(0)
             if a == "--port":
                 port = value
             else:
-                setattr(o, a[2:], value)
+                setattr(o, a[2:].replace("-", "_"), value)
         elif a == "--debugger":
             o.debugger = True
         elif a in ("build", "clean", "size", "list", "sim", "debug", "info") and command is None and directory is None:
@@ -219,6 +398,7 @@ def main():
         o.device = "pic" + o.device
     o.opt = o.opt or made.get("OPT")
     o.mode = o.mode or made.get("MODE") or "ReleaseSmall"
+    o.f_cpu = re.sub(r"[UuLl]+$", "", o.f_cpu or made.get("F_CPU") or "16000000")
     o.name = o.name or made.get("NAME") or re.sub(r"[^A-Za-z0-9_-]", "-", os.path.basename(directory)) or "program"
     if made.get("CFLAGS") and o.language != "rust":
         import shlex
@@ -229,7 +409,7 @@ def main():
     if command == "info":
         import json
         print(json.dumps({"directory": directory, "language": o.language, "device": o.device, "name": o.name,
-                          "optimization": o.opt or ("-Os" if o.language == "rust" else "" if o.language == "zig" else "-O1"),
+                          "optimization": o.opt or ("-Os" if o.language in ("rust", "arduino") else "" if o.language == "zig" else "-O1"),
                           "hex": os.path.join(directory, o.hex), "elf": os.path.join(directory, o.elf)}))
         return 0
     if command == "clean":

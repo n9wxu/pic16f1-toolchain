@@ -9,7 +9,7 @@ exec python3 "$0" "$@"
 '''
 __doc__ = """Start a project for a PIC16F1 device.
 
-    pic16f1-new-project [--language c|c++|rust|zig] [--device pic16f1937]
+    pic16f1-new-project [--language c|c++|rust|zig|arduino] [--device pic16f1937]
                         [--openocd DIR] <directory>
 
 Makes the directory with a small program, a Makefile, and a VS Code setup
@@ -47,8 +47,8 @@ def main():
             device = args.pop(0).lower()
         elif a == "--language" and args:
             language = args.pop(0).lower().replace("cpp", "c++").replace("cxx", "c++")
-            if language not in ("c", "c++", "rust", "zig"):
-                sys.exit("pic16f1-new-project: --language is c, c++, rust or zig")
+            if language not in ("c", "c++", "rust", "zig", "arduino"):
+                sys.exit("pic16f1-new-project: --language is c, c++, rust, zig or arduino")
         elif a == "--openocd" and args:
             openocd = os.path.abspath(args.pop(0))
         elif a.startswith("-") or target:
@@ -95,13 +95,18 @@ def main():
     for c in (os.path.join(HERE, "..", "share", "pic16f1", "rust"), os.path.join(HERE, "..", "rust")):
         if os.path.isdir(c):
             rust = os.path.normpath(c)
+    arduino = ""
+    for c in (os.path.join(HERE, "..", "share", "pic16f1", "arduino"), os.path.join(HERE, "..", "arduino")):
+        if os.path.isdir(c):
+            arduino = os.path.normpath(c)
     if language == "rust":
         # A cargo package name.
         name = re.sub(r"[^a-z0-9_-]", "-", name.lower())
     values = {"NAME": name, "DEVICE": device, "DEVICE_UPPER": device.upper(), "TOOLCHAIN": HERE,
               "INCLUDE": include, "CLANG_INCLUDE": clang_inc, "OPENOCD": openocd,
               "SVD": os.path.join(svd_dir, device + ".svd"), "RUST": rust,
-              "LANGUAGE": {"c": "C", "c++": "C++", "rust": "Rust", "zig": "Zig"}[language]}
+              "ARDUINO": arduino,
+              "LANGUAGE": {"c": "C", "c++": "C++", "rust": "Rust", "zig": "Zig", "arduino": "Arduino"}[language]}
     if os.name == "nt":
         # Paths go into JSON, TOML and a Makefile, where a backslash means
         # something else; Windows takes the other slash as well.
@@ -118,6 +123,8 @@ def main():
                 text = open(os.path.join(folder, f), encoding="utf-8").read()
                 text = re.sub(r"@([A-Z_]+)@", lambda m: values.get(m.group(1), m.group(0)), text)
                 # (Stored as "gitignore" so that it does not act on the template.)
+                # (A sketch's file is named as its folder is.)
+                f = f.replace("@NAME@", name)
                 with open(os.path.join(out, ".gitignore" if f == "gitignore" else f), "w", encoding="utf-8",
                           newline="\n") as o:
                     o.write(text)
