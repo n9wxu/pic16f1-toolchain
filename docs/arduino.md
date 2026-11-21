@@ -159,8 +159,8 @@ at `-Os` as a whole program) and for the PIC16F1937 (`-Os`, 16 MHz).
 
 A word of this part is 14 bits, so the fifth column is what the same code
 would be in bytes. Counted that way the PIC16F1 program is smaller than
-the AVR's in every sketch without floating point or 32-bit arithmetic, by
-a third to a half; as a share of the part it is about the same, because
+the AVR's in every sketch without floating point, by a fifth to more
+than a half; as a share of the part it is about the same, because
 the part is smaller. Floating point reverses it (ReadAnalogVoltage, Bench):
 the AVR has a multiplier and a hand-written floating-point library, and
 this toolchain's is compiled C. The Nano's RAM figure is its globals (its
