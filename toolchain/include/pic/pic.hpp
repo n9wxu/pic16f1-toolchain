@@ -255,10 +255,19 @@ struct Eeprom {
         EECON1bits.RD = 1;
         return EEDATL;
     }
-    // Takes about 4 ms; waits for it. Interrupts are off for the two
+    // Takes about 4 ms; waits for it. Interrupts are off for the
     // instructions that unlock the write.
+    //
+    // The two values that unlock a write are never loaded as constants where
+    // EECON2 is written: a program that has lost its way and lands there
+    // would then write. They are put in two variables first (arming the
+    // write), the unlock copies them from there, and they are cleared
+    // after; code reached by accident finds zeros, and nothing is written.
+    static inline volatile uint8_t key1, key2;
     static void write(uint8_t address, uint8_t value)
     {
+        key1 = 0x55;
+        key2 = 0xAA;
         EEADRL = address;
         EEDATL = value;
         EECON1bits.EEPGD = 0;
@@ -266,10 +275,13 @@ struct Eeprom {
         EECON1bits.WREN = 1;
         {
             CriticalSection quiet;
-            EECON2 = 0x55;
-            EECON2 = 0xAA;
+            uint8_t first = key1, second = key2;
+            EECON2 = first;
+            EECON2 = second;
             EECON1bits.WR = 1;
         }
+        key1 = 0;
+        key2 = 0;
         while (EECON1bits.WR) {
         }
         EECON1bits.WREN = 0;

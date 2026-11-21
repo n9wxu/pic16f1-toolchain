@@ -181,7 +181,7 @@ int main()
 | `pic::delay_ms(n)` `delay_us(n)` `delay_cycles(n)` | At least the time asked for; with a constant, computed by the compiler |
 | `pic::Uart` | `begin(baud)` `write(byte)` `write(text)` `print(number)` `print_hex(byte)` `flush()` `available()` `read()`; the EUSART on RC6 and RC7, 8N1, polled |
 | `pic::Adc` | `begin()` `read(channel)` (10 bits) `fixed_reference_on(gain)`; channels `temperature`, `dac`, `fixed_reference` besides the pins. `read` restarts a conversion the part loses (PIC16F193x errata DS80000479), so it cannot hang; so do the Rust and Zig libraries |
-| `pic::Eeprom` | `read(address)` `write(address, value)` `update(address, value)` (writes only a changed byte) |
+| `pic::Eeprom` | `read(address)` `write(address, value)` `update(address, value)` (writes only a changed byte). The unlock values are armed in two variables, copied to `EECON2` from there and cleared after, never loaded as constants at the write: code reached by accident writes nothing. The same in the Rust and Zig libraries |
 | `pic::Timer0` | `begin(shift, interrupts)` `count()` `wrapped()` |
 | `pic::enable_interrupts()` `disable_interrupts()`, `pic::CriticalSection` | The last turns interrupts off for the life of the object and restores them |
 
@@ -584,7 +584,7 @@ On the PIC16F1937:
 |---|---|
 | Toggle a pin for ever | 18 |
 | The LED counter above (66 in C) | 120 |
-| `tests/forth/hardware.fth`: delay, EEPROM, A/D converter | 569 |
+| `tests/forth/hardware.fth`: delay, EEPROM, A/D converter | 606 |
 | `tests/forth/features.fth`: every word, serial output, an interrupt handler | 3,407 |
 
 Forth code here is larger than C for the same work, by about two times

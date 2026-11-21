@@ -325,7 +325,19 @@ pub const Eeprom = struct {
     }
     /// Takes about 4 ms and waits for it. Interrupts are off for the
     /// instructions that unlock the write.
+    ///
+    /// The two values that unlock a write are never loaded as constants where
+    /// EECON2 is written: a program that has lost its way and lands there
+    /// would then write. They are put in two variables first (arming the
+    /// write), the unlock copies them from there, and they are cleared
+    /// after; code reached by accident finds zeros, and nothing is written.
+    var key1: u8 = 0;
+    var key2: u8 = 0;
     pub fn write(address: u8, value: u8) void {
+        const k1: *volatile u8 = &key1;
+        const k2: *volatile u8 = &key2;
+        k1.* = 0x55;
+        k2.* = 0xAA;
         device.EEADRL.* = address;
         device.EEDATL.* = value;
         device.EECON1bits.EEPGD = 0;
@@ -334,10 +346,14 @@ pub const Eeprom = struct {
         {
             const were = disableInterrupts();
             defer restoreInterrupts(were);
-            device.EECON2.* = 0x55;
-            device.EECON2.* = 0xAA;
+            const first = k1.*;
+            const second = k2.*;
+            device.EECON2.* = first;
+            device.EECON2.* = second;
             device.EECON1bits.WR = 1;
         }
+        k1.* = 0;
+        k2.* = 0;
         while (device.EECON1bits.WR == 1) {}
         device.EECON1bits.WREN = 0;
     }

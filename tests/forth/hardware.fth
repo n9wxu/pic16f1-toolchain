@@ -16,9 +16,17 @@ VARIABLE reference
 
 : ee@ ( address -- byte )
    EEADRL C!  EECON1 EEPGD BIT-CLR  EECON1 CFGS BIT-CLR  EECON1 RD BIT-SET  EEDATL C@ ;
+\ The two values that unlock a write are not loaded as constants where
+\ EECON2 is written (a program that has lost its way and lands there would
+\ then write): they are put in two variables first, copied from there,
+\ and cleared after.
+VARIABLE ee-key1
+VARIABLE ee-key2
 : ee! ( byte address -- )
+   $55 ee-key1 C!  $AA ee-key2 C!
    EEADRL C!  EEDATL C!  EECON1 EEPGD BIT-CLR  EECON1 CFGS BIT-CLR  EECON1 WREN BIT-SET
-   $55 EECON2 C!  $AA EECON2 C!  EECON1 WR BIT-SET
+   ee-key1 C@  ee-key2 C@  SWAP EECON2 C!  EECON2 C!  EECON1 WR BIT-SET
+   0 ee-key1 C!  0 ee-key2 C!
    BEGIN EECON1 WR BIT? 0= UNTIL  EECON1 WREN BIT-CLR ;
 : ee-update ( byte address -- )  2DUP ee@ = IF 2DROP ELSE ee! THEN ;
 
