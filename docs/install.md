@@ -13,10 +13,10 @@ A release is, for each system, two files that hold the same thing:
 What is in it: Clang and LLD with the PIC16F1 code generator, the LLVM
 tools, the simulator, LLDB and its debug adapter, the device headers,
 linker scripts and register descriptions, the runtime library, picolibc,
-the C++ standard library's headers, the Rust and Zig device libraries, the
+the C++ standard library's headers, the Rust and Zig device libraries, the Arduino core ([arduino.md](arduino.md)), the
 Forth compiler, the project templates, and a Python for the drivers
 (`pic16f1-cc` and the others are Python scripts). It needs nothing else
-installed for C, C++ and Forth; Rust needs `rustup` and Zig needs Zig 0.15
+installed for C, C++, Forth and Arduino sketches; Rust needs `rustup` and Zig needs Zig 0.15
 (see [languages.md](languages.md)).
 
 ## With VS Code
@@ -43,7 +43,7 @@ macOS nor Windows sees a downloaded program.
 Unpack the archive anywhere and put its `bin` on the PATH:
 
 ```sh
-tar -xzf pic16f1-toolchain-0.2.0-linux-x86_64.tar.gz
+tar -xzf pic16f1-toolchain-0.3.0-linux-x86_64.tar.gz
 export PATH=$PWD/pic16f1-toolchain/bin:$PATH
 pic16f1-new-project --device pic16f1937 blink
 pic16f1-build blink          # or: cd blink && make

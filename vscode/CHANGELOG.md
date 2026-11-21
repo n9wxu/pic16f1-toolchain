@@ -1,6 +1,6 @@
 # Changes
 
-## 0.3.0 (not yet released)
+## 0.3.0
 
 - Arduino sketches: **New Project...** offers Arduino, and a folder with a
   `.ino` file builds and debugs like any other project.
