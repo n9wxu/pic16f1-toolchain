@@ -1,0 +1,6 @@
+{
+    "pic16f1.device": "pic16f1937",
+    "pic16f1.optimization": "-Os",
+    "pic16f1.vdd": "3300",
+    "C_Cpp.errorSquiggles": "disabled"
+}

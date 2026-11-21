@@ -1,0 +1,13 @@
+{
+    // Needs the "PIC16F1 Toolchain" extension. The simulator has no
+    // timer 1, LCD or I2C, so this program is debugged on the board.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug on the board (probe)",
+            "type": "pic16f1",
+            "request": "launch",
+            "target": "probe"
+        }
+    ]
+}
