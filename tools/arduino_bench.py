@@ -104,13 +104,15 @@ def main():
         out.append("")
 
         pic = {}
-        for hz in ("16000000", "32000000"):
-            run([build, "build", "--f-cpu", hz, os.path.join(work, "Bench")])
+        for hz, math in (("16000000", "small"), ("32000000", "small"), ("16000000", "fast")):
+            text = run([build, "build", "--f-cpu", hz, "--math", math, os.path.join(work, "Bench")])
+            if math == "fast":
+                fast_words = int(re.search(r"(\d+) words of flash used", text).group(1))
             r = subprocess.run([sim, "run", "--max-cycles", "1000000000", os.path.join(work, "Bench", "build", "Bench.elf")],
                                capture_output=True, text=True)
             if r.returncode != 90:
                 sys.exit(f"Bench on the PIC simulator at {hz}: exit code {r.returncode}\n{r.stdout}")
-            pic[hz] = times(r.stdout)
+            pic[hz if math == "small" else "fast"] = times(r.stdout)
         avr = None
         if avrrun:
             r = subprocess.run([avrrun, os.path.join(tmp, "avr-Bench", "Bench.ino.hex")], capture_output=True, text=True)
@@ -125,17 +127,18 @@ def main():
             return f"{us / 1000:.2f}"
         head = "| Piece of Bench | "
         if avr:
-            out += [head + "Nano, 16 MHz: ms | PIC16F1937, 16 MHz: ms | times the Nano | PIC16F1937, 32 MHz: ms | times the Nano |",
-                    "|---|---|---|---|---|---|"]
+            out += [head + "Nano, 16 MHz: ms | PIC16F1937, 16 MHz: ms | times the Nano | with `--math fast`: ms | times the Nano | PIC16F1937, 32 MHz: ms | times the Nano |",
+                    "|---|---|---|---|---|---|---|---|"]
         else:
             out += [head + "PIC16F1937, 16 MHz: ms | PIC16F1937, 32 MHz: ms |", "|---|---|---|"]
         for name, note in NOTES.items():
-            p16, p32 = pic["16000000"][name][1], pic["32000000"][name][1]
+            p16, p32, pf = pic["16000000"][name][1], pic["32000000"][name][1], pic["fast"][name][1]
             if avr:
                 a = avr[name][1]
-                out.append(f"| {note} | {ms(a)} | {ms(p16)} | {p16 / a:.1f} | {ms(p32)} | {p32 / a:.1f} |")
+                out.append(f"| {note} | {ms(a)} | {ms(p16)} | {p16 / a:.1f} | {ms(pf)} | {pf / a:.1f} | {ms(p32)} | {p32 / a:.1f} |")
             else:
                 out.append(f"| {note} | {ms(p16)} | {ms(p32)} |")
+    out += ["", f"Bench with `--math fast` is {fast_words:,} words."]
     text = "\n".join(out) + "\n"
     print(text)
     if markdown:

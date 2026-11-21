@@ -107,6 +107,7 @@ compiles and fits is another matter.
 | `digitalWrite` on a pin with PWM | Does not turn the PWM off; `analogWrite(pin, 0)` and `analogWrite(pin, 255)` are low and high |
 | `delay` | Counted on timer 0, so interrupts do not lengthen it. `delayMicroseconds` is counted in instructions, and the timer's interrupt lengthens it by about 7% |
 | `millis` and `micros` at slower clocks | The timer's interrupt takes some 280 instruction cycles, so it comes every 4,096 cycles at 16 MHz and below: every 1.024 ms at 16 and 32 MHz (as on an AVR), every 4 ms at 4 MHz, every 16 ms at 1 MHz. `millis` steps by that much; `micros` by 4 us at 16 and 32 MHz, 16 us at 4 MHz |
+| Arithmetic | `MATH = fast` in the project's Makefile (or `--math fast`) links the fast arithmetic library: multiplication, 32-bit division and float multiplication and division one and a half to three times as fast, for more flash |
 | The oscillator | The internal one, at `F_CPU`: 16 MHz unless the project's Makefile or `--f-cpu` says 32, 8, 4, 2 or 1 MHz or 500 kHz |
 | An interrupt handler of your own | The core has the part's one handler (the timer, `Serial`, `attachInterrupt`). A sketch that needs another is better written without the core |
 
@@ -167,18 +168,18 @@ this toolchain's is compiled C. The Nano's RAM figure is its globals (its
 stack is extra); the PIC's includes the fixed frames of its functions
 and leaves out the 32 bytes kept for the interrupt handler's.
 
-| Piece of Bench | Nano, 16 MHz: ms | PIC16F1937, 16 MHz: ms | times the Nano | PIC16F1937, 32 MHz: ms | times the Nano |
-|---|---|---|---|---|---|
-| 1,000 times `digitalWrite` high and low, the pin a constant | 9.31 | 4.52 | 0.5 | 2.22 | 0.2 |
-| the same, the pin in a variable | 9.60 | 33.78 | 3.5 | 16.52 | 1.7 |
-| 1,000 `digitalRead` | 3.00 | 6.10 | 2.0 | 2.98 | 1.0 |
-| 1,000 calls of `millis` | 1.03 | 8.74 | 8.5 | 4.28 | 4.1 |
-| CRC-8 of 1,024 bytes, bit by bit | 4.34 | 30.05 | 6.9 | 14.69 | 3.4 |
-| 1,000 16-bit multiplications, 200 divisions | 3.94 | 17.10 | 4.3 | 8.35 | 2.1 |
-| 1,000 32-bit multiplications, 200 divisions | 13.86 | 241.73 | 17.4 | 118.23 | 8.5 |
-| 500 terms of a series for pi | 20.94 | 509.14 | 24.3 | 249.00 | 11.9 |
-| the primes below 256, ten times | 6.96 | 68.68 | 9.9 | 33.60 | 4.8 |
-| 64 16-bit numbers, insertion sort | 1.68 | 8.74 | 5.2 | 4.26 | 2.5 |
+| Piece of Bench | Nano, 16 MHz: ms | PIC16F1937, 16 MHz: ms | times the Nano | with `--math fast`: ms | times the Nano | PIC16F1937, 32 MHz: ms | times the Nano |
+|---|---|---|---|---|---|---|---|
+| 1,000 times `digitalWrite` high and low, the pin a constant | 9.31 | 4.52 | 0.5 | 4.52 | 0.5 | 2.22 | 0.2 |
+| the same, the pin in a variable | 9.60 | 33.78 | 3.5 | 33.78 | 3.5 | 16.52 | 1.7 |
+| 1,000 `digitalRead` | 3.00 | 6.10 | 2.0 | 6.11 | 2.0 | 2.98 | 1.0 |
+| 1,000 calls of `millis` | 1.03 | 8.74 | 8.5 | 8.73 | 8.5 | 4.28 | 4.1 |
+| CRC-8 of 1,024 bytes, bit by bit | 4.34 | 30.05 | 6.9 | 30.05 | 6.9 | 14.69 | 3.4 |
+| 1,000 16-bit multiplications, 200 divisions | 3.94 | 17.10 | 4.3 | 17.06 | 4.3 | 8.35 | 2.1 |
+| 1,000 32-bit multiplications, 200 divisions | 13.86 | 241.73 | 17.4 | 154.89 | 11.2 | 118.23 | 8.5 |
+| 500 terms of a series for pi | 20.94 | 509.14 | 24.3 | 307.16 | 14.7 | 249.00 | 11.9 |
+| the primes below 256, ten times | 6.96 | 68.68 | 9.9 | 68.73 | 9.9 | 33.60 | 4.8 |
+| 64 16-bit numbers, insertion sort | 1.68 | 8.74 | 5.2 | 8.70 | 5.2 | 4.26 | 2.5 |
 
 Both run on simulators, not on the parts: `pic16f1-sim`, and simavr's
 ATmega328P (`tools/arduino-bench/build-avrrun.sh`). Each piece is timed by
@@ -188,7 +189,11 @@ up to 16 million, and the AVR's instructions do more, so a factor of four
 to seven is the parts themselves. Where the PIC16F1 is ahead is the pin
 that is a constant: one instruction here, a call and a table lookup on the
 AVR. Where it is furthest behind is 32-bit multiplication and floating
-point, which leave room in the runtime library.
+point, which the AVR does with its multiplier; `--math fast` (`MATH = fast`
+in the Makefile, Tools > Arithmetic in the Arduino IDE) links the fast
+arithmetic library, which takes those two rows from 17 and 24 times the
+Nano's to 11 and 15, for 962 words more in this sketch. See "Faster
+arithmetic" in [toolchain.md](toolchain.md).
 
 ## Tests
 

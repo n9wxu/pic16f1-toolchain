@@ -48,6 +48,12 @@ The linker counts the levels of the hardware return stack that the deepest
 chain of calls takes, and warns if they are more than the part's 16.
 -mstack-report prints the count and the chain.
 
+-mmath=fast links the fast arithmetic library ahead of the standard one:
+integer multiplication, 32-bit division and float multiplication and
+division that are one and a half to three times as fast, for some hundreds
+of words of flash more in a program that uses them. The results are the
+same. -mmath=small (the default) is the standard library alone.
+
 -mdebugger builds for an in-circuit debugger on the part itself: the
 program keeps out of the RAM the debugger uses and may not name the two port
 pins that are its clock and data lines (it also defines __DEBUG, as XC8
@@ -132,7 +138,7 @@ def main():
     output = None
     cpu = "pic16f1937"
     compile_only = asm_only = use_libc = unoptimized = debugger = False
-    preprocess_only = link_cxx = False
+    preprocess_only = link_cxx = fast_math = False
     no_libc = False
     model = None
     sources, objects, cflags, ldflags = [], [], [], []
@@ -158,6 +164,10 @@ def main():
                 sys.exit("pic16f1-cc: -mcmodel must be small or medium")
         elif a == "-munoptimized":
             unoptimized = True
+        elif a.startswith("-mmath="):
+            if a not in ("-mmath=fast", "-mmath=small"):
+                sys.exit("pic16f1-cc: -mmath must be fast or small")
+            fast_math = a == "-mmath=fast"
         elif a == "-mdebugger":
             debugger = True
         elif a == "-mstack-report":
@@ -342,6 +352,14 @@ def main():
             # The runtime library exists for each model. picolibc is built
             # for medium only, which is also correct in a small program.
             rt = [l.replace("libpicrt.a", "libpicrt-small.a") if small else l for l in libs]
+            if fast_math:
+                # Ahead of the standard library, whose routines of the same
+                # names are then not taken.
+                picfast = os.path.join(lib, "libpicfast-small.a" if small else "libpicfast.a")
+                if not os.path.exists(picfast):
+                    sys.exit(f"pic16f1-cc: -mmath=fast: no {picfast} (run scripts/build-runtime.sh)")
+                at = next(i for i, l in enumerate(rt) if os.path.basename(l).startswith("libpicrt"))
+                rt.insert(at, picfast)
             # The compiled part of the C++ standard library, ahead of the C
             # library it calls.
             cxxlib = os.path.join(lib, "libc++-small.a" if small else "libc++.a")

@@ -32,11 +32,13 @@ debug information.
     --debugger      build for an in-circuit debugger on the part (-mdebugger)
     --name NAME     the program's name (the directory's)
     --f-cpu HZ      an Arduino sketch's oscillator frequency (16000000)
+    --math KIND     fast: link the fast arithmetic library (-mmath=fast);
+                    small (the default): the standard one
     --port N        the simulator's port for `sim` (3333)
     -- FLAGS        more options for the compiler
 
 What is not given is taken from the project's Makefile, if it has one
-(its DEVICE, OPT, MODE, NAME, CFLAGS and F_CPU), so that this and `make` build
+(its DEVICE, OPT, MODE, NAME, CFLAGS, F_CPU and MATH), so that this and `make` build
 the same program. It is for systems without make (Windows) and for editors: the
 VS Code extension builds with it.
 """
@@ -358,7 +360,7 @@ class Options:
 def main():
     args = sys.argv[1:]
     o = Options()
-    o.device = o.opt = o.mode = o.name = o.f_cpu = None
+    o.device = o.opt = o.mode = o.name = o.f_cpu = o.math = None
     o.debugger = False
     o.extra = []
     port = "3333"
@@ -371,7 +373,7 @@ def main():
         if a == "--":
             o.extra = args
             break
-        if a in ("--device", "--opt", "--mode", "--name", "--port", "--f-cpu") and args:
+        if a in ("--device", "--opt", "--mode", "--name", "--port", "--f-cpu", "--math") and args:
             value = args.pop(0)
             if a == "--port":
                 port = value
@@ -403,6 +405,11 @@ def main():
     if made.get("CFLAGS") and o.language != "rust":
         import shlex
         o.extra = shlex.split(made["CFLAGS"]) + o.extra
+    o.math = o.math or made.get("MATH") or "small"
+    if o.math not in ("fast", "small"):
+        fail("--math is fast or small")
+    if o.math == "fast":
+        o.extra = ["-mmath=fast"] + o.extra
     o.hex = os.path.join("build", o.name + ".hex")
     o.elf = os.path.join("build", o.name + ".elf")
 

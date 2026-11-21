@@ -16,9 +16,12 @@ TOOLCHAIN ?= @TOOLCHAIN@
 DEVICE    ?= @DEVICE@
 OPT       ?= -Os
 F_CPU     ?= 16000000
+# fast: multiplication, division and floating point in a half to a third
+# of the time, for some hundreds of words more.
+MATH      ?= small
 NAME      := @NAME@
 
-BUILD := $(TOOLCHAIN)/pic16f1-build --device $(DEVICE) --opt $(OPT) --f-cpu $(F_CPU) --name $(NAME) $(if $(DEBUGGER),--debugger)
+BUILD := $(TOOLCHAIN)/pic16f1-build --device $(DEVICE) --opt $(OPT) --f-cpu $(F_CPU) --math $(MATH) --name $(NAME) $(if $(DEBUGGER),--debugger)
 
 .PHONY: all sim debug size list clean
 all:

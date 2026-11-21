@@ -9,7 +9,7 @@ version=0.3.0
 
 compiler.path=
 compiler.cmd=pic16f1-cc
-compiler.flags=-mcpu={build.mcu} {build.opt} -g -flto -DF_CPU={build.f_cpu} -DARDUINO={runtime.ide.version} -DARDUINO_{build.board} -DARDUINO_ARCH_{build.arch}
+compiler.flags=-mcpu={build.mcu} {build.opt} {build.math} -g -flto -DF_CPU={build.f_cpu} -DARDUINO={runtime.ide.version} -DARDUINO_{build.board} -DARDUINO_ARCH_{build.arch}
 compiler.c.flags=-std=gnu11 --libc
 compiler.cpp.flags=-std=gnu++17
 compiler.c.extra_flags=

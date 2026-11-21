@@ -54,6 +54,12 @@ code=0; "$bin/pic16f1-sim$exe" run "$tmp/lib.elf" > /dev/null || code=$?
 [ "$code" = 90 ] || fail "the C++ library program ended with $code"
 echo "ok   C++ with the standard library"
 
+# The fast arithmetic library.
+"$bin/pic16f1-cc$exe" -mcpu=pic16f1937 -Os -mmath=fast -o "$tmp/speed.hex" "$root/tests/fastmath/speed.c"
+code=0; "$bin/pic16f1-sim$exe" run "$tmp/speed.elf" > /dev/null || code=$?
+[ "$code" = 90 ] || fail "the -mmath=fast program ended with $code"
+echo "ok   -mmath=fast"
+
 # Forth.
 printf ': MAIN  $5A LATD C!  SLEEP ;\n' > "$tmp/t.fth"
 "$bin/pic16f1-forth$exe" -mcpu=pic16f1937 -o "$tmp/forth.hex" "$tmp/t.fth"

@@ -4,6 +4,9 @@
 
 - Arduino sketches: **New Project...** offers Arduino, and a folder with a
   `.ino` file builds and debugs like any other project.
+- `-mmath=fast` (`MATH = fast` in a project's Makefile) links a fast
+  arithmetic library: multiplication, division and floating point one and
+  a half to three times as fast, for more flash.
 - The A/D converter of the device libraries no longer waits for ever for a
   conversion the PIC16F193x loses (errata DS80000479).
 - EEPROM writes arm their unlock values in a variable and hand them to a

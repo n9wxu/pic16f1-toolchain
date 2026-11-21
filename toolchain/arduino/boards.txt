@@ -1,5 +1,6 @@
 menu.clock=Oscillator
 menu.opt=Optimize
+menu.math=Arithmetic
 
 f1eval.name=PIC16F1937 (F1 Evaluation Platform)
 f1eval.build.mcu=pic16f1937
@@ -28,3 +29,8 @@ f1eval.menu.opt.1=Easy to debug (-O1)
 f1eval.menu.opt.1.build.opt=-O1
 f1eval.menu.opt.2=Faster (-O2)
 f1eval.menu.opt.2.build.opt=-O2
+
+f1eval.menu.math.small=Small
+f1eval.menu.math.small.build.math=-mmath=small
+f1eval.menu.math.fast=Fast (more flash)
+f1eval.menu.math.fast.build.math=-mmath=fast

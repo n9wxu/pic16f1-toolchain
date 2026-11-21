@@ -17,6 +17,13 @@
  *
  * Compiled for a host with -DFLOAT_HOST_TEST the functions take and return
  * the bits of a float and are named pic_...; see tests/host/float.c.
+ *
+ * With -DFLOAT_FAST this is the floating point of the fast arithmetic
+ * library (libpicfast.a, -mmath=fast): the same results, bit for bit, with
+ * the multiplication and the division of the significands done by two
+ * assembly routines (fastmath.S) and the shifts that line numbers up done
+ * a byte at a time where they can be. It is compiled for speed, and is
+ * some 400 words larger.
  */
 #ifdef FLOAT_HOST_TEST
 #include <stdint.h>
@@ -51,14 +58,58 @@ typedef union { float f; bits b; } pun;
 
 #define IS_NAN(x) (((x) & ~SIGN) > INF)
 
+#ifdef FLOAT_FAST
+#ifdef FLOAT_HOST_TEST
+/* What the two assembly routines compute, for the test on a host. */
+static bits fmul24(bits a, bits b)
+{
+    uint64_t p = (uint64_t)a * b;
+    return (bits)(p >> 20) | ((p & 0xFFFFF) != 0);
+}
+static bits fdiv24(bits ma, bits mb)
+{
+    bits q = 0;
+    byte i;
+    for (i = 26; i; i--) {
+        q <<= 1;
+        if (ma >= mb) {
+            ma -= mb;
+            q |= 1;
+        }
+        ma <<= 1;
+    }
+    return (q << 1) | (ma != 0);
+}
+#else
+bits __pic_fmul24(bits a, bits b);
+bits __pic_fdiv24(bits a, bits b);
+#define fmul24 __pic_fmul24
+#define fdiv24 __pic_fdiv24
+#endif
+#endif
+
 /* Shift right, keeping in the lowest bit whether anything was lost. */
 static bits shift_sticky(bits m, byte n)
 {
     if (n > 31)
         return m != 0;
+#ifdef FLOAT_FAST
+    {
+        byte lost = 0;
+        for (; n >= 8; n -= 8) {
+            if ((byte)m)
+                lost = 1;
+            m >>= 8;
+        }
+        while (n--)
+            m = (m >> 1) | (m & 1);
+        return m | lost;
+    }
+#else
     while (n--)
         m = (m >> 1) | (m & 1);
     return m;
+#endif
 }
 
 /* Round and pack: the value is m / 2^26 * 2^(e - 127), m with its leading
@@ -206,6 +257,18 @@ real NAME(mulsf3)(real x, real y)
         return REAL(s);
     e = unpack(a, &ma);
     e += unpack(b, &mb) - 127;
+#ifdef FLOAT_FAST
+    /* The product from bit 20 up, the rest sticky: its leading 1 is bit 26
+     * or 27. */
+    hi = fmul24(ma, mb);
+    if (hi & (TOP << 1)) {
+        e++;
+        hi = (hi >> 1) | (hi & 1);
+    }
+    (void)lo;
+    (void)i;
+    return REAL(pack(s, e, hi));
+#else
     /* The 48-bit product, in hi and the top 24 bits of lo. */
     for (i = 24; i; i--) {
         if (mb & 1)
@@ -226,6 +289,7 @@ real NAME(mulsf3)(real x, real y)
     }
     hi = (hi << 3) | (lo >> 28) | ((lo & 0x0FFFFFFFUL) != 0);
     return REAL(pack(s, e, hi));
+#endif
 }
 
 real NAME(divsf3)(real x, real y)
@@ -244,6 +308,11 @@ real NAME(divsf3)(real x, real y)
         e--;
     }
     /* 26 bits of it: the 24 and two more; what is left over is sticky. */
+#ifdef FLOAT_FAST
+    (void)i;
+    q = fdiv24(ma, mb);
+    return REAL(pack(s, e, q));
+#else
     for (i = 26; i; i--) {
         q <<= 1;
         if (ma >= mb) {
@@ -254,6 +323,7 @@ real NAME(divsf3)(real x, real y)
     }
     q = (q << 1) | (ma != 0);
     return REAL(pack(s, e, q));
+#endif
 }
 
 /* -1, 0 or 1 as a is less than, equal to or greater than b; 2 if either
@@ -341,6 +411,12 @@ static bits from_unsigned(bits s, bits m)
     bits low;
     if (m == 0)
         return 0;
+#ifdef FLOAT_FAST
+    while (!(m & 0xFF000000UL)) {
+        m <<= 8;
+        e -= 8;
+    }
+#endif
     while (!(m & SIGN)) {
         m <<= 1;
         e--;

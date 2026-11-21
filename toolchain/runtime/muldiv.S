@@ -127,6 +127,9 @@ __modqi3:
 ; 16 bits
 ;------------------------------------------------------------------------------
 
+; (With -DFAST_MATH, for libpicfast.a, this and the two 32-bit routines
+; marked the same way are left out: fastmath.S has them.)
+#ifndef FAST_MATH
     .section .text.__mulhi3,"ax",@progbits
     .globl  __mulhi3
 __mulhi3:
@@ -136,6 +139,7 @@ __mulhi3:
     movf    R5, W
     movwf   R1
     return
+#endif
 
 ; Quotient in 0x70/71, remainder in 0x74/75. The compiler relies on the
 ; remainder being there when it wants both.
@@ -201,6 +205,7 @@ __modhi3:
 ; 32 bits. Four more bytes are needed than R0-R7 give: FSR0 and TMP0/TMP1.
 ;------------------------------------------------------------------------------
 
+#ifndef FAST_MATH
     .section .text.__mulsi3,"ax",@progbits
     .globl  __mulsi3
 __mulsi3:
@@ -208,6 +213,7 @@ __mulsi3:
     pic_mul32 R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1
     PAGESEL(__pic_movsi)
     goto    __pic_movsi
+#endif
 
 ; R0-R3 = FSR0L, FSR0H, TMP0, TMP1: where the product and the quotient
 ; are built.
@@ -230,11 +236,13 @@ __pic_movsi:
 ; and the quotient in FSR0L, FSR0H, TMP0, TMP1. The round counter is FSR1L:
 ; FSR1 is free here like FSR0. Dividing by zero gives a quotient of zero and
 ; the dividend as the remainder.
+#ifndef FAST_MATH
     .section .text.__umodsi3,"ax",@progbits
     .globl  __umodsi3
 __umodsi3:
     pic_udivmod32_norm R0, R1, R2, R3,  R4, R5, R6, R7,  FSR0L, FSR0H, TMP0, TMP1,  FSR1L
     return
+#endif
 
     .section .text.__udivsi3,"ax",@progbits
     .globl  __udivsi3
@@ -312,14 +320,18 @@ __modsi3:
 ; level of the hardware stack; J is a jump to a routine that returns for
 ; this one, which takes none. The linker's count of stack levels goes by
 ; these.
+#ifndef FAST_MATH
     .ascii  "F __mulhi3 -\n"
+#endif
     .ascii  "F __umodqi3 -\nC __udivqi3\n"
     .ascii  "F __divqi3 -\nC __pic_absqi2\nC __udivqi3\n"
     .ascii  "F __modqi3 -\nC __pic_absqi2\nC __udivqi3\n"
     .ascii  "F __umodhi3 -\nC __udivhi3\n"
     .ascii  "F __divhi3 -\nC __pic_abshi2\nC __udivhi3\nJ __pic_neghi\n"
     .ascii  "F __modhi3 -\nC __pic_abshi2\nC __umodhi3\nJ __pic_neghi\n"
+#ifndef FAST_MATH
     .ascii  "F __mulsi3 -\nJ __pic_movsi\n"
+#endif
     .ascii  "F __udivsi3 -\nC __umodsi3\nJ __pic_movsi\n"
     .ascii  "F __udivmodsi4 -\nC __umodsi3\nJ __pic_movsi\n"
     .ascii  "F __divsi3 -\nC __pic_abssi2\nC __udivsi3\nJ __pic_negsi\n"

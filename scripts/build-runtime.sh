@@ -65,6 +65,21 @@ rm -f "$out/libpicrt$suffix.a"
 "$bin/llvm-ar" rcs "$out/libpicrt$suffix.a" $objs
 # shellcheck disable=SC2086
 rm -f $objs
+
+# The fast arithmetic library, which -mmath=fast puts ahead of the one
+# above: the integer multiplications and the 32-bit division in assembly
+# written for speed, and the floating point built on them and compiled
+# for speed. It has every routine of the files it replaces (muldiv.S and
+# float.c), so that the linker takes none of those.
+fast="$out/muldiv-fast$suffix.o $out/fastmath$suffix.o $out/float-fast$suffix.o"
+$cc $model -w -DFAST_MATH -c "$rt/muldiv.S" -o "$out/muldiv-fast$suffix.o"
+$cc $model -w -c "$rt/fastmath.S" -o "$out/fastmath$suffix.o"
+$cc $model -w -DFLOAT_FAST -O2 -c "$rt/float.c" -o "$out/float-fast$suffix.o"
+rm -f "$out/libpicfast$suffix.a"
+# shellcheck disable=SC2086
+"$bin/llvm-ar" rcs "$out/libpicfast$suffix.a" $fast
+# shellcheck disable=SC2086
+rm -f $fast
 }
 build_all "" ""
 build_all "-small" "-mcmodel=small -DONE_PAGE"

@@ -751,6 +751,53 @@ words) and slower, past XC8 at `-O3` and `-Os`.
 
 `scripts/test-builtins.sh` checks all of this on `tests/builtins/main.c`.
 
+## Faster arithmetic: `-mmath=fast`
+
+The part has no instruction that multiplies or divides, so these are
+routines of the runtime library, and the standard ones are written to be
+small. `-mmath=fast` (for `pic16f1-build`, `--math fast`, or `MATH = fast`
+in a project's Makefile; in the Arduino IDE, Tools > Arithmetic) links
+`libpicfast.a` ahead of the standard library. It has the same routines
+with the same results, bit for bit, written for speed:
+
+| | Standard | Fast | Times as fast |
+|---|---|---|---|
+| 16-bit multiply | 245 | 166 | 1.5 |
+| 32-bit multiply | 770 | 490 | 1.6 |
+| 32-bit multiply by a byte | 770 | 186 | 4.1 |
+| 32-bit divide by a byte | 1,102 | 601 | 1.8 |
+| 32-bit divide by 16 bits | 796 | 562 | 1.4 |
+| 32-bit divide by 32 bits | 578 | 523 | 1.1 |
+| float multiply | 2,356 | 856 | 2.8 |
+| float divide | 2,334 | 1,121 | 2.1 |
+| float add | 671 | 589 | 1.1 |
+| float from a long | 606 | 490 | 1.2 |
+
+Instruction cycles for one operation on the simulator, with the call and
+the moving of its operands. What it costs is flash: a program that
+multiplies and divides 32-bit integers and floats
+(`tests/fastmath/speed.c`) is 2,775 words with the standard library and
+3,645 with the fast one, and one level of the hardware stack more in a
+multiplication.
+
+- **Multiplication** takes the multiplier a byte at a time, eight unrolled
+  rounds each, and a zero byte takes a few instructions; of two 32-bit
+  operands the one with a zero top byte is made the multiplier.
+- **32-bit division** goes by the size of the divisor: a remainder of one,
+  two or four bytes, and only the rounds whose quotient bit can be 1 (32,
+  24 or 16). The standard routine is already quick with a large divisor,
+  which is why that row gains least.
+- **Float multiplication and division** do the work on the significands in
+  two assembly routines, and the shifts that line numbers up go a byte at
+  a time; the unpacking, rounding and special cases are the same C as the
+  standard library's, compiled for speed. Addition and the conversions gain
+  little: they are mostly that C.
+
+16-bit division and everything of 8 and 64 bits are the standard routines.
+`scripts/test-fastmath.sh` checks the library: its floating point against a
+host's IEEE arithmetic (47 million operations), and on the simulator 33
+programs of operands and expected results from `tests/fastmath/gen.py`.
+
 ## Debugging
 
 `-g` adds debug information (DWARF 5) and changes no code; any
